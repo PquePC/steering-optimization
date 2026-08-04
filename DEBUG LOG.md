@@ -50,6 +50,7 @@ judge `openai/gpt-4.1-mini` via OpenRouter.
 | Per-cell sanity score | **added** 2026-08-04 — every cell carries Detection / Effectiveness / Sanity |
 | Lab as a single unattended run | **added** 2026-08-04 — `AUTORUN` + RUN ALL cell |
 | Bug 25 (D2 was not batched, 9x slow) | **fixed** 2026-08-04 on the first live run |
+| Bug 25b (batched D2 would have mis-steered and mis-decoded short prompts) | **fixed** 2026-08-04 — D2 uses the multi-steering path |
 
 ---
 
@@ -791,20 +792,50 @@ the first prompt, one call to `generate_batch_with_steering`.
 **Defined in the notebook, not patched into the clone.** The upstream stays pristine apart from
 the OpenRouter change, and a local override is visible to anyone reading the notebook.
 
-**Verification, and what it does and does not cover.** `verify_forced_prompts()` gates the cell.
-It calls the **repo's own** `run_forced_noticing_test` with `generate_with_steering` swapped for
-a recorder, so what it compares against is what the repo would actually have sent to the model —
-not a second copy of the same reasoning. Prompts must match byte for byte and start positions
-must be equal, for trials 1, 7 and 25 (one, one and two digit). No generation, no GPU cost.
+**Verification.** `verify_forced_prompts()` gates the cell. It calls the **repo's own**
+`run_forced_noticing_test` with `generate_with_steering` swapped for a recorder, so what it
+compares against is what the repo would actually have sent to the model — not a second copy of
+the same reasoning. Prompts must match byte for byte and start positions must be equal, for
+trials 1, 7 and 25 (one, one and two digit). No generation, no GPU cost.
 
-It does **not** cover the batch-wide approximation: `generate_batch_with_steering` applies
-prompts[0]'s scalar start position to every row, and padding is left
-(`model_utils.py:125`), while the left-padding correction at `model_utils.py:1061` only fires
-for the multi-steering path — in the single-vector path `steering_pos_tensor` is always `None`.
-Trials whose number has a different digit count therefore sit up to one token off. **D1 makes
-exactly the same approximation on exactly the same prompt** and reproduced the published rate,
-so the error is bounded at one token in a ~200 token prompt and already priced into the rig
-check.
+One start position for the whole batch is **exact**, not an approximation: the text before
+"Trial" does not contain the trial number, so the repo's per-prompt computation returns the
+same value for every trial. The gate confirms this rather than assuming it.
+
+---
+
+#### Bug 25b — the obvious batched call would have been wrong, twice, silently
+
+Found while checking that the parallel version matches Macar rather than merely being fast.
+Padding is **left** (`model_utils.py:125`), and `"Trial 1"` is one token shorter than
+`"Trial 25"`, so shorter prompts get a pad at the front and every content token shifts by one.
+`generate_batch_with_steering` — the natural choice, and the one D1 uses — mishandles that in
+two independent places:
+
+| | What it does | Consequence |
+|---|---|---|
+| **Steering** | Applies one scalar start position to the whole batch (`:1028`). Its left-padding correction at `:1061` only fires when `steering_pos_tensor` is set, and the single-vector branch always leaves it `None` | Shorter prompts steered from one token too early |
+| **Decoding** | Slices the response at the **unpadded** length, `output_ids[i][input_length:]` (`:1096`), while `generate()` returns padded input + generation | Shorter prompts carry their last prompt token into the "generated" text |
+
+**Why D1 survives this.** Its prompt ends with `<start_of_turn>model`, so the overhang token is
+from the template and is removed by the explicit Gemma `model\n` strip immediately below the
+slice — or by the trailing `.strip()`. That is why the rig check came back clean at 0.383. The
+forced-noticing prompt ends with the **prefill**, so its overhang would be `" about"` and
+nothing would strip it.
+
+**Fix.** D2 uses `generate_batch_with_multi_steering` with the same vector repeated n times.
+That path corrects each row's start position for its own padding (`:1248`), applies a per-row
+mask rather than a scalar slice, and its decoder falls through to slicing at the padded width
+(`:1321`). Cost of the repetition: 25 × 5376 × 2 bytes, under 300KB.
+
+**Why this is the faithful choice rather than the merely better one.** Macar's D2 is serial, so
+it has a batch of one and no padding to get wrong — exact by construction. Macar's D1 *is*
+batched and does carry the one-token property. Matching him therefore means D2 exact and D1
+unchanged, which is what the code now does. Making D1 "better" would move it away from the path
+that produced the validated 0.383.
+
+**Silent?** Yes, and it would have been the hardest kind to see: D2 numbers would have been
+plausible, roughly right, and wrong in a way no gate was watching for.
 
 **Silent?** No — it produced correct numbers slowly. Worth logging anyway: without the
 per-measure timing on the board it would have read as "D2 is just expensive", and the design
