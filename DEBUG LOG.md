@@ -810,9 +810,16 @@ check.
 per-measure timing on the board it would have read as "D2 is just expensive", and the design
 would have carried a 2h15m measure as though it were a 15 minute one.
 
-**Follow-up.** `CELL_SECONDS_PRIOR["D2"]` corrected from 28 to 30, alongside D1's. Any other
-repo function whose name promises batching should be read before being costed —
-`run_unsteered_introspection_test_batch` is the next one to check.
+**Follow-up.** `CELL_SECONDS_PRIOR["D2"]` corrected from 28 to 30, alongside D1's. The other
+two `..._batch` functions in the pipeline were then read rather than assumed:
+
+| Function | Genuinely batched? |
+|---|---|
+| `run_steered_introspection_test_batch` (D1) | yes — `generate_batch_with_steering` on a prompt list |
+| `run_unsteered_introspection_test_batch` (control block) | yes — `model.generate_batch` on a prompt list |
+| `run_forced_noticing_test_batch` (D2) | **no** — a `for` loop. This bug |
+
+D2 was the only offender. Nothing else in the pipeline is mis-costed.
 
 ---
 
