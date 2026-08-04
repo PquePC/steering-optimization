@@ -229,6 +229,20 @@ baseline, sweep, judge, escalate. Each wrapped in `stage()`. Resumable via `cell
 
 **Part 3 — Inspect (I1–I2).** Frontier plot and summary. Disk-only, re-runnable any time.
 
+### The measurement lab runs unattended
+
+`measurement_lab.ipynb` carries `AUTORUN` in Setup 4, default `True`:
+
+- measure cells only **define** their function;
+- one **RUN ALL** cell sweeps every measure in dependency order (D1 first, because E3 re-judges the transcripts it writes; E3 last);
+- each measure is isolated — a raise is logged with its traceback, a crash report is written, and the next measure still runs;
+- the per-cell **Detection / Effectiveness / Sanity** summary is built, written to `cell_summary.jsonl`, and the global sanity panel is called at the end;
+- resumable throughout: `sweep_measure()` skips (layer, α) pairs already recorded, so re-running after a dropped kernel continues rather than restarting.
+
+`AUTORUN = False` restores per-cell manual operation for debugging one measure at a time.
+
+> **On making one cell trigger the next:** the mechanism exists — `IPython.display.Javascript` calling `Jupyter.notebook.execute_cells_below()` — but it depends on the classic-notebook JS API, does not work in JupyterLab 4 or VS Code, and fails *silently* where it does not work, which is the worst possible property for an unattended run. Run All plus one orchestrator cell gives the same result and depends on nothing. For fully headless execution, `papermill` runs the notebook end to end from the command line and writes an executed copy with all outputs.
+
 ### Failure behaviour
 
 `stage()` catches any exception, writes `crash_report_<timestamp>.txt` containing the traceback,

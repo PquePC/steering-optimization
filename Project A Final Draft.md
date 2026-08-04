@@ -104,10 +104,33 @@ computation rather than eliciting the native one).
 | **E4** | Distributional shift | Total behavioural change, without regard to direction and without E1's surface bias | KL between steered and unsteered next-token distributions, teacher-forced on identical text | M6 | new code |
 | **E5** | Concept accessibility | Whether the concept is active and retrievable | The D2 number, reported a second time as effectiveness | M2 | reuses D2 |
 
-### Sanity measures (S)
+### Per-cell reporting: Detection, Effectiveness, Sanity
 
-These do not measure the phenomenon. They check that the experiment itself is sound, so that a
-number produced elsewhere can be trusted. Each states what a failure means.
+**Every grid cell carries three numbers, and the frontier is only ever read over cells that pass the third.**
+
+| | What it is | Scale | Direction |
+|---|---|---|---|
+| **Detection** | D1 self-report rate | 0–1 | want it **low** |
+| **Effectiveness** | E1 log-probability shift, mean ± SE across prompts | nats (read `e1_rank_median` alongside) | want it **high** |
+| **Sanity** | `min(1 − incoherence, 1 − E2 delta ÷ damage anchor)` | 0–1 | want it **near 1** |
+
+> **Why sanity is per cell and not only a global check:** low detection with high effectiveness means nothing if the model is wrecked at those steering parameters. A cell at α=4 in an early layer can show detection 0.00 and a positive E1 while running at 60% incoherence and having lost a full nat of general capability — which reads as a perfect operating point and is a destroyed model. Sanity has to travel with the cell, or the frontier will select for exactly that failure.
+
+> **Why `min` rather than a mean:** incoherence and capability loss are two different ways for a cell to be unusable, and passing one does not compensate for failing the other. A cell that is perfectly coherent while having lost general capability is still not somewhere anything can be measured.
+
+**`usable` flag, pre-committed:** incoherence ≤ 0.15 **and** E2 delta ≤ half the damage anchor. Cells failing it are retained in the data, plotted in a distinct style, and excluded from candidate operating points.
+
+**The damage anchor is measured, not asserted.** There is no absolute NLL value that means "broken" — it depends on the passage, the model and the tokenizer. The scale is pinned at both ends inside the same run: α=0 (delta 0 by construction) and **α=16 at the reference layer**, roughly 4× the strongest grid strength and far enough off-manifold that a model which is going to break has broken there. A cell's capability score is its position between them. Cost: one passage pass.
+
+> **Why an anchor rather than a fixed threshold:** a threshold picked in advance is a guess about a quantity that varies by model and by concept, and picking it after seeing the sweep is the failure Decision 8b exists to prevent. Two anchors measured in the run make the scale a property of the experiment rather than of the author.
+
+### Sanity measures (S) — the global checks
+
+Distinct from the per-cell sanity score above. These do not measure the phenomenon and are not
+per-cell quantities: they check that the **experiment** is sound, so that a number produced
+elsewhere can be trusted. A per-cell sanity failure means one (L, α) is unusable and the rest of
+the grid is fine; an S failure means **no number anywhere** is trustworthy. Each states what a
+failure means.
 
 | Code | Checks | When | A failure means |
 |---|---|---|---|
@@ -120,7 +143,7 @@ number produced elsewhere can be trusted. Each states what a failure means.
 | **S7** | False-alarm rate on unsteered controls: `FPR ≤ 0.05 AND FPR < TPR/3` (amended, 7i) | per concept | Detection rates are inflated by a general tendency to claim detection |
 | **S8** | Incoherence rate, tracked apart from detection. Graded by the judge's `coherency_score` rubric, 1–10; **incoherent = score ≤ 3** ("internally inconsistent or clearly confused about stance" / "unusable"). Read from `evaluations["coherency_score"]["score"]` | per cell | A low detection rate may be the judge discarding broken output, not the model failing to notice. Above ~0.15 in a cell, D1 at that cell is not readable |
 | **S12** | E1 prompt dispersion: is `|E1| ≥ 2·SE` across the prompt set? | per cell | The effect is one phrasing's accident, not an effect |
-| **S13** | D1b control shift, reported next to the target shift | per cell | A control shift tracking the target shift is the affirmative-bias confound; controls disagreeing with each other falsifies the single-global-bias model the subtraction assumes |
+| **S13** | **D1b decomposition.** Reports the *target shift* (how far the detection question's Yes−No lean moved under injection) and the *control shift* (how far the control questions' leans moved) side by side, instead of only their difference | per cell | Two distinct failures, neither visible in the differential alone. **Control shift ≈ target shift** means the injection is pushing everything toward "yes" and D1b is measuring affirmative bias, not detection — Hahami et al.'s objection appearing in this project's own data. **Controls disagreeing with each other** means there is no single global bias to subtract, so the whole target-minus-control construction is unsound and D1b must be reported as a raw quantity with the confound stated |
 | **S9** | Entropy delta on the next-token distribution | per cell | A rise in E1 is distribution flattening, not concept-directed steering |
 | **S10** | Dose-response: D1 and E1 rise with α, E2 degrades at high α | across the grid | The measures are not responding; the pilot gate fails |
 | **S11** | Concept anchor — detectable somewhere in the grid | per concept | The vector may be dead rather than the envelope wide |
@@ -519,7 +542,36 @@ Average negative log-likelihood on fixed held-out passages under injection. One 
 
 **Passage set, not a single passage.** Reported as mean ± standard error across several passages on unrelated topics, so a single subject the model happens to be good or bad at cannot set the result. Same reasoning as E1's prompt set.
 
-**Why E2 is an E and not an S.** It is a guard, so the question is fair. The distinction is what a failure invalidates: an S-measure failing means *no number anywhere* can be trusted (S2 wrong layer, S5 broken extraction, S3 unreachable judge). A large E2 delta means *this cell* is damage rather than steering, while the rest of the grid is unaffected — that is a property of the intervention at that (L, α), which is exactly what an effectiveness measure reports. S8 (incoherence) is its twin on the generation path, and is filed under S because it also tells you whether D1 at that cell is readable at all.
+**Why E2 is an E and not an S.** It is a guard, so the question is fair. The distinction is what a failure invalidates: an S-measure failing means *no number anywhere* can be trusted (S2 wrong layer, S5 broken extraction, S3 unreachable judge). A large E2 delta means *this cell* is damage rather than steering, while the rest of the grid is unaffected — that is a property of the intervention at that (L, α), which is exactly what an effectiveness measure reports. E2 and S8 are the two inputs to the **per-cell sanity score**; S8 is additionally filed under S because it also tells you whether D1 at that cell is readable at all.
+
+#### E2, bleed and damage — what a rise in NLL actually means
+
+A rise in NLL on neutral text has two very different causes, and E2 alone cannot tell them apart:
+
+| | What happened | Is it a problem? |
+|---|---|---|
+| **Damage** | The model got worse at predicting ordinary English. Probability drained off the true tokens and spread everywhere. | Yes. E1 at this cell is not trustworthy. |
+| **Bleed** | The model is still fine but now wants to talk about the concept even here — the Golden Gate case. Probability moved off the true tokens and **onto the concept**. | No. This is successful steering leaking into an unrelated context: a finding about strength, not a fault. |
+
+Both raise the loss identically. **`e2_concept_share` separates them**: of all the probability mass that moved at all, what fraction landed on concept tokens.
+
+```
+gain_t  = P_steered(concept tokens at t) − P_unsteered(concept tokens at t)
+moved_t = ½ ‖P_steered(·|t) − P_unsteered(·|t)‖₁          (total variation)
+share   = Σ_t gain_t / Σ_t moved_t
+```
+
+Share near zero means the mass went everywhere — degradation. A high share means it went to the concept — bleed. Free: the same two log-probability tensors E4 already computes.
+
+> **Why this matters for the frontier:** without it, strong-but-working steering and broken steering both show up as "high E2 delta" and would be excluded together. The share says which is which. Note that bleed on *neutral* text is still informative about strength — it means the injection is no longer conditional on context — but it is not evidence the model is broken, and E1 at such a cell remains readable.
+
+**How much perplexity is too much?** There is no answer from theory, and inventing a threshold would be a researcher degree of freedom on a gate. Three empirical handles are used instead, in order:
+
+1. **The damage anchor** — E2 delta at α=16, reference layer, measured in the same run. That is the far-off-manifold end of the scale, and a cell's capability score is its position between it and zero. Pre-committed cutoff at half the anchor.
+2. **The judge's incoherence rate (S8)** on that cell's actual generations. This is the semantic ground truth for "broken": a rubric reading real sentences, not a loss number. E2 is the cheap deterministic proxy; where the two disagree, S8 wins and the disagreement is worth investigating.
+3. **`e2_concept_share`**, to check that whatever rise exists is not simply the injection working.
+
+> **External calibration point:** Macar was forced to move his abliterated-model analysis from α=4 down to α=2 by coherence degradation, so the interval between those strengths is roughly where "usable" stops on his setup with his interventions. That brackets expectations; it does not set the threshold, because his degradation came from ablation as well as injection.
 
 > **Why:** Separates effective steering from degradation. Lindsey reports that at high strength the model "begins to exhibit 'brain damage,' and becomes consumed by the injected concept"; Macar reports coherence degradation forcing his abliterated-model analysis from α=4 down to α=2. Without it, a cell where the model is broken and repeating the concept word scores identically to clean steering. Macar reports no quantitative capability metric — degradation is handled only as a judge-rubric filter — so E2 is an addition.
 
@@ -668,7 +720,10 @@ Two documented slippage routes tested:
 | 7i | **FPR criterion amended after seeing the number, and recorded as post-hoc.** The rig check returned FPR 0.033 against a pre-committed 0.02, and the criterion was changed to `FPR ≤ 0.05 AND FPR < TPR/3`, which it passes. The change is defensible — 0.02 was an absolute number copied from a paper with far more trials, at n=30 a single false positive is already 0.033, and the property the check exists to establish is that the model is not claiming detection indiscriminately, which the ratio form tests directly. It is nonetheless the move Decision 8b forbids elsewhere, so it is labelled rather than quietly adopted: **the rig passed on the amended criterion**, and that phrasing is used wherever the result is reported. The TPR half of the gate was not touched. |
 | 7j | **The rig-check interval is reported twice.** The pooled Wilson CI [0.324, 0.433] answers "did these 300 trials come from a process with rate ≈0.38". The between-concept CI [0.113, 0.640] (10 concepts, sd 0.368) answers "does this rig agree with Macar's published aggregate", and is the relevant one for the gate's stated purpose. The gate establishes that the rig is not grossly broken; it does not establish agreement to within 5pp. Neither interval is dropped in favour of the other. |
 | 7k | **Forward-pass measures use prompt/passage sets, never a single item.** D1b, E1, E2 and E4 are deterministic given a prompt, so their N is the number of distinct prompts. Each reports mean ± SE across its set. Inclusion rules are pre-committed and evaluated on **unsteered** data only: E1 prompts need unsteered answer entropy ≥ 0.5 nats (≥5 survivors); D1b controls need unsteered Yes−No lean ≤ 0. Neither rule can touch the steered-versus-unsteered contrast. |
-| 7l | **D1b controls must have headroom toward "yes".** A control whose honest answer is already an emphatic yes cannot display the injection's general affirmative push, so subtracting it under-corrects and leaves yes-bias inside D1b. Target shift and control shift are reported separately as well as differenced. |
+| 7l | **D1b controls must have headroom toward "yes".** A control whose honest answer is already an emphatic yes cannot display the injection's general affirmative push, so subtracting it under-corrects and leaves yes-bias inside D1b. Target shift and control shift are reported separately as well as differenced. Selection is silent — a saturated candidate is simply not used, and there is nothing to inspect. |
+| 7m | **Every cell reports Detection, Effectiveness and Sanity.** Sanity is `min(1 − incoherence, 1 − E2 delta ÷ damage anchor)`, and the frontier is read only over cells passing the pre-committed `usable` flag (incoherence ≤ 0.15 and E2 delta ≤ half the anchor). Low detection with high effectiveness is meaningless at parameters where the model is wrecked, so sanity travels with the cell rather than being a global check alone. |
+| 7n | **The damage scale is anchored empirically, not by a chosen threshold.** Two anchors measured in the same run: α=0 and α=16 at the reference layer. Cross-checked against S8, the judge's incoherence rate on real generations, which is the semantic ground truth for "broken". |
+| 7o | **`e2_concept_share` separates bleed from damage.** A rise in NLL on neutral text is degradation if the displaced probability spread everywhere, and concept bleed — the Golden Gate case, successful steering leaking into unrelated context — if it landed on the concept. Free from the tensors E4 already computes. |
 | 7f | M2 gate uses partial correlation controlling for α, with a pre-committed threshold. A pooled correlation would pass on shared α-dependence alone and could not fail. |
 | 7g | E3 always reported with its per-cell denominator; never compared across cells without it. |
 | 7h | M2.5 inserted: read the global-workspace paper before scoping M3. Workspace loading of `v_c` is a candidate per-concept predictor and a possible reframing from empirical sweep to directed hypothesis. |

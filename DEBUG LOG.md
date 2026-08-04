@@ -22,7 +22,7 @@ cause is what you fix.
 | `Project A Final Draft.md` | Methodology and design decisions, with justification for each |
 | `Pipeline v1 Implementation Plan.md` | M1 build spec: pod, patch, logging, escalation, code audit |
 | `pipeline_v1.ipynb` | End-to-end M1 pipeline → one frontier plot |
-| `measurement_lab.ipynb` | Every measure as an independent, separately debuggable unit |
+| `measurement_lab.ipynb` | Every measure as an independent unit. `AUTORUN=True` (default): Run All, then leave it — one RUN ALL cell sweeps everything with per-measure exception isolation and writes the per-cell Detection/Effectiveness/Sanity summary. `AUTORUN=False`: one measure at a time, by hand |
 | `DEBUG LOG.md` | This file |
 | `introspection-mechanisms/` | Clone of Macar et al.'s repo (upstream, unmodified except the OpenRouter patch applied at runtime) |
 
@@ -47,6 +47,8 @@ judge `openai/gpt-4.1-mini` via OpenRouter.
 | Bug 23 (cache ignored the vector) | **fixed** 2026-08-04. Prior forward-pass numbers void, see entry |
 | Bug 24 (`pipeline_v1.ipynb` had no newlines) | **fixed** 2026-08-04. That notebook had never been runnable |
 | n=1 on E1 / E2 / D1b / E4 | **fixed** 2026-08-04 — prompt and passage sets, mean ± SE |
+| Per-cell sanity score | **added** 2026-08-04 — every cell carries Detection / Effectiveness / Sanity |
+| Lab as a single unattended run | **added** 2026-08-04 — `AUTORUN` + RUN ALL cell |
 
 ---
 
@@ -597,6 +599,114 @@ touched.
   prompts as a **median**, since a rank is ordinal.
 
 **Next:** re-upload both notebooks. Re-run the lab from Setup 1 with `concept = "Origami"`.
-Watching for: the E1 prompt-selection table (how many clear 0.5 nats), the D1b control table
-(which candidates are rejected for leaning yes), E1 with its SE across prompts, and whether the
-D1b control shift tracks the target shift.
+Watching for: the E1 prompt-selection table (how many clear 0.5 nats), E1 with its SE across
+prompts, and whether the D1b control shift tracks the target shift.
+
+### 2026-08-04 — per-cell sanity score; lab becomes a single unattended run
+
+#### Sanity is now a per-cell quantity, not only a global check
+
+**Why.** The design had S1–S13 as checks on the *experiment*, and nothing carrying the
+question "was the model intact at these steering parameters" onto the cell itself. That is a
+gap with teeth: a cell at α=4 in an early layer can show detection 0.00 and a positive E1
+while running at 60% incoherence and having lost a full nat of general capability. It reads as
+a perfect operating point and it is a destroyed model. A frontier read without per-cell sanity
+selects for exactly that failure.
+
+**What every cell now carries.**
+
+| | What it is | Scale |
+|---|---|---|
+| Detection | D1 self-report rate | 0–1, want low |
+| Effectiveness | E1 log-prob shift, mean ± SE across prompts | nats, read with `e1_rank_median` |
+| Sanity | `min(1 − incoherence, 1 − E2 delta ÷ damage anchor)` | 0–1, want ≈1 |
+
+`min`, not a mean: incoherence and capability loss are different ways for a cell to be
+unusable and passing one does not compensate for failing the other. A pre-committed `usable`
+flag (incoherence ≤ 0.15 **and** E2 delta ≤ half the anchor) marks cells excluded from
+candidate operating points; they stay in the data and are plotted distinctly.
+
+**The damage scale is measured, not chosen.** There is no absolute NLL that means "broken" —
+it depends on the passage, the model and the tokenizer, and a threshold picked after seeing
+the sweep is the failure Decision 8b exists to prevent. Two anchors inside the same run pin
+the scale: α=0 (delta 0 by construction) and **α=16 at the reference layer**, roughly 4× the
+strongest grid strength and far enough off-manifold that a model which is going to break has
+broken there. Cost: one passage pass.
+
+The global S-checks are unchanged and stay in `sanity_panel()`. The distinction is now stated
+in both places: an S failure means no number anywhere is trustworthy; a per-cell sanity
+failure means that one (L, α) is unusable and the rest of the grid is fine.
+
+---
+
+#### E2 could not tell steering from damage — `e2_concept_share` added
+
+**Finding.** E2 measures NLL on neutral passages and calls a rise "damage". But a rise has two
+causes that E2 alone cannot separate:
+
+- **damage** — probability drained off the true tokens and spread everywhere;
+- **bleed** — the model is fine but now wants to talk about the concept even on unrelated
+  text. The Golden Gate case. Probability moved off the true tokens and *onto the concept*.
+
+Both raise the loss identically. Under successful strong steering, bleed is *expected*, so an
+E2-only reading would exclude working cells as broken ones.
+
+**Fix.** `e2_concept_share` — of all the probability mass that moved at all, the fraction that
+landed on concept tokens:
+
+```
+gain_t  = P_steered(concept ids at t) − P_unsteered(concept ids at t)
+moved_t = ½ ‖P_steered(·|t) − P_unsteered(·|t)‖₁
+share   = Σ gain_t / Σ moved_t
+```
+
+Near zero → the mass went everywhere → degradation. High → it went to the concept → bleed.
+Free: the same two log-probability tensors E4 already computes. The sanity score keeps using
+the raw delta and stays conservative; the share tells you which of the two you are looking at.
+
+**How much perplexity is too much — the answer, written down.** No threshold from theory.
+Three empirical handles, in order: the measured damage anchor; the judge's incoherence rate
+(S8) on the cell's real generations, which is the semantic ground truth and wins where the two
+disagree; and `e2_concept_share` to check the rise is not simply the injection working.
+Macar's forced move from α=4 to α=2 on the abliterated model brackets expectations externally,
+but does not set the threshold — his degradation came from ablation as well as injection.
+
+---
+
+#### The lab is now one unattended run
+
+**Why.** Every measure cell ran its own verbose debug pass and then its own sweep, so a full
+pass meant sitting at the notebook running cells in the right order by hand, and a failure in
+any one of them ended the session.
+
+**What changed.** `AUTORUN` in Setup 4, default `True`:
+
+- measure cells only **define** their function and print one line saying so;
+- a single **RUN ALL** cell sweeps everything in dependency order — D1 first because E3
+  re-judges the transcripts it writes, E3 last for the same reason;
+- **each measure is isolated**: a raise is logged with its traceback, a crash report is
+  written to the run folder, and the next measure still runs. One broken measure costs that
+  measure, not the session;
+- the per-cell D/E/S summary is built and written to `cell_summary.jsonl`, candidate operating
+  points are listed, and `sanity_panel()` is called at the end;
+- everything stays resumable — `sweep_measure()` skips (layer, α) pairs already in that
+  measure's JSONL, so re-running after a dropped kernel continues rather than restarting.
+
+Setting `AUTORUN = False` restores the old per-cell behaviour for working through one measure
+by hand.
+
+**On chaining cells.** There is a mechanism — `IPython.display.Javascript` calling
+`Jupyter.notebook.execute_cells_below()` — but it depends on the classic-notebook JS API, does
+not work in JupyterLab 4 or VS Code, and fails silently when it does not work, which is the
+worst possible property for an unattended run. *Run All* plus one orchestrator cell gives the
+same result and depends on nothing. For fully headless execution, `papermill` runs the
+notebook end to end from the command line and writes an executed copy with all outputs.
+
+---
+
+#### D1b control selection is silent
+
+Rejected candidates are recorded in the debug dump but no longer printed. A control the model
+is certain about is simply not usable and there is nothing to inspect. Two further candidates
+with honest "no" answers were added so the set does not depend on any single question
+surviving the check.
