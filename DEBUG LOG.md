@@ -704,6 +704,35 @@ notebook end to end from the command line and writes an executed copy with all o
 
 ---
 
+#### Run status board — one place to watch
+
+**Why.** Each measure logged its own progress, so telling "healthy" from "stuck" meant reading
+seven interleaved streams and doing arithmetic. There was no single view of what had finished,
+what was running, what had died, and how long was left.
+
+**Constraint.** A Jupyter kernel executes one cell at a time, so there is no way to run a
+separate monitor cell alongside RUN ALL. The status has to live inside the cell doing the work.
+
+**What it does.** `RunStatus` in Setup 5, driven by `sweep_measure` and the RUN ALL cell.
+Renders as a **sticky block that rewrites itself in place** via `update_display`, so it stays
+put instead of scrolling away under the measure logs; falls back to plain printing if the
+frontend does not support display updates.
+
+**ETA is costed per measure, not per cell.** Per-cell cost spans nearly two orders of
+magnitude — D1 generates and judges 25 responses, E1 is a handful of forward passes — so a
+naive cells-done ÷ cells-total estimate would be wrong for most of the run. Each measure uses
+a prior from the 2026-08-03 timing until it has completed two cells of its own, then switches
+to its measured rate.
+
+**`status.txt`, written from a background thread every 10s.** This covers the one case the
+in-notebook block cannot: if something hangs, the block freezes at its last update, and a
+frozen clock looks exactly like a slow one. The file keeps ticking, so a stale timestamp there
+means genuinely stuck rather than merely busy. The thread writes the file only — updating a
+display from a non-main thread is not reliable across frontends, and a wrong-cell write would
+be worse than no heartbeat.
+
+---
+
 #### D1b control selection is silent
 
 Rejected candidates are recorded in the debug dump but no longer printed. A control the model
