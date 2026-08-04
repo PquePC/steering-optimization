@@ -731,6 +731,27 @@ means genuinely stuck rather than merely busy. The thread writes the file only �
 display from a non-main thread is not reliable across frontends, and a wrong-cell write would
 be worse than no heartbeat.
 
+**The board states the verdict, it does not leave it to be derived.** `RunStatus.verdict()`
+classifies the run and prints the action in plain words, so nothing has to be interpreted from
+the numbers at 2am:
+
+| Verdict | Condition | Says |
+|---|---|---|
+| `>> ALL GOOD` | nothing below applies | Nothing needs you, expected finish in … |
+| `~~ RUNNING SLOW` | a measure's rate is >2.5× its prior | Judge rate-limiting. Slower, not broken. No action |
+| `!! NEEDS YOU WHEN IT FINISHES` | one measure died, **or** D1/D2 running <20% of expected per-cell time | Let it finish, then send that crash report / check for empty generations |
+| `!! STOP THE POD AND SEND LOGS` | no cell completed in >max(3 min, 6× that measure's rate), **or** ≥2 measures died | Stuck inside a call, or structural. Names the cell it stuck on |
+
+Stall is checked first because it is the one failure that looks exactly like healthy-but-slow.
+Too *fast* is treated as suspicious for the same reason too slow is: empty generations judge
+instantly, so D1 finishing in a fifth of the expected time is a symptom, not luck.
+`sweep_measure` reports each cell **before** running it as well as after, so a frozen board
+still names the cell it stopped on.
+
+The run ends with a banner that answers one question without being read closely — *is there
+anything I have to do?* On success it says so and points at the per-cell table. On failure it
+names the measures that died and lists the exact file paths to send.
+
 ---
 
 #### D1b control selection is silent
