@@ -49,6 +49,7 @@ judge `openai/gpt-4.1-mini` via OpenRouter.
 | n=1 on E1 / E2 / D1b / E4 | **fixed** 2026-08-04 — prompt and passage sets, mean ± SE |
 | Per-cell sanity score | **added** 2026-08-04 — every cell carries Detection / Effectiveness / Sanity |
 | Lab as a single unattended run | **added** 2026-08-04 — `AUTORUN` + RUN ALL cell |
+| Bug 25 (D2 was not batched, 9x slow) | **fixed** 2026-08-04 on the first live run |
 
 ---
 
@@ -751,6 +752,67 @@ still names the cell it stopped on.
 The run ends with a banner that answers one question without being read closely — *is there
 anything I have to do?* On success it says so and points at the per-cell table. On failure it
 names the measures that died and lists the exact file paths to send.
+
+---
+
+#### Bug 25 — `run_forced_noticing_test_batch` is not batched
+
+**Symptom.** First live run. D1 completed 30 cells at **30.4 s/cell**, matching its 29s
+estimate almost exactly. D2 then took **4m29s for its first cell** — 9× slower — while the
+status board sat frozen through it, because the main thread cannot redraw from inside a cell.
+
+**Root cause.** `steering_utils.py:1102`. The function is named `..._batch`, its docstring says
+"Run multiple forced noticing tests in a single batch", and its body is a plain Python loop:
+
+```python
+for trial_num in trial_numbers:
+    response = run_forced_noticing_test(...)   # one generation, start to finish
+```
+
+So D2 was doing 25 sequential single-stream generations per cell where D1's
+`run_steered_introspection_test_batch` does one batched call. At ~15–25 tok/s single-stream on
+a 27B, 100 tokens × 25 trials is 100–175s of generation plus judging — which is the 269s
+observed. Left unfixed, D2 alone would have been **~2h15m** against a whole-run estimate of 48
+minutes.
+
+**This is bug 7's pattern again.** Bug 7 came from trusting a summary of the paper instead of
+the code. This one came from trusting a function *name* and its docstring instead of the body.
+The measured 30.4 s/cell on D1 is what exposed it: the estimate was right for everything that
+actually batches, so the outlier was visible immediately rather than being absorbed as "models
+are slow".
+
+**Fix.** `run_forced_noticing_batch_fast()` defined in the lab's D2 cell, mirroring
+`run_steered_introspection_test_batch` (`steering_utils.py:545`) — the path D1 uses and which
+the rig check validated at 0.383 against 0.382 published. The two prompts differ by exactly one
+thing: the assistant prefill appended after `add_generation_prompt=True`. Render the template
+once with a placeholder trial number, string-replace per trial, take the steering start from
+the first prompt, one call to `generate_batch_with_steering`.
+
+**Defined in the notebook, not patched into the clone.** The upstream stays pristine apart from
+the OpenRouter change, and a local override is visible to anyone reading the notebook.
+
+**Verification, and what it does and does not cover.** `verify_forced_prompts()` gates the cell.
+It calls the **repo's own** `run_forced_noticing_test` with `generate_with_steering` swapped for
+a recorder, so what it compares against is what the repo would actually have sent to the model —
+not a second copy of the same reasoning. Prompts must match byte for byte and start positions
+must be equal, for trials 1, 7 and 25 (one, one and two digit). No generation, no GPU cost.
+
+It does **not** cover the batch-wide approximation: `generate_batch_with_steering` applies
+prompts[0]'s scalar start position to every row, and padding is left
+(`model_utils.py:125`), while the left-padding correction at `model_utils.py:1061` only fires
+for the multi-steering path — in the single-vector path `steering_pos_tensor` is always `None`.
+Trials whose number has a different digit count therefore sit up to one token off. **D1 makes
+exactly the same approximation on exactly the same prompt** and reproduced the published rate,
+so the error is bounded at one token in a ~200 token prompt and already priced into the rig
+check.
+
+**Silent?** No — it produced correct numbers slowly. Worth logging anyway: without the
+per-measure timing on the board it would have read as "D2 is just expensive", and the design
+would have carried a 2h15m measure as though it were a 15 minute one.
+
+**Follow-up.** `CELL_SECONDS_PRIOR["D2"]` corrected from 28 to 30, alongside D1's. Any other
+repo function whose name promises batching should be read before being costed —
+`run_unsteered_introspection_test_batch` is the next one to check.
 
 ---
 
