@@ -55,8 +55,8 @@ judge `openai/gpt-4.1-mini` via OpenRouter.
 | Bug 26 (E1 + D1b measured an unsteered model) | **fixed** 2026-08-04 — own hook; S14 added so it cannot recur silently |
 | Bug 27 (judge scored `##` spam as coherent) | **fixed** 2026-08-04 — S15 objective backstop; sanity takes the worst of the two |
 | S12 passed a dead measure | **fixed** 2026-08-04 — three states with a zero tolerance |
-| Residual-stream norms not recorded in the lab | **open** — blocks the r_L collapse test |
-| Damage anchor mis-calibrated (15.85 nats at α=16) | **open** — capability term does no work |
+| Residual-stream norms not recorded in the lab | **fixed** 2026-08-05 — one forward pass hooks every swept layer; `r_L` on every cell |
+| Damage anchor mis-calibrated (15.85 nats at α=16) | **fixed** 2026-08-05 — capability scored in multiples of the baseline loss |
 
 ---
 
@@ -981,6 +981,52 @@ and only the coherence term did any work. α=16 is too far off-manifold to norma
 1.00 could not be audited at all; the control block was likewise unsaved behind an FPR of
 0.000. Both now write transcripts. The rule: **any measure that can report an extreme must
 persist what produced it.**
+
+---
+
+### 2026-08-05 — the two open items from the first sweep
+
+#### Residual-stream norms are now recorded, so the collapse test is possible
+
+`residual_norms()` in Setup 8 hooks **every swept layer in one forward pass** and takes the
+median token-wise norm, measured on the detection prompt because that is the context the
+steering actually runs in. `NORMS` is written to `measures/norms.jsonl`, and every cell in the
+summary now carries `vec_norm`, `resid_norm` and
+
+    r_L = alpha * ||v_L|| / ||h^(L)||
+
+with `r_L` printed in the per-cell table so the confound is visible without opening the JSONL.
+
+**Why it matters here specifically.** Measured ‖v_L‖ ran 14 at L6 to 8896 at L46, so at α=4
+the L6 perturbation was 0.3% of L37's. Every early-layer cell was flat on D1, D2, E2 and E4,
+and without ‖h^(L)‖ there was no way to tell "early injection does nothing" from "we barely
+injected anything". The frontier must be re-plotted against `r_L` before the layer axis is
+read as a layer effect.
+
+#### Capability is scored against the baseline loss, not the α=16 anchor
+
+The anchor measured **15.85 nats**. Against that, `1 − delta/anchor` was 0.87 after two full
+nats of degradation; 29 of 30 cells passed `usable` and only the coherence term did any work.
+
+Capability is now `1 − min(delta ÷ (3 × baseline loss), 1)`. The baseline (≈3.0 nats here) is a
+natural unit — one baseline of delta means the model is *e* times more surprised by ordinary
+English — and it needs no threshold picked by hand. Validated against the run:
+
+| Cell | old cap | new cap | usable |
+|---|---|---|---|
+| L37 α=2 (candidate operating point) | 0.96 | **0.93** | y |
+| L37 α=4 (best detection, fully coherent) | 0.87 | **0.77** | y |
+| L46 α=3 (`##` spam) | 0.96 | 0.93 | **n** — on coherence, correctly |
+| α=16 anchor | 0.50 | **0.00** | — |
+
+28 of 30 usable, against 29 of 30 before.
+
+**Capability is deliberately not the binding gate.** E2 measures neutral-text loss, which
+conflates damage with concept bleed: at L37/α=4 the delta is 2.06 nats while the responses are
+coherent, correct and on-task with zero objective degeneracy. Degeneracy is the ground truth
+for "broken"; capability now only catches catastrophic loss, at 1.5 baselines. The α=16 anchor
+is still measured and logged as a reference point — knowing where the far end sits is useful —
+but it no longer sets the scale.
 
 ---
 

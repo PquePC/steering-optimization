@@ -118,11 +118,13 @@ computation rather than eliciting the native one).
 
 > **Why `min` rather than a mean:** incoherence and capability loss are two different ways for a cell to be unusable, and passing one does not compensate for failing the other. A cell that is perfectly coherent while having lost general capability is still not somewhere anything can be measured.
 
-**`usable` flag, pre-committed:** incoherence ≤ 0.15 **and** E2 delta ≤ half the damage anchor. Cells failing it are retained in the data, plotted in a distinct style, and excluded from candidate operating points.
+**`usable` flag, pre-committed:** degeneracy ≤ 0.15 — the **worst** of the judge's incoherence rate and S15's objective check — **and** capability ≥ 0.50. Cells failing it are retained in the data, plotted in a distinct style, and excluded from candidate operating points.
 
-**The damage anchor is measured, not asserted.** There is no absolute NLL value that means "broken" — it depends on the passage, the model and the tokenizer. The scale is pinned at both ends inside the same run: α=0 (delta 0 by construction) and **α=16 at the reference layer**, roughly 4× the strongest grid strength and far enough off-manifold that a model which is going to break has broken there. A cell's capability score is its position between them. Cost: one passage pass.
+**Capability is scored in multiples of the baseline loss.** `sanity_capability = 1 − min(E2 delta ÷ (3 × baseline loss), 1)`. The baseline loss is a natural unit that needs no arbitrary threshold: a delta of one baseline means the model is *e* times more surprised by ordinary English. Measured on Gemma3-27B the baseline is ≈3.0 nats, so capability reaches zero at 9 nats of degradation.
 
-> **Why an anchor rather than a fixed threshold:** a threshold picked in advance is a guess about a quantity that varies by model and by concept, and picking it after seeing the sweep is the failure Decision 8b exists to prevent. Two anchors measured in the run make the scale a property of the experiment rather than of the author.
+> **Superseded — why not the α=16 anchor.** An earlier version pinned the scale between α=0 and α=16 at the reference layer. Measured, that anchor came in at **15.85 nats** — so far off-manifold that `1 − delta/anchor` sat at 0.87 after two full nats of degradation, 29 of 30 cells passed, and only the coherence term did any work. An anchor that extreme compresses every real cell into the top tenth of the scale. α=16 is still measured and logged as a **reference point**, because knowing where the far end sits is useful; it is no longer the normaliser.
+
+> **Why capability is deliberately not the binding gate.** E2 measures loss on neutral text, which conflates damage with concept bleed (§E2). At L37/α=4 the delta is 2.06 nats while the responses are perfectly coherent, correct and on-task, with zero objective degeneracy — so neutral-text loss overstates brokenness exactly where steering is working. **Degeneracy is the ground truth for "broken"**; capability catches only catastrophic loss, at 1.5 baselines. Taking the `min` of the two means either can disqualify a cell, but in practice coherence is what bites.
 
 ### Sanity measures (S) — the global checks
 
