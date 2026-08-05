@@ -51,6 +51,12 @@ judge `openai/gpt-4.1-mini` via OpenRouter.
 | Lab as a single unattended run | **added** 2026-08-04 — `AUTORUN` + RUN ALL cell |
 | Bug 25 (D2 was not batched, 9x slow) | **fixed** 2026-08-04 on the first live run |
 | Bug 25b (batched D2 would have mis-steered and mis-decoded short prompts) | **fixed** 2026-08-04 — D2 uses the multi-steering path |
+| First full sweep on Origami | **completed** 2026-08-04 — 26m46s, 7/7 measures, no crashes, no rate limits |
+| Bug 26 (E1 + D1b measured an unsteered model) | **fixed** 2026-08-04 — own hook; S14 added so it cannot recur silently |
+| Bug 27 (judge scored `##` spam as coherent) | **fixed** 2026-08-04 — S15 objective backstop; sanity takes the worst of the two |
+| S12 passed a dead measure | **fixed** 2026-08-04 — three states with a zero tolerance |
+| Residual-stream norms not recorded in the lab | **open** — blocks the r_L collapse test |
+| Damage anchor mis-calibrated (15.85 nats at α=16) | **open** — capability term does no work |
 
 ---
 
@@ -851,6 +857,130 @@ two `..._batch` functions in the pipeline were then read rather than assumed:
 | `run_forced_noticing_test_batch` (D2) | **no** — a `for` loop. This bug |
 
 D2 was the only offender. Nothing else in the pipeline is mis-costed.
+
+---
+
+### 2026-08-04 — first full sweep on Origami; manual audit of every extreme
+
+**The run itself.** 26m46s, all 7 measures, 30/30 cells each, no crashes. D2 at 20.6 s/cell
+against D1's 24.2 — the batching fix worked. **No OpenRouter limit was hit**: zero WARN or
+ERROR lines in `lab.log`, zero 429 / rate-limit / timeout / retry / exception events in
+`console.log` (all 17 regex hits are the benign `CELL FINISHED: NO ERRORS` markers), and the
+M0 debug dump has **0 of 600** rows with a missing judge verdict or missing coherency score.
+
+---
+
+#### Bug 26 — E1 and D1b measured an unsteered model at all 30 cells (silent)
+
+**Symptom.** `e1 = 0.000` and `d1b = +0.000000` at every cell, including L37/α=4 where
+detection is 0.92. Steered and unsteered distributions **bit-identical**:
+`prob=3.668682e-10 base=3.668682e-10 rank=722 base_rank=722 d_entropy=+0.000000`.
+
+**Root cause.** `steering_utils.py:119`, the `SteeringHook` fallback for a layer whose output
+is not a tuple:
+
+```python
+else:                                   # non-tuple output
+    if self.start_pos is None:
+        return output + steering_vec.view(1, 1, -1)
+    else:
+        return output                   # unmodified. No steering. No error.
+```
+
+Gemma3's decoder layers return a plain tensor, so **every call carrying a `start_pos` was
+silently unsteered**. The split is exact and explains everything observed:
+
+| Path | `start_pos` | Outcome |
+|---|---|---|
+| E2, E4 (`passage_pass`) | `None` | works — E4 rises 0.021 → 2.930 with α |
+| E1, D1b (`logits_for`) | set | **dead** — identically zero at all 30 cells |
+| D1, D2 | repo's own inline hooks, which handle non-tuple output | work |
+
+**The bitter part:** passing `start_pos` *was the fix for bug 8* — matching E1's intervention
+to D1's. The fix is what killed the measure.
+
+**Fix.** `injected` no longer wraps `SteeringHook`; it registers its own forward hook with the
+same intended semantics applied to both output shapes, and **raises** rather than returning
+quietly when it cannot steer.
+
+**Why nothing caught it.** S12 asked whether `|E1| ≥ 2·SE`. With E1 = 0 and SE = 0 that is
+`0 < 0` → False → "none flagged". A dead measure passed the check designed to catch a weak
+one. S10 printed `E1 0.000` at every α and said "expect E1 up" — an expectation, not a gate.
+
+**New: S14, hook liveness.** Two forward passes at the end of Setup 8 assert that steered
+differs from unsteered on **both** paths — the `start_pos` one and the all-positions one.
+This bug would have died in Setup 7 rather than after an hour of measurement.
+
+**S12 rebuilt with three states** rather than two, and a tolerance, because zero variance is
+only a problem when it sits around a zero mean:
+
+| State | Condition | Meaning |
+|---|---|---|
+| **DEAD** | `|E1| < s12_zero_tol` on *every* prompt | the measure is not running — gate fails |
+| **FRAGILE** | `|E1| < 2·SE` | real but does not survive rephrasing |
+| fine | anything else, **including zero variance with a real mean** | the prompts simply agree |
+
+Validated against the actual dead data: **DEAD = 30/30, gate fails.** The old check passed it.
+
+---
+
+#### Bug 27 — the judge scored collapsed output as coherent (silent)
+
+**Symptom.** L46/α=3 reports `incoherence 0.00` and `D1 = 0.04`, and passed the `usable` gate.
+The responses are literally `## ## ## ## ##` repeated to the token limit.
+
+**Audit.** A mechanical degeneracy check — repetition ratio, alphabetic fraction, minimum
+length — run over all 750 transcripts:
+
+| Cell | objective degenerate | judge incoherence | verdict |
+|---|---|---|---|
+| L46 α=3 | **0.92** | 0.00 | **judge missed it entirely** |
+| L46 α=4 | 1.00 | 0.80 | judge caught it, understated |
+| the other 28 cells | 0.00 | 0.00 | **judge is right** |
+
+So "incoherence 0 everywhere" is *genuine* for 28 of 30 cells. The failure is specific and
+confined, but it put garbage into the frontier: L46/α=3 was reported as a candidate operating
+point (D1 0.04, E4 0.917, coherent) and is nothing of the kind. Its single flagged detection
+is the one non-degenerate response in the cell, and it correctly names Origami.
+
+**Fix — S15, objective degeneracy backstop.** Computed without a judge, compared against the
+judge's rate per cell, and it **gates**: any cell where output is collapsed but the judge
+called it coherent fails. The per-cell sanity score now takes the **worst** of the two, so
+L46/α=3 moves from `usable=y` to `usable=n` (coherence 0.08). No false positives — L37/α=4
+stays fully usable.
+
+> A sanity score that a classifier can talk round is not a sanity score.
+
+---
+
+#### Findings from the audit that are results, not bugs
+
+**D1 without introspection is confabulation, not detection.** At L31/α=4, D1 = 0.12 with
+introspection = 0.00. Reading the three flagged responses: the model claims detection and
+names **penguins**, **cats**, **cats** — never Origami. Same family as the trial-30 "apple"
+confabulation. The D1-versus-introspection gap is load-bearing and should be reported as
+such, not collapsed into a single detection rate.
+
+**The layer sweep is confounded by vector norm, and it is large.** Measured ‖v_L‖: L6 = 14,
+L12 = 58, L21 = 244, L31 = 2128, L37 = 4640, L46 = 8896. At α=4 the perturbation at L6 is
+**0.3%** of L37's. Every early-layer cell is flat on D1, D2, E2 and E4 — not because early
+injection does nothing, but because α·‖v_L‖ is negligible there. This is the `r_L` confound
+§2 anticipated, now measured. **The lab does not record residual-stream norms**, so the
+collapse test cannot be run on this data; `pipeline_v1` computes them and the lab should too.
+
+**The dissociation is present and large.** L37/α=2: D1 = 0.04 (CI [0.01, 0.20]) against
+D2 = 1.00 (CI [0.87, 1.00]), E4 = 0.685, zero degeneracy. The concept is fully available at
+the output stage while the model volunteers it on one trial in twenty-five. That is Macar's
+64.8%-vs-22.3% gap, much wider, on the first concept tested.
+
+**The damage anchor is mis-calibrated.** α=16 gave E2 Δ = 15.85 nats, so
+`1 − Δ/15.85` sits at 0.87 even after 2 nats of degradation. 29 of 30 cells passed `usable`
+and only the coherence term did any work. α=16 is too far off-manifold to normalise against.
+
+**Persistence gaps closed.** D2 saved only its rate, so 29 of 30 cells reading exactly 0.00 or
+1.00 could not be audited at all; the control block was likewise unsaved behind an FPR of
+0.000. Both now write transcripts. The rule: **any measure that can report an extreme must
+persist what produced it.**
 
 ---
 
