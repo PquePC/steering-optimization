@@ -57,6 +57,12 @@ judge `openai/gpt-4.1-mini` via OpenRouter.
 | S12 passed a dead measure | **fixed** 2026-08-04 — three states with a zero tolerance |
 | Residual-stream norms not recorded in the lab | **fixed** 2026-08-05 — one forward pass hooks every swept layer; `r_L` on every cell |
 | Damage anchor mis-calibrated (15.85 nats at α=16) | **fixed** 2026-08-05 — capability scored in multiples of the baseline loss |
+| Second full sweep on Origami (config `4be280ab0919`) | **clean** 2026-08-05 — S14+S4 pass, E1/D1b alive, 33m19s |
+| M1 result | **dissociation confirmed** at L37/α=2: D1 0.08 vs D2 0.96, sanity-clean. See `M1 Results — Origami.md` |
+| Next concept | **Lightning** (D1 0.500) — lower detection, more D2 headroom |
+| S5 band widened to 2σ | **fixed** 2026-08-05 — ±1σ flagged live per-concept vectors (Lightning 3472) |
+
+_Bug numbering: bugs 26–27 are the last hard bugs; the 2026-08-05 items are calibration/scope, not silent-number bugs._
 
 ---
 
