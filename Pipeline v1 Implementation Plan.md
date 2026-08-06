@@ -358,3 +358,32 @@ code. Everything below was verified by reading the repo.
 The second is the relevant one for the gate's stated purpose. It establishes that the rig is **not grossly broken** — a wrong layer, a doubled `<bos>`, a mis-hooked residual stream or a mis-prefixed judge all drive the aggregate toward zero and would fail comfortably. It does not establish agreement to within 5pp.
 
 - [ ] Confirm whether the 10 rig concepts were drawn at random from Macar's 500-concept list. If they were selected rather than sampled, the aggregate is not an estimate of his aggregate and only the "not grossly broken" reading survives.
+
+## Multi-concept batch harness (`measurement_lab.ipynb`)
+
+`BATCH_MODE = True` (Setup 4) runs a whole `CONCEPTS` list from one kernel: concept-independent
+setup and the rig check (M0) run **once**; each concept then gets its own vectors, baselines,
+sweep, behaviour probe, and `runs/<concept>_<hash>` folder via `set_concept()` →
+`prepare_concept()` → `run_all_measures()`, driven by the "RUN ALL CONCEPTS" cell. Telegram is
+kept quiet: only concept start, the 10-min slow beat, concept finish (+aggregate results), the
+behaviour probe, and one batch-finished message. Per-measure completion pushes were removed.
+Each concept is archived to `runs/lab_<concept>_<hash>.zip` (raw responses included) and the loose
+folder is wiped (`WIPE_AFTER_EACH`) to protect the volume; VRAM/host caches are cleared between
+concepts. The behaviour probe (`PROBE_QUESTIONS`) runs at the top-3 operating points per concept.
+
+### ⚠️ Deferred until harmful concepts are run — DO NOT OVERLOOK (recorded 2026-08-06)
+
+The batch harness was built and validated assuming **all concepts are benign** (Lightning-class).
+Two paths handle raw model artefacts in ways that are fine for benign concepts but **must be
+reviewed before any harmful concept (`weapon`/`poison`/`assault`) is added to `CONCEPTS`:**
+
+1. **Per-concept pod archive includes raw responses** (`lab_<concept>_<hash>.zip`), and vectors are
+   written under `runs/.../vectors/`. For harmful concepts this is archiving uncensored generations
+   and attack vectors on the volume — against "regenerate, never archive" in `CLAUDE.local.md`.
+   Pull them off and wipe at session end; do not keep a long-lived volume of them.
+2. **`SEND_PROBE_TO_TELEGRAM = True`** sends the behaviour-probe raw generations to Telegram. Set it
+   to **`False`** for harmful concepts — only aggregate rates/scalars may leave the pod. (The
+   aggregate results zip is already generations-free and is safe regardless.)
+
+Cross-reference: `docs/risks-and-ethics.md`. This note exists so the benign-only assumption is not
+silently carried into a harmful run.
