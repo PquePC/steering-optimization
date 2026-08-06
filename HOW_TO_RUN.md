@@ -8,11 +8,32 @@ when done.
 
 ---
 
-## 0. Get it onto the pod
-`git pull` (or re-upload) so the pod has the latest `measurement_lab.ipynb` **and**
-`pod_watchdog.sh`. Open the notebook in JupyterLab. The top of the notebook has a **Control
-panel & operations** markdown cell (terminal / watchdog / API-key how-tos) followed by the
-**CONTROL PANEL** code cell.
+## 0. Get it onto the pod / keep it updated (`sync.sh`)
+Instead of deleting and re-uploading the notebook, clone the repo once and use `sync.sh`.
+
+**First time** (in a pod terminal) — HTTPS + a GitHub token (fine-grained, read-only on this
+repo is enough):
+```bash
+GH=YOUR_TOKEN; git clone https://x-access-token:$GH@github.com/PquePC/Emergent-Introspection.git \
+  /workspace/Emergent-Introspection \
+  && git -C /workspace/Emergent-Introspection remote set-url origin \
+       https://github.com/PquePC/Emergent-Introspection.git \
+  && printf '%s' "$GH" > /workspace/.gh_token && chmod 600 /workspace/.gh_token
+```
+(or, if the pod has an SSH key: `git clone git@github.com:PquePC/Emergent-Introspection.git /workspace/Emergent-Introspection`)
+
+**Before each run / after any code change:**
+```bash
+bash "/workspace/Emergent-Introspection/Steering Optimization/sync.sh"
+```
+It force-matches GitHub (`fetch` + `reset --hard`, discarding the disposable cell outputs the
+notebook writes into itself), fixes line endings / +x on the scripts, and prints what changed.
+Then in Jupyter: **File → Reload Notebook from Disk** (or re-open it) and re-run. The token
+lives only in `/workspace/.gh_token`, never in git config. Open the notebook from
+`/workspace/Emergent-Introspection/Steering Optimization/measurement_lab.ipynb`.
+
+The notebook's Setup 2 still clones `introspection-mechanisms` and pip-installs deps on its
+own (idempotently), so `sync.sh` only has to update this repo.
 
 ## 1. Configure — the CONTROL PANEL cell (everything you edit is here)
 - **CONCEPTS** — the list to sweep, one per line. Setup + rig check run once; each concept
