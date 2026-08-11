@@ -84,6 +84,14 @@ _EXPORTS: dict[str, tuple[str, ...]] = {
         "EXPORT_DENY", "export_bundle", "deliver_then_wipe",
     ),
     "driver": ("set_concept", "run_concept", "run_batch"),
+    # Optional arm and reuse surface. Not part of the measurement path - the pipeline produces
+    # a complete operating point without either - but both are checked here so a rename in
+    # `expensive` or `cheap` that breaks them is caught by the same assertion as everything else.
+    "multilayer": ("DEFAULT_K", "PLACEMENTS", "SPLITS", "dose_per_layer", "choose_layers",
+                   "build_plan", "steering_mask", "generate_multi", "measure_plan", "run_arm"),
+    "steer": ("load_operating_point", "use", "steering", "ask", "compare", "probe",
+              "session", "sweep"),
+    "run": ("main", "apply_overrides", "check_environment"),
 }
 
 # name -> owning module. Built once; a duplicate name across two modules would silently

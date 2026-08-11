@@ -489,10 +489,61 @@ def test_public_surface_check_covers_the_importable_modules():
     assert report["checked"] > 0, "nothing was checked - the report is vacuous"
     # `missing` is a flat list of "module.name". Modules that need torch cannot be imported
     # here, so they land in `unimportable` and are excluded rather than counted as missing.
-    torch_only = {"vectors", "expensive", "controls"}
+    torch_only = {"vectors", "expensive", "controls", "multilayer", "steer"}
     assert set(report["unimportable"]) <= torch_only, report["unimportable"]
     real = [n for n in report["missing"] if n.split(".")[0] not in torch_only]
     assert not real, f"CONTRACT names missing from the package: {real}"
+
+
+# =====================================================================================
+# run - the CLI surface
+# =====================================================================================
+
+def test_override_rejects_a_key_that_does_not_exist():
+    """`--set D2MAX=0.25` must not silently create a constant nothing reads. The run would
+    then use the default D2_MAX and report a constraint nobody chose."""
+    from m2 import run as m2run
+    cfg = dict(config.CONFIG)
+    with pytest.raises(SystemExit) as caught:
+        m2run.apply_overrides(cfg, ["D2MAX=0.25"])
+    assert "D2_MAX" in str(caught.value), "the error should name the key it meant"
+
+
+def test_override_parses_a_dose_tuple_as_numbers():
+    """SCAN_DOSES=0.15,0.30 must become floats. A stringified dose would be compared against
+    numbers and never match anything, silently."""
+    from m2 import run as m2run
+    cfg = dict(config.CONFIG)
+    applied = m2run.apply_overrides(cfg, ["SCAN_DOSES=0.15,0.30,0.45", "D2_MAX=0.25"])
+    assert applied["SCAN_DOSES"] == (0.15, 0.30, 0.45)
+    assert applied["D2_MAX"] == 0.25
+    assert all(isinstance(x, float) for x in cfg["SCAN_DOSES"])
+
+
+def test_override_changes_the_config_hash():
+    """So an overridden run gets its own folder and cannot resume into the earlier grid."""
+    from m2 import run as m2run
+    before = config.config_hash({k: v for k, v in config.CONFIG.items() if k != "config_hash"})
+    cfg = dict(config.CONFIG)
+    m2run.apply_overrides(cfg, ["D2_MAX=0.25"])
+    after = config.config_hash({k: v for k, v in cfg.items() if k != "config_hash"})
+    assert before != after
+
+
+def test_required_credentials_are_the_two_the_run_cannot_proceed_without():
+    """Under nohup there is no TTY, so a getpass prompt would read EOF and the run would start
+    with no judge key and fail forty minutes later in Phase 4."""
+    from m2 import run as m2run
+    assert set(m2run.REQUIRED_ENV) == {"HF_TOKEN", "OPENROUTER_API_KEY"}
+    assert "HEALTHCHECK_URL" in m2run.OPTIONAL_ENV
+
+
+def test_concepts_file_ignores_comments_and_blanks(tmp_path):
+    from m2 import run as m2run
+    path = tmp_path / "concepts.txt"
+    path.write_text("Irony\n\n# a comment\nSilk   # trailing\nIrony\n", encoding="utf-8")
+    args = m2run._parser().parse_args(["--concepts-file", str(path)])
+    assert m2run._read_concepts(args) == ["Irony", "Silk"], "and de-duplicated, order kept"
 
 
 def test_s4_is_a_minimum_not_a_mean():

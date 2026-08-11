@@ -564,7 +564,8 @@ def _qualifying(rows: Any) -> list[dict]:
 # =====================================================================================
 
 def run_concept(name: str, *, notifier: Any = None, wipe: bool = True, deliver: bool = True,
-                EXPORT_TRANSCRIPTS_OVERRIDE: bool = False) -> dict:
+                EXPORT_TRANSCRIPTS_OVERRIDE: bool = False,
+                after_phases: Any = None) -> dict:
     """Phases 0-6 plus the controls for one concept. Resumable, isolated, never raises.
 
     Skips entirely if the concept's archive already exists (spec 14.9): a finished concept is
@@ -730,6 +731,14 @@ def run_concept(name: str, *, notifier: Any = None, wipe: bool = True, deliver: 
         return out
 
     ok_ctrl, ctrl = state.phase("CONTROLS", _run_controls, units=1)
+
+    # Optional extra arms, run here so their rows land in the bundle: after the winner exists
+    # and the controls have judged it, before the gates read the run and the archive closes it.
+    # Wrapped in state.phase like everything else, so an arm that dies loses only itself - the
+    # operating point is already measured and must not be lost to an optional extra.
+    if after_phases is not None and winner is not None:
+        state.phase("EXTRA", lambda: after_phases(winner), units=1)
+
     if ok_ctrl and isinstance(ctrl, dict):
         for key, what in (("random_direction", "section 9.1 random-direction control"),
                           ("forced_id_capability", "section 9.2 forced-ID capability control")):
@@ -968,7 +977,7 @@ def _compromised(result: dict) -> bool:
 
 
 def run_batch(concepts: Sequence[str], *, stop_pod: bool = True, wipe: bool = True,
-              EXPORT_TRANSCRIPTS_OVERRIDE: bool = False) -> dict:
+              EXPORT_TRANSCRIPTS_OVERRIDE: bool = False, after_phases: Any = None) -> dict:
     """Run the full pipeline over `concepts`, isolated per concept. Spec 14.9.
 
     - a concept whose archive already exists is skipped, not re-run;
@@ -1024,7 +1033,8 @@ def run_batch(concepts: Sequence[str], *, stop_pod: bool = True, wipe: bool = Tr
             try:
                 record = run_concept(
                     concept, notifier=notifier, wipe=wipe, deliver=True,
-                    EXPORT_TRANSCRIPTS_OVERRIDE=EXPORT_TRANSCRIPTS_OVERRIDE)
+                    EXPORT_TRANSCRIPTS_OVERRIDE=EXPORT_TRANSCRIPTS_OVERRIDE,
+                    after_phases=after_phases)
             except Exception as exc:                    # noqa: BLE001 - per-concept isolation
                 record = dict(concept=concept, status="failed_hard",
                               failed_phases=["<concept>"], failure_labels={"<concept>": _label(exc)},

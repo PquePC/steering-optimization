@@ -17,7 +17,10 @@ log in [`M2 — Pipeline Plan.md`](M2%20—%20Pipeline%20Plan.md). This document
 |---|---|
 | `m2/` | the pipeline. Plain `.py` modules — this is the codebase |
 | `m2/CONTRACT.md` | module boundaries, exact names, file formats, and the 20 defences with the bug behind each |
-| `m2/tests/test_offline.py` | 46 invariants that run with no GPU, no model and no judge key |
+| `m2/tests/test_offline.py` | 51 invariants that run with no GPU, no model and no judge key |
+| `m2/run.py` | the CLI — `python -m m2.run`. Use this for unattended batches |
+| `m2/steer.py` | reuse a finished operating point: `steer.use(...)`, `compare`, `session` |
+| `m2/multilayer.py` | the optional k ∈ {2,3,5} arm |
 | `m2_pipeline.ipynb` | thin driver: control panel, setup, one Run All cell |
 | `pod_watchdog.sh` | the out-of-process hang watchdog |
 | `sync.sh` | pull this repo onto the pod |
@@ -100,6 +103,60 @@ silently does not work looks exactly like one with nothing to report.
 ---
 
 ## 4. Run it
+
+Two ways. **Use the CLI for any batch you intend to walk away from**; use the notebook for
+setup, for a single exploratory concept, and for `m2.steer` afterwards.
+
+### 4a. The CLI — recommended for unattended runs
+
+```bash
+cd "/workspace/Emergent-Introspection/Steering Optimization"
+export HF_TOKEN=... OPENROUTER_API_KEY=... TELEGRAM_BOT_TOKEN=... TELEGRAM_CHAT_ID=... HEALTHCHECK_URL=... RUNPOD_API_KEY=...
+nohup python -m m2.run --concepts Irony,Silk,Pillows > /workspace/m2.out 2>&1 &
+tail -f /workspace/m2.out
+```
+
+**Why this and not the notebook.** The Jupyter kernel is otherwise in the failure set: a dropped
+browser connection, a restart, or a hung kernel holding the GIL all end the run — and the last
+of those is exactly why v1 needed an out-of-process watchdog to notice a hang the notebook could
+not report. A `nohup`-ed process survives the SSH session and the browser, and writes to a file
+both `tail` and the watchdog can read. **The watchdog stays either way** — it guards against a
+wedged *process*, not only a wedged kernel.
+
+**Credentials come from the environment, not `getpass`.** Under `nohup` there is no TTY, so a
+prompt would read EOF and the run would start with no judge key and fail forty minutes later in
+Phase 4. `HF_TOKEN` and `OPENROUTER_API_KEY` are checked before anything loads and the process
+refuses to start without them; every optional one prints what its absence costs.
+
+Always do this once on a fresh pod before spending a GPU-hour:
+
+```bash
+python -m m2.run --concepts Irony --preflight
+```
+
+Environment, imports, the public-surface assertion, the model load and the rig checks — then it
+exits. Measures nothing, spends no judge calls. If R14 fails here, **stop**.
+
+| Flag | What it does |
+|---|---|
+| `--concepts Irony,Silk` / `--concepts-file PATH` | what to run. The file form ignores blanks and `#` comments |
+| `--set KEY=VALUE` | override a §11 constant, repeatable. `--set SCAN_DOSES=0.15,0.30,0.45` parses as floats. An unknown key is refused with a "did you mean" rather than silently ignored |
+| `--multilayer` | run the k ∈ {2,3,5} arm after each winner, isolated so a failure cannot cost the operating point |
+| `--no-wipe` | keep each loose run folder after delivery |
+| `--no-stop-pod` | do not STOP the pod at the end |
+| `--transcripts-override` | include transcripts for non-benign concepts. Read §9 first |
+| `--skip-rig-checks` | dangerous; R14 is what catches an injection hook that silently does nothing |
+| `--preflight` / `--dry-run` | check everything / print the plan and exit |
+
+Exit codes: **0** clean, **1** a concept failed or the batch died, **2** a configuration problem
+(missing name, unimportable module, bad override), **130** interrupted. On `SIGINT`/`SIGTERM` it
+says so, drains the notifier queue, and leaves every written row in place — re-running the same
+command resumes from them.
+
+`--set` changes `config_hash`, so an overridden run gets its own folder and **cannot** resume
+into the earlier grid.
+
+### 4b. The notebook
 
 **Kernel → Restart & Run All.** In order: control panel → Setup 1–6 → RUN ALL.
 
