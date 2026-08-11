@@ -3,8 +3,8 @@
 **A complete runbook from an empty RunPod account to a finished experiment.** Copy-paste, in
 order. You do not need to read anything else to get a result.
 
-Total: ~15 min of setup, ~20 min of model download, then ~35 min per concept.
-Cost: roughly **$1.20–1.70 per concept** — GPU dominates, judges are about $0.50.
+Total: ~15 min of setup, ~20 min of model download, then **~50–60 min per concept** (measured,
+not estimated). Cost: roughly **$1.60–2.50 per concept** — GPU dominates, judges are ~$0.50.
 
 ---
 
@@ -29,7 +29,23 @@ Deploy, wait for **Running**, then **Connect → Jupyter Lab**, and in Jupyter:
 
 ---
 
-## Step 2 — Get the code
+## Step 2 — Set `HF_HOME` first, in every shell
+
+**Before anything touches HuggingFace.** This is the single most expensive mistake available
+here, and it has already happened once: the default cache is on container disk, so the 54 GB
+model does not survive a pod stop and re-downloads every time.
+
+```bash
+export HF_HOME=/workspace/hf
+```
+
+`setup_pod.sh` also writes this to `~/.bashrc`, **but `~/.bashrc` is on container disk and does
+not survive a new pod or a server migration.** Every new terminal, and every new pod, needs the
+export again. If you only ever type one thing from memory, make it this line.
+
+---
+
+## Step 3 — Get the code
 
 You need a GitHub token with read access to this repo (github.com → Settings → Developer
 settings → Personal access tokens → Fine-grained, read-only on `Emergent-Introspection`).
@@ -48,7 +64,7 @@ The `remote set-url` afterwards keeps the token out of `.git/config`.
 
 ---
 
-## Step 3 — Install everything
+## Step 4 — Install everything
 
 One command. Idempotent — safe to re-run after a pod restart.
 
@@ -60,11 +76,33 @@ It sets `HF_HOME=/workspace/hf` (so the 54 GB download survives a stop), clones 
 harness from **`safety-research/introspection-mechanisms`**, installs dependencies, prints
 versions, and runs the offline tests.
 
-**Expected ending:** `51 passed`. If you see that, the code is intact.
+**Expected ending:** `53 passed`. If you see that, the code is intact.
+
+### After a pod migration, use the doctor instead
+
+Migrating is routine: the network volume survives, the container does not. Rather than working
+out by hand which half is missing:
+
+```bash
+cd "/workspace/Emergent-Introspection/Steering Optimization"
+python -m m2.doctor --repair
+```
+
+It checks the volume, `HF_HOME` and whether the model actually landed on it, the repo and
+branch, the harness clone, every Python package, the GPU and its VRAM, your credentials, **what
+each concept has already measured**, and the offline tests — then fixes what it can (clone the
+harness, install packages, pull the repo, trim a JSONL left half-written by a hard kill) and
+tells you plainly what only you can fix.
+
+Three states, no ambiguity: `ok`, `FIX` (repairable), `BLOCK` (needs you — credentials, GPU,
+the volume itself). It imports nothing heavy, so it works when the missing thing *is* the
+dependencies.
+
+Run it read-only any time with `python -m m2.doctor`, or as `python -m m2.run --doctor`.
 
 ---
 
-## Step 4 — Credentials
+## Step 5 — Credentials
 
 **Prefix every line with a space** so it stays out of `~/.bash_history`.
 
@@ -93,7 +131,7 @@ versions, and runs the offline tests.
 
 ---
 
-## Step 5 — Preflight
+## Step 6 — Preflight
 
 **Do this before spending a GPU-hour.** It loads the model and runs the rig checks, then exits.
 No judge calls, no measurement.
@@ -105,6 +143,17 @@ python -m m2.run --concepts Garlic --preflight
 
 First run downloads ~54 GB — **15–25 minutes**. Subsequent runs load from `/workspace/hf` in
 about two minutes.
+
+**Then confirm the model actually landed on the volume**, before you pay for a run:
+
+```bash
+du -sh /workspace/hf
+```
+
+Expect **~54 G**. If it is small or the directory does not exist, `HF_HOME` was not set in the
+shell that did the download and the model went to container disk, where it will not survive a
+stop. Fix step 2 and re-run the preflight; better to lose two minutes here than to discover it
+after a pod migration.
 
 **What you should see:**
 
@@ -130,7 +179,7 @@ to catch a weak effect. Do not run a paid sweep on that.
 
 ---
 
-## Step 6 — Start the watchdog
+## Step 7 — Start the watchdog
 
 **A second terminal** (File → New → Terminal). Not the notebook, not the same shell.
 
@@ -144,26 +193,28 @@ a long judge wait — during which the GPU is legitimately idle — from trippin
 
 ---
 
-## Step 7 — Run
+## Step 8 — Run
 
 Back in the first terminal:
 
 ```bash
 cd "/workspace/Emergent-Introspection/Steering Optimization"
-nohup python -m m2.run --concepts Garlic,Origami > /workspace/m2.out 2>&1 &
-tail -f /workspace/m2.out
+nohup python -m m2.run --concepts Garlic --no-stop-pod > /workspace/m2_garlic.out 2>&1 &
+tail -f /workspace/m2_garlic.out
 ```
 
 `nohup` is the point — the run survives a dropped SSH session and a closed browser. `Ctrl-C`
 stops the `tail`, not the run. To re-attach: `tail -f /workspace/m2.out`.
 
-**Why these two concepts.** Garlic is the highest-detection concept Macar et al. published on
+**Why start with Garlic.** Garlic is the highest-detection concept Macar et al. published on
 Gemma3-27B — **100%** at their reference configuration (L37, α=4, 100 trials) — so it is the
 strongest possible "before" number, and it is citable. Origami is your control: v1 measured its
 full dose–response, so the pipeline should reproduce a known answer. Alternatives: Chocolate
 (99%), Trees (97%).
 
-Roughly 35 minutes each. Watch the board in the log, or your phone.
+**One concept at a time, and `--no-stop-pod`.** Without that flag the pod stops the moment the
+concept finishes and you cannot inspect the result or start the next one without a restart.
+Roughly 50-60 minutes each. Watch the board in the log, or your phone.
 
 ### Useful variants
 
@@ -186,7 +237,7 @@ python -m m2.run --concepts Garlic --no-wipe
 
 ---
 
-## Step 8 — Read the result
+## Step 9 — Read the result
 
 ```bash
 cat /workspace/m2_runs/garlic_*/operating_point.json | python -m json.tool | head -40
@@ -212,7 +263,7 @@ it — `judge_e5.jsonl`, `judge_s1.jsonl`, `judge_d2.jsonl`, `D2_transcripts.jso
 
 ---
 
-## Step 9 — Use the result
+## Step 10 — Use the result
 
 ```bash
 cd "/workspace/Emergent-Introspection/Steering Optimization"
@@ -238,7 +289,7 @@ with steer.steering(concept="Garlic", layer=37, r=0.20):
 
 ---
 
-## Step 10 — Get the results off the pod and stop it
+## Step 11 — Get the results off the pod and stop it
 
 Bundles are delivered to Telegram automatically as each concept finishes. To pull them by hand:
 JupyterLab file browser → `/workspace/m2_runs/` → right-click the `.zip` → Download.
@@ -280,7 +331,7 @@ git clone https://x-access-token:$GH@github.com/PquePC/Emergent-Introspection.gi
 git -C /workspace/Emergent-Introspection remote set-url origin https://github.com/PquePC/Emergent-Introspection.git
 git -C /workspace/Emergent-Introspection checkout M2 && unset GH
 
-# 3. install  (expect: 51 passed)
+# 3. install  (expect: 53 passed)
 bash "/workspace/Emergent-Introspection/Steering Optimization/m2/setup_pod.sh"
 
 # 4. credentials  (note the leading spaces)
@@ -295,8 +346,8 @@ python -m m2.run --concepts Garlic --preflight
 nohup bash "/workspace/Emergent-Introspection/Steering Optimization/pod_watchdog.sh" > /workspace/watchdog.log 2>&1 &
 
 # 7. run
-nohup python -m m2.run --concepts Garlic,Origami > /workspace/m2.out 2>&1 &
-tail -f /workspace/m2.out
+nohup python -m m2.run --concepts Garlic --no-stop-pod > /workspace/m2_garlic.out 2>&1 &
+tail -f /workspace/m2_garlic.out
 
 # 8. read
 cat /workspace/m2_runs/garlic_*/operating_point.json | python -m json.tool

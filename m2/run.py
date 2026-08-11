@@ -104,6 +104,12 @@ def _parser() -> argparse.ArgumentParser:
                    help="include transcripts in the bundle for concepts that are NOT on "
                         "BENIGN_CONCEPTS. Read spec 14.3 before using this.")
 
+    p.add_argument("--doctor", action="store_true",
+                   help="report what this pod already has and what it needs, then exit. "
+                        "Loads no model. Run this first after every pod migration.")
+    p.add_argument("--repair", action="store_true",
+                   help="with --doctor: also clone the harness, install packages, pull the "
+                        "repo and trim truncated JSONL. Never deletes measured rows.")
     p.add_argument("--preflight", action="store_true",
                    help="environment, imports, public surface, model load and rig checks, then "
                         "exit. Measures nothing and spends no judge calls.")
@@ -229,6 +235,18 @@ def _install_signal_handlers(notifier: Any) -> None:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+
+    # --doctor runs before everything, including the concept check: on a fresh or freshly
+    # migrated pod the useful question is "what is missing", not "which concept". It imports
+    # nothing heavy, so it works when the dependencies are the thing that is missing.
+    if args.doctor:
+        from m2 import doctor                       # noqa: PLC0415
+        rep = doctor.diagnose()
+        if args.repair:
+            rep = doctor.repair(rep)
+        doctor.render(rep)
+        return EXIT_OK if rep.ready() else (EXIT_CONFIG if rep.blocked else EXIT_FAILED)
+
     concepts = _read_concepts(args)
 
     print("=" * 78)
