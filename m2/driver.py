@@ -79,6 +79,9 @@ PHASE_ORDER: tuple[str, ...] = (
 # Artefact names, spec 13. Written out here because the driver reads several of them back for
 # the resume banner and for the final selection over Phase 4 AND Phase 5 rows together.
 SCAN_FILE = "scan.jsonl"
+# Appended, one row per run_concept entry: a resumed concept can span two pods, and seeing
+# that afterwards is the point.
+PROVENANCE_FILE = "provenance.jsonl"
 SHORTLIST_FILE = "shortlist.json"
 BISECT_FILE = "bisect.jsonl"
 VERIFIED_FILE = "verified.jsonl"
@@ -598,6 +601,20 @@ def run_concept(name: str, *, notifier: Any = None, wipe: bool = True, deliver: 
                     archive=str(archive), failed_phases=[], elapsed_s=0.0)
 
     notifier = notifier if notifier is not None else get_notifier()
+
+    # Which machine and which library versions produced these numbers. Appended rather than
+    # overwritten: a resumed concept can legitimately span two pods, and the whole point is to
+    # be able to see that afterwards instead of reconstructing it from memory.
+    try:
+        prov = _model().provenance()
+        prov["ts"] = _now()
+        prov["phase_entered_at"] = "run_concept"
+        runio.write_row(PROVENANCE_FILE, prov)
+        runio.log(f"provenance: {prov.get('gpu', '?')} | torch {prov.get('torch', '?')} | "
+                  f"host {prov.get('host', '?')}")
+    except Exception as exc:                        # noqa: BLE001 - never cost a run
+        runio.log(f"provenance not recorded ({_label(exc)})", "WARN")
+
     board = _make_board(run_dir)
     board.attach()
     state = _ConceptRun(concept, run_dir, notifier, board)

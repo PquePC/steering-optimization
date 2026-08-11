@@ -458,6 +458,49 @@ class injected_multi:
         return False
 
 
+def provenance() -> dict:
+    """What machine and what library versions produced this run's numbers.
+
+    Written once per concept to `provenance.json`. Nothing in the pipeline depended on this
+    until a pod was migrated between hosts mid-run, at which point "which card measured which
+    row" became a question the artefacts could not answer. bf16 matmul kernels differ between
+    GPU architectures, so a scan measured on one card and a verification on another is a real
+    caveat - small next to temperature-1.0 sampling noise, but it should be recorded rather
+    than reconstructed from memory.
+
+    Never raises: a missing version must not cost a run.
+    """
+    out: dict = {}
+    try:
+        import torch
+        out["torch"] = torch.__version__
+        out["cuda"] = getattr(torch.version, "cuda", None)
+        if torch.cuda.is_available():
+            out["gpu"] = torch.cuda.get_device_name(0)
+            out["gpu_count"] = torch.cuda.device_count()
+            props = torch.cuda.get_device_properties(0)
+            out["gpu_total_gb"] = round(props.total_memory / 1024 ** 3, 1)
+            out["gpu_capability"] = f"{props.major}.{props.minor}"
+    except Exception as exc:                        # noqa: BLE001
+        out["torch_error"] = type(exc).__name__
+    for name in ("transformers", "datasets", "numpy"):
+        try:
+            out[name] = __import__(name).__version__
+        except Exception:                           # noqa: BLE001
+            out[name] = None
+    try:
+        out["python"] = sys.version.split()[0]
+        out["host"] = os.environ.get("RUNPOD_POD_ID") or os.uname().nodename
+    except Exception:                               # noqa: BLE001
+        pass
+    ctx = getattr(config, "RUN", None)
+    if ctx is not None:
+        out["model"] = (ctx.config or {}).get("model")
+        out["n_layers"] = ctx.n_layers
+        out["padding_side"] = getattr(ctx.tok, "padding_side", None)
+    return out
+
+
 def chat(question: str) -> str:
     """Render a user question through the chat template.
 
