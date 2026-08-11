@@ -592,3 +592,19 @@ def test_setup_detects_a_package_that_carries_no_version():
     from m2 import setup as m2setup
     assert m2setup._version("pathlib") is not None, "importable, no __version__ - still present"
     assert m2setup._version("m2_no_such_module_xyz") is None, "genuinely absent reads absent"
+
+
+def test_phase0_runs_hook_liveness_itself():
+    """R14 skips in a standalone --preflight because RUN.vecs is empty until extraction, and
+    extraction IS Phase 0. That is only safe while Phase 0 runs liveness itself, before the
+    first measurement. If this call ever moves out of phase0, bug 26 gets a way back in: an
+    hour of forward-pass measures reading exactly 0.000 with no error.
+    """
+    import inspect
+    from m2 import phases
+    sig = inspect.signature(phases.phase0_calibrate)
+    assert sig.parameters["run_liveness"].default is True, "liveness must be on by default"
+    src = inspect.getsource(phases.phase0_calibrate)
+    assert "hook_liveness()" in src, "phase 0 no longer checks the hook"
+    assert src.index("hook_liveness()") < src.index("load_mmlu_items"), (
+        "liveness must precede the first thing that measures anything")

@@ -177,19 +177,25 @@ python -m m2.run --concepts Garlic --preflight
 First run downloads ~54 GB — **15–25 minutes**. After that it loads in about two minutes.
 
 ```
-provenance: NVIDIA A100-SXM4-80GB | torch 2.x | host <pod id>
-loading model
-  gemma3_27b  62 layers  padding=left
-rig checks
-  r5_reference_norm            PASS
-  r7_forced_prompts            PASS
-  r14_hook_liveness            PASS
---preflight: ... Nothing measured, no judge calls spent.
+RIG CHECKS: 2 pass, 0 FAIL, 5 SKIPPED
+  skipped: R4 rig check (stored); R5 reference-layer vector norm; R8 ...; R14 ...
+  summary                      PASS
 ```
 
-**If R14 fails, stop.** The injection hook is not steering; every forward-pass measure would read
-exactly zero, and a mean of zero with a variance of zero passes most checks designed to catch a
-weak effect.
+**Read the FAIL count, not the pass count.** `0 FAIL` and `summary PASS` is the green light.
+
+**Five of seven checks skip here, and that is correct.** R5 and R14 read the concept vectors, and
+extraction *is* Phase 0 — nothing has been extracted at preflight time. Phase 0 runs both itself,
+after extraction and before the first measurement; `hook_liveness` raises there, so a dead hook
+aborts the run rather than being reported. R8 and R15's second half read `verified.jsonl`, which
+exists from Phase 4. R4 cross-checks a stored M1.5 `rig_status.json` and skips on a fresh volume.
+
+What the preflight actually proves: the model loads, `padding=left`, the GPU is real, and **R7** —
+that the forced-ID prompt still matches the upstream repo's, token position included.
+
+**If R14 fails in Phase 0, stop.** The injection hook is not steering; every forward-pass measure
+would read exactly zero, and a mean of zero with a variance of zero passes most checks designed to
+catch a weak effect.
 
 Then confirm the model landed on the volume — two minutes now beats discovering it after the
 next migration:
@@ -318,6 +324,7 @@ whether `--repair` can fix it.
 | 403 downloading the model | Gemma licence not accepted | accept it on the model page with the same HF account |
 | Re-downloads 54 GB after a restart | `HF_HOME` was unset when it first downloaded | §2. The setup detects a model stranded outside `HF_HOME` and tells you how to move it |
 | Run folder looks empty after a migration | volume did not follow, or a hard kill truncated a file | `python -m m2.setup` prints per-concept row counts and repairs truncated JSONL |
+| Preflight says `5 SKIPPED` | R5/R14 need vectors, R8/R15b need Phase 4 rows, R4 needs an M1.5 folder | expected. `0 FAIL` and `summary PASS` is the green light; Phase 0 runs R5 and R14 for real |
 | **R14 fails** | the injection hook is not steering | **stop.** Every forward-pass measure would read zero |
 | R5 fails | extraction broken, or this concept is far from the norm distribution | reference layer only; >1σ is normal per-concept variation |
 | Judge FPR warning after Phase 0 | the judge invents influence on unsteered pairs | it puts a floor under every E5 — fix before spending GPU time |
@@ -353,7 +360,7 @@ python -m m2.setup --repair
 # 6. confirm green
 python -m m2.setup
 
-# 7. preflight  (expect R5, R7, R14 all PASS)
+# 7. preflight  (expect 0 FAIL and summary PASS; R5/R8/R14 skip until they have data)
 python -m m2.run --concepts Garlic --preflight
 
 # 8. watchdog, SECOND terminal

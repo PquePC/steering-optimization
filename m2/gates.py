@@ -1723,7 +1723,8 @@ def r5_reference_norm(ref_layer: int | None = None) -> dict:
     """
     name = "R5 reference-layer vector norm"
     if not _model_ready() or not getattr(config.RUN, "vecs", None):
-        reason = "no extracted vectors: R5 reads ||v_L|| at the reference layer"
+        reason = ("no extracted vectors yet: R5 reads ||v_L|| at the reference layer. Expected "
+                  "before Phase 0 - extraction IS Phase 0, which then runs R5 itself as step 3")
         return dict(check=name, passed=False, skipped=True, reason=reason,
                     ok=gate_skipped(name, reason))
 
@@ -1857,8 +1858,11 @@ def r14_hook_liveness() -> dict:
     """
     name = "R14 hook liveness"
     if not _model_ready() or not getattr(config.RUN, "vecs", None):
-        reason = ("no model or no extracted vectors: R14 needs two forward passes with a "
-                  "real vector. RUN IT BEFORE ANY SWEEP")
+        reason = ("no model or no extracted vectors yet: R14 needs two forward passes with a "
+                  "real vector. Expected before Phase 0 - extraction IS Phase 0, which runs "
+                  "hook liveness itself as step 5 and RAISES on failure, before the first "
+                  "measurement. Nothing is skipped in a real run; only a standalone "
+                  "--preflight reaches here with an empty RUN.vecs")
         return dict(check=name, passed=False, skipped=True, reason=reason,
                     ok=gate_skipped(name, reason))
 
