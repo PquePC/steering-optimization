@@ -762,3 +762,59 @@ def test_a_finished_phase_leaves_the_running_state():
     board.unit_done(first)
     board.end_phase(first)
     assert board.state[first] == "done", "unit_done alone never ends a phase"
+
+
+def test_eta_is_a_number_before_any_phase_has_started():
+    """`eta()` costs `rate * (total - done)` and skips phases whose total is 0, and a total was
+    only set when a phase STARTED - so every phase ahead contributed nothing and the board
+    reported `ETA 0m00s` next to a list of seven excluded phases for a whole 40-minute run.
+    The one number the board exists to produce was never available.
+    """
+    from m2 import driver
+    board = monitor.RunStatus(driver.PHASE_ORDER, totals=monitor.PHASE_UNITS_PRIOR,
+                              priors=monitor.PHASE_SECONDS_PRIOR)
+    assert board.unsized() == [], "every phase must carry an opening unit count"
+    assert board.eta() > 600, f"opening ETA is {board.eta()}s - the run is longer than that"
+
+
+def test_a_phase_reporting_its_plan_replaces_the_prior():
+    """A resumed SCAN has 98 cells on the grid and perhaps 12 left to measure. Costing the
+    grid would over-state the remaining work eight-fold, so the phase's own count wins.
+    """
+    from m2 import driver
+    board = monitor.RunStatus(driver.PHASE_ORDER, totals=monitor.PHASE_UNITS_PRIOR,
+                              priors=monitor.PHASE_SECONDS_PRIOR)
+    board.start_phase("SCAN")
+    full = board.eta()
+    board.size_phase("SCAN", 12)
+    assert board.total["SCAN"] == 12
+    assert board.eta() < full, "a resumed run must cost less than a fresh one"
+
+
+def test_self_reporting_phase_is_not_counted_twice():
+    """The phases tick the board per cell through `on_cell`. If the driver also added its own
+    unit at the end, the last cell would be counted twice and `spent/done` would describe a
+    rate no cell ever ran at - which is what the ETA extrapolates from.
+    """
+    from m2 import driver
+    board = driver._Board(monitor.RunStatus(driver.PHASE_ORDER,
+                                            priors=monitor.PHASE_SECONDS_PRIOR))
+    state = driver._ConceptRun("Irony", Path("."), None, board)
+    tick = state.tick("SCAN")
+    state.phase("SCAN", lambda: [tick() for _ in range(3)], self_reporting=True)
+    assert board.impl.done["SCAN"] == 3, "one unit per cell, and no synthetic extra"
+    assert board.impl.state["SCAN"] == "done"
+
+
+def test_board_forwards_every_method_the_driver_calls():
+    """`_Board` swallows failures INSIDE a forwarded call, but a method it does not define at
+    all is an AttributeError on the adaptor - outside the guard, and fatal. Adding a board
+    call in the driver without a forwarder here crashes the run at the end of the first phase,
+    which is exactly what happened when end_phase/size_phase/skip_phase were introduced.
+    """
+    import re
+    from m2 import driver
+    src = Path(driver.__file__).read_text(encoding="utf-8")
+    called = set(re.findall(r"(?:self\.)?board\.([a-z_]+)\(", src))
+    missing = sorted(m for m in called if not hasattr(driver._Board, m))
+    assert not missing, f"_Board has no forwarder for: {missing}"

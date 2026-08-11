@@ -53,6 +53,7 @@ __all__ = [
     "notify_test",
     "PHASE_ORDER",
     "PHASE_SECONDS_PRIOR",
+    "PHASE_UNITS_PRIOR",
     "RunStatus",
     "verdict",
     "verdict_detail",
@@ -674,12 +675,31 @@ PHASE_SECONDS_PRIOR: dict[str, float] = dict(
     # ETA. CAL and CONFIRM are single-unit, so their numbers are never corrected by measurement
     # and are the two worth getting right.
     SHORTLIST=0.0,   # free
-    BISECT=8.0,      # per bisection step: one probe, ~= a scan cell without D3
+    BISECT=100.0,    # MEASURED per CANDIDATE, 2026-08-11: 796s / 8 = 99s. Was 8.0, which
+                     # priced one bisection PROBE - but the board is ticked once per
+                     # candidate, and a candidate is a bracket hunt (up to 6 escalating
+                     # probes) plus BISECT_STEPS of bisection. A prior in a different unit
+                     # from the thing it counts is a 12x error in the opening ETA.
     VERIFY=50.0,     # per cell: 12 (E5) + 12 (S1) + 25 (D2) judge calls, E5/S1 concurrent,
                      # plus two batched generations of MAX_NEW_TOKENS
     REFINE=50.0,     # per cell
     CONFIRM=240.0,   # once
     CONTROLS=60.0,   # per control run
+)
+
+PHASE_UNITS_PRIOR: dict[str, int] = dict(
+    # OPENING unit counts, so the ETA describes the RUN rather than the current phase.
+    #
+    # `eta()` costs `rate * (total - done)` and skips any phase whose total is 0, and a total
+    # was only ever set when a phase STARTED. Every phase ahead therefore contributed nothing,
+    # the Garlic run reported `ETA 0m00s` beside a list of seven excluded phases from start to
+    # finish, and the one number the board exists to produce was never available.
+    #
+    # These are priors and are replaced by the truth the moment each phase reports its plan
+    # (`size_phase`), which for SCAN and VERIFY is before their first unit runs. The counts
+    # below are the observed Garlic shape: 49 layers in scope x 2 scan doses, a shortlist of
+    # 5-8, and 3 top cells x 6 neighbours in refinement.
+    CAL=1, SCAN=98, SHORTLIST=1, BISECT=8, VERIFY=8, REFINE=6, CONFIRM=1, CONTROLS=1,
 )
 
 # Spec 8, in order. `phases.phase5_refine` is REFINE and `phase6_confirm` is CONFIRM.
@@ -925,6 +945,19 @@ class RunStatus:
             self._t_cur = time.time()
             self.last_unit_at = time.time()
         self.render(force=True)
+
+    def size_phase(self, phase: str, total: int) -> None:
+        """Set a phase's unit count once the phase itself knows it.
+
+        The ETA costs `rate * (total - done)` and skips any phase whose total is still 0, so a
+        run whose phases never declared a size reported `ETA 0m00s` from start to finish while
+        listing every phase as excluded. Only the phase can supply the honest number: a resumed
+        SCAN has 98 cells on the grid but perhaps 12 left to measure, and costing the grid
+        would over-state the remaining work by eight times.
+        """
+        with self._lock:
+            self.total[phase] = int(total)
+        self.render()
 
     def unit_start(self, phase: str, note: str = "") -> None:
         """Called BEFORE a unit runs, so a stall shows which unit it is stuck on.

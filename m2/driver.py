@@ -235,12 +235,25 @@ class _Board:
                 runio.log(f"status board {method}() raised {_label(exc)} - ignored", "WARN")
             return None
 
-    # The five methods the CONTRACT names, plus attach/detach if monitor provides them.
+    # The methods the CONTRACT names, plus attach/detach if monitor provides them. A method
+    # MISSING FROM HERE is not degraded gracefully - it is an AttributeError on the adaptor
+    # itself, outside the `_call` guard, and it takes the run down. Adding a board call in the
+    # driver means adding a forwarder here; `test_board_forwards_every_method_the_driver_calls`
+    # is what makes that a test failure rather than a crash forty minutes into a run.
     def start_phase(self, name: str, total: int | None = None) -> None:
         self._call("start_phase", name, total)
 
     def unit_done(self, name: str) -> None:
         self._call("unit_done", name)
+
+    def end_phase(self, name: str) -> None:
+        self._call("end_phase", name)
+
+    def skip_phase(self, name: str, why: str = "") -> None:
+        self._call("skip_phase", name, why)
+
+    def size_phase(self, name: str, total: int) -> None:
+        self._call("size_phase", name, int(total))
 
     def fail_phase(self, name: str, exc: BaseException) -> None:
         self._call("fail_phase", name, exc)
@@ -278,6 +291,7 @@ def _make_board(run_dir: Path) -> _Board:
         # Graceful degradation around a wrong call signature is how a defect survives a run.
         impl = monitor.RunStatus(PHASE_ORDER,
                                  path=Path(run_dir) / STATUS_FILE,
+                                 totals=monitor.PHASE_UNITS_PRIOR,
                                  priors=monitor.PHASE_SECONDS_PRIOR)
         return _Board(impl)
     except Exception as exc:                            # noqa: BLE001
@@ -444,9 +458,35 @@ class _ConceptRun:
         self.failed: list[str] = []
         self.labels: dict[str, str] = {}
 
+    def tick(self, name: str) -> Callable[[Any], None]:
+        """An `on_cell` callback that advances the board one unit. Never raises.
+
+        Progress reporting must not be able to kill a measured cell, so anything the board
+        throws is swallowed here - the run keeps its data and loses only its ETA.
+        """
+        def _tick(_row: Any = None) -> None:
+            try:
+                self.board.unit_done(name)
+            except Exception:                           # noqa: BLE001 - never cost a cell
+                pass
+        return _tick
+
+    def plan(self, name: str) -> Callable[[int], None]:
+        """An `on_plan` callback that tells the board how many units this phase will run."""
+        def _plan(total: int) -> None:
+            try:
+                self.board.size_phase(name, int(total))
+            except Exception:                           # noqa: BLE001 - never cost a cell
+                pass
+        return _plan
+
     def phase(self, name: str, fn: Callable[[], Any], *, units: int | None = None,
-              tracked: bool = True) -> tuple[bool, Any]:
+              tracked: bool = True, self_reporting: bool = False) -> tuple[bool, Any]:
         """Run one phase, isolated. Returns `(ok, value)`; never raises.
+
+        `self_reporting` means the phase advances the board itself, through `tick`, so this
+        must not add a synthetic unit of its own at the end - that would double-count the last
+        cell and leave `spent/done` describing a rate no cell ever ran at.
 
         On failure: the full traceback goes to a crash file on the volume, a CLASSIFIED label
         goes to the phone, the phase is recorded as failed, and the caller decides whether the
@@ -483,7 +523,8 @@ class _ConceptRun:
         self.results[name] = value
         runio.log(f"{name} done in {elapsed:.1f}s")
         if tracked:
-            self.board.unit_done(name)
+            if not self_reporting:
+                self.board.unit_done(name)
             # `end_phase` is what moves a phase out of "running" - and nothing was calling it,
             # so every finished phase stayed `>>running` for the whole run, `verdict` kept
             # reporting "running: CAL" forty minutes after CAL returned, and the per-phase
@@ -674,8 +715,12 @@ def run_concept(name: str, *, notifier: Any = None, wipe: bool = True, deliver: 
                                EXPORT_TRANSCRIPTS_OVERRIDE=EXPORT_TRANSCRIPTS_OVERRIDE,
                                status="failed")
 
-    # ---- Phase 1
-    ok_scan, scan_rows = state.phase("SCAN", lambda: _phases().phase1_scan())
+    # ---- Phase 1. Sized and ticked by the phase itself: the ETA is worthless without a unit
+    # count, and only Phase 1 knows how many of the 98 grid cells a resumed run still owes.
+    ok_scan, scan_rows = state.phase(
+        "SCAN", lambda: _phases().phase1_scan(on_cell=state.tick("SCAN"),
+                                              on_plan=state.plan("SCAN")),
+        self_reporting=True)
     if not ok_scan or not scan_rows:
         # Fall back to whatever is on disk: the scan may have died after writing most of its
         # rows, and Phase 2 can shortlist from those.
@@ -695,12 +740,23 @@ def run_concept(name: str, *, notifier: Any = None, wipe: bool = True, deliver: 
 
     # ---- Phase 3. ASSUMPTION: phase4_verify consumes phase3_bisect's rows.
     ok_bisect, bisect_rows = state.phase(
-        "BISECT", lambda: _phases().phase3_bisect(candidates or []))
+        "BISECT", lambda: _phases().phase3_bisect(candidates or [],
+                                                  on_cell=state.tick("BISECT"),
+                                                  on_plan=state.plan("BISECT")),
+        self_reporting=True)
     cells = bisect_rows if (ok_bisect and bisect_rows) else runio.rows_for_run(BISECT_FILE)
 
-    # ---- Phases 4 and 5
-    state.phase("VERIFY", lambda: _phases().phase4_verify(cells or []))
-    state.phase("REFINE", lambda: _phases().phase5_refine(runio.rows_for_run(VERIFIED_FILE)))
+    # ---- Phases 4 and 5. These are the expensive ones and the two the ETA most needs sized:
+    # a verified cell is ~50 s against SCAN's ~13, so a board that cannot count them cannot
+    # say anything useful about the hour ahead.
+    state.phase("VERIFY", lambda: _phases().phase4_verify(cells or [],
+                                                          on_cell=state.tick("VERIFY"),
+                                                          on_plan=state.plan("VERIFY")),
+                self_reporting=True)
+    state.phase("REFINE", lambda: _phases().phase5_refine(runio.rows_for_run(VERIFIED_FILE),
+                                                          on_cell=state.tick("REFINE"),
+                                                          on_plan=state.plan("REFINE")),
+                self_reporting=True)
 
     # Selection reads the FILE, not either phase's return value: Phase 4 and Phase 5 both
     # write `verified.jsonl`, a resumed run may have rows from a previous kernel, and section
@@ -751,6 +807,9 @@ def run_concept(name: str, *, notifier: Any = None, wipe: bool = True, deliver: 
         _, confirm = state.phase("CONFIRM", lambda: _phases().phase6_confirm(winner), units=1)
     else:
         runio.log("CONFIRM skipped: no operating point was selected", "WARN")
+        # Told to the board too, not just the log. A skipped phase left in `pending` keeps its
+        # unit in the ETA forever, so the estimate never reaches zero on a run that is finishing.
+        board.skip_phase("CONFIRM", "no operating point was selected")
 
     # ---- Controls
     def _run_controls() -> dict:

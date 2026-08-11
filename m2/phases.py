@@ -635,7 +635,7 @@ def phase0_calibrate(*, layers: Sequence[int] | None = None, n_unsteered: int = 
 
 def phase1_scan(*, layers: Sequence[int] | None = None,
                 doses: Sequence[float] | None = None,
-                on_cell: Any = None) -> list[dict]:
+                on_cell: Any = None, on_plan: Any = None) -> list[dict]:
     """Every layer with `d(L) >= D_MIN`, at both `SCAN_DOSES`. E6 + D3 + S3 + S2. **0 judge calls.**
 
     **Why TWO doses.** One dose cannot distinguish *"this layer is inert"* from *"this layer is
@@ -673,6 +673,10 @@ def phase1_scan(*, layers: Sequence[int] | None = None,
     print(f"PHASE 1 - full-depth scan   {len(scope)} layers x {len(dose_list)} doses = "
           f"{len(scope) * len(dose_list)} cells, {len(todo)} to measure")
     print("=" * 78)
+    # The count the ETA needs, and only this function knows it: a resumed run's real workload
+    # is `todo`, not the full grid. Reported after the resume filter, before the first cell.
+    if on_plan is not None:
+        on_plan(len(todo))
 
     t0 = time.time()
     for i, (layer, r) in enumerate(todo, start=1):
@@ -1113,7 +1117,8 @@ def _probe(layer: int, r: float, cache: dict) -> dict:
 
 
 def phase3_bisect(candidates: Sequence[dict], *,
-                  scan_rows: Sequence[dict] | None = None) -> list[dict]:
+                  scan_rows: Sequence[dict] | None = None,
+                  on_cell: Any = None, on_plan: Any = None) -> list[dict]:
     """Per candidate layer: bracket the sanity boundary, then bisect it. **0 judge calls.**
 
     1. **Bracket** - the lowest `r` clearing `E6_FLOOR`, and the lowest `r` failing cheap
@@ -1152,6 +1157,8 @@ def phase3_bisect(candidates: Sequence[dict], *,
     print("=" * 78)
     print(f"PHASE 3 - dose bisection on the sanity boundary, {len(candidates)} candidates")
     print("=" * 78)
+    if on_plan is not None:
+        on_plan(len(candidates))
 
     out: list[dict] = []
     t0 = time.time()
@@ -1240,6 +1247,8 @@ def phase3_bisect(candidates: Sequence[dict], *,
         )
         _append_row(BISECT_FILE, row)
         out.append(row)
+        if on_cell is not None:
+            on_cell(row)
         print(f"   L{layer:<3} r={chosen:.4f}  (+/- {step:.4f})  "
               f"{'window' if has_window else 'NO WINDOW'}  {boundary}")
 
@@ -1274,7 +1283,7 @@ def _verify_cells(cells: Sequence[dict], phase: str, *,
                   n_d2: int | None = None,
                   prompt_set: Sequence[dict] | None = None,
                   skip_verified: bool = True,
-                  on_cell: Any = None) -> list[dict]:
+                  on_cell: Any = None, on_plan: Any = None) -> list[dict]:
     """The shared body of Phase 4 and Phase 5: verify each cell and write `verified.jsonl`.
 
     Each cell costs one steered task generation, one steered forced-ID generation and 49 judge
@@ -1299,6 +1308,18 @@ def _verify_cells(cells: Sequence[dict], phase: str, *,
     fit = _resid_fit_from_scan()
     done = {_cell_key(row["layer"], row["r"]) for row in _read_rows(VERIFIED_FILE)} \
         if skip_verified else set()
+
+    # Same as Phase 1's: the ETA is costed on what will actually be measured, so the count
+    # goes out after the resume filter and before the first cell. Counted without consuming
+    # `done`, which the loop below still needs in its pre-skip state.
+    if on_plan is not None:
+        planned, seen = 0, set(done)
+        for cell in cells:
+            key = _cell_key(int(cell["layer"]), float(cell["r"]))
+            if key not in seen:
+                seen.add(key)
+                planned += 1
+        on_plan(planned)
 
     out: list[dict] = []
     t0 = time.time()
@@ -1359,7 +1380,8 @@ def _verify_cells(cells: Sequence[dict], phase: str, *,
     return out
 
 
-def phase4_verify(cells: Sequence[dict], *, on_cell: Any = None) -> list[dict]:
+def phase4_verify(cells: Sequence[dict], *, on_cell: Any = None,
+                  on_plan: Any = None) -> list[dict]:
     """Phase 4. Real E5, S1, S2, S3, D2 and D4 on each shortlisted `(L, r)`. 49 judge calls each.
 
     This is where the screening stops guessing: E6 was a proxy for effectiveness and D3 a proxy
@@ -1372,11 +1394,11 @@ def phase4_verify(cells: Sequence[dict], *, on_cell: Any = None) -> list[dict]:
     print("=" * 78)
     print(f"PHASE 4 - verification, {len(cells)} cells x 49 judge calls")
     print("=" * 78)
-    return _verify_cells(cells, PHASE4, on_cell=on_cell)
+    return _verify_cells(cells, PHASE4, on_cell=on_cell, on_plan=on_plan)
 
 
 def phase5_refine(top_cells: Sequence[dict], *, n_top: int = 3,
-                  on_cell: Any = None) -> list[dict]:
+                  on_cell: Any = None, on_plan: Any = None) -> list[dict]:
     """Phase 5. Around the top cells: layer +/-1 and +/-2 at the same dose, plus one dose step
     either side at the same layer. Full expense.
 
@@ -1431,7 +1453,7 @@ def phase5_refine(top_cells: Sequence[dict], *, n_top: int = 3,
     print("=" * 78)
     for note in sorted(set(skipped)):
         print(f"   skipped {note}")
-    return _verify_cells(cells, PHASE5, on_cell=on_cell)
+    return _verify_cells(cells, PHASE5, on_cell=on_cell, on_plan=on_plan)
 
 
 # =====================================================================================
