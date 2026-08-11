@@ -581,3 +581,14 @@ def test_s4_is_a_minimum_not_a_mean():
     assert min(s1, s2, s3) < float(config.CONFIG["S4_MIN"])
     assert (s1 + s2 + s3) / 3 >= float(config.CONFIG["S4_MIN"]), (
         "if this ever fails the example stopped demonstrating the point")
+
+
+def test_setup_detects_a_package_that_carries_no_version():
+    """`nest_asyncio` never defined `__version__`, so a probe of `print(pkg.__version__)`
+    raised AttributeError on a good install and reported it missing. `--repair` then
+    pip-installed it, printed "extras ok", and the re-check called it missing again - an
+    unfixable FIX item that makes READY unreachable. Probe by import, version optional.
+    """
+    from m2 import setup as m2setup
+    assert m2setup._version("pathlib") is not None, "importable, no __version__ - still present"
+    assert m2setup._version("m2_no_such_module_xyz") is None, "genuinely absent reads absent"

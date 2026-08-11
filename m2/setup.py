@@ -111,8 +111,31 @@ def _dir_gb(path: Path) -> float:
     return total / 1024 ** 3
 
 
+# Probe by IMPORT, and treat `__version__` as optional. `nest_asyncio` is a single-module
+# package that never defined `__version__`, so the old `print(pkg.__version__)` probe raised
+# AttributeError on a perfectly good install and reported it missing forever: --repair would
+# pip-install it, say "extras ok", then the re-check would call it missing again.
+_PROBE = (
+    "import importlib, sys\n"
+    "name = sys.argv[1]\n"
+    "try:\n"
+    "    mod = importlib.import_module(name)\n"
+    "except Exception:\n"
+    "    sys.exit(1)\n"
+    "v = getattr(mod, '__version__', None)\n"
+    "if not v:\n"
+    "    try:\n"
+    "        from importlib.metadata import version\n"
+    "        v = version(name.replace('_', '-'))\n"
+    "    except Exception:\n"
+    "        v = 'installed'\n"
+    "print(v)\n"
+)
+
+
 def _version(pkg: str) -> str | None:
-    code, out = _sh([sys.executable, "-c", f"import {pkg};print({pkg}.__version__)"], timeout=120)
+    """Version string if importable, else None. 'installed' when it carries no version."""
+    code, out = _sh([sys.executable, "-c", _PROBE, pkg], timeout=120)
     return out.splitlines()[-1] if code == 0 and out else None
 
 
