@@ -188,21 +188,41 @@ with steer.steering(concept="Origami", layer=37, r=0.20):
 
 ## 6. Which concept to start with
 
-Use **Origami**. It is the concept with the most to lose, and you already have ground truth for it.
+Start with **Garlic**, and run **Origami** alongside it as the validation control.
 
-At Macar's reference configuration (L37, α=4, n=30) the ten measured baseline concepts came out:
+### 6.1 The published baseline
 
-| Concept | Detection | | Concept | Detection |
-|---|---|---|---|---|
-| **Origami** | **0.933** | | Dust | 0.300 |
-| Satellites | 0.833 | | Trumpets | 0.167 |
-| Constellations | 0.733 | | Illusions | 0.133 |
-| Lightning | 0.633 | | Cameras | 0.033 |
-| | | | Treasures | 0.000 |
-| | | | Phones | 0.000 |
+Macar et al., *Mechanisms of Introspective Awareness* (Macar, Yang, Wang, Wallich, Ameisen,
+Lindsey), ran **the majority of their experiments on Gemma3-27B** — the same model this pipeline
+targets — over **500 concepts** (Lindsey's 50 plus 450 across 20 semantic categories), at **100
+trials per concept**.
 
-Origami is the highest, and it is **not saturated at low strength** — which is what makes it
-usable rather than a niche case. Its v1 dose–response at L37:
+Their reference configuration is stated outright: **L = 37, α = 4**, because it *"yields the
+highest overall introspection rate for Gemma3-27B (62 layers total)"*. That is the default this
+pipeline is trying to beat, and it is the same cell the v1 rig check reproduced.
+
+Detection rates across the 500 span 0–100%, **mean 38.2%, median 30.0%**, and the distribution is
+**bimodal**: 55 concepts detect at ≥90%, 63 detect at exactly 0%.
+
+Concepts named with rates in the paper (Gemma3-27B, L37, α=4):
+
+| Concept | Detection | |
+|---|---|---|
+| **Garlic** | **100%** | high-detection concepts are "concrete, sensory-rich, and distinctive" |
+| **Chocolate** | **99%** | |
+| **Trees** | **97%** | |
+| Thunderstorms, Scorpions | high | named qualitatively |
+| Irony, Karma, Skepticism | **0%** | abstract |
+| Pillows, Silk, Mirrors | **0%** | concrete but semantically generic |
+
+**Garlic at 100% is the strongest possible "before" number, and it is published**, on this model,
+at this configuration. That makes the comparison citable rather than self-referential.
+
+### 6.2 Origami as the control
+
+Origami is not in Macar's reported numbers — it is one of Lindsey's 50, and the **0.933** figure
+is the v1 M0 rig check's own measurement at L37/α=4, n=30. Its value is that you already have the
+full dose–response:
 
 | α | r | D1 self-report | D2 forced ID | E4 | sanity |
 |---|---|---|---|---|---|
@@ -211,31 +231,49 @@ usable rather than a niche case. Its v1 dose–response at L37:
 | 3 | 0.30 | 0.20 | 1.00 | 1.44 | 0.88 |
 | 4 | 0.39 | 0.92 | 1.00 | — | — |
 
-93 points of dynamic range for detection to fall through, and a clean monotone curve rather than
-a step. **Satellites (0.833) is the natural second.** Note that vector norm does not predict
-detection — Treasures has the largest norm (6688) and detects at 0.000 — so the R5 norm check is
-a test of extraction, not of concept quality.
+A clean monotone curve rather than a step, and a known answer the pipeline should reproduce. Note
+that vector norm does not predict detection — Treasures has the largest norm (6688) and detects
+at 0.000 — so R5 tests extraction, not concept quality.
 
-> ### What "better than the defaults" will and will not mean here
+### 6.3 Where the qualifying region should be, and why
+
+The paper's §5.1 is the single most useful result for this pipeline:
+
+> **Detection rate peaks in mid-layers, while forced identification rate increases toward late
+> layers.** The correlation between detection and identification becomes positive only when
+> injecting in mid-to-late layers. *"This distinction suggests that detection and identification
+> involve mostly separate mechanisms."*
+
+M2's constraint is on **D2, forced identification** — so that finding predicts the qualifying
+region (`D2 ≤ 0.20` with `E5 ≥ 4`) sits at **early-to-mid layers, not late ones**. A naive "go
+deeper for more effect" search would walk straight into the region where forced ID is highest.
+Testing that prediction across the full depth is what Phase 1 is for, and confirming it would be
+a result in its own right.
+
+The counterweight, from the same paper: identification conditioned on detection **rises with**
+detection rate — 46.9% for low-detection concepts, 66.1% for concepts above 90%. So the concepts
+with the most detection to lose are also the ones where forced ID is hardest to suppress. Garlic
+is the hardest case on purpose.
+
+> ### What "better than the defaults" can and cannot mean
 >
-> Those detection numbers are **D1, spontaneous self-report**, and M2 deleted D1: it confounds
-> *"the concept never reached a reportable state"* with *"the model chose not to say so."*
-> M2's constraint is **D2, forced identification** — a much stricter bar. At L37 α=2 Origami has
-> D1 = 0.08 but **D2 = 0.96**, so the cell v1 called an operating point **would not qualify under
-> M2** at all.
+> The 0.933 for Origami and the 0.08 at α=2 are **D1, spontaneous self-report**, and M2 deleted
+> D1: it confounds *"the concept never reached a reportable state"* with *"the model chose not to
+> say so."* M2's constraint is **D2**, which is stricter. At L37 α=2 Origami has D1 = 0.08 but
+> **D2 = 0.96**, so the cell v1 called an operating point **would not qualify under M2**.
 >
-> That is the point of running the full-depth scan. v1 sampled six layers; M2 measures every
-> layer at two doses and then bisects. Whether a cell exists for Origami with E5 ≥ 4, D2 ≤ 0.20
-> and S4 ≥ 0.70 is an open empirical question, and the run is what answers it.
+> That is the point of the full-depth scan. v1 sampled six layers; M2 measures every layer at two
+> doses and then bisects. Whether a cell exists with E5 ≥ 4, D2 ≤ 0.20 and S4 ≥ 0.70 is an open
+> empirical question, and the run is what answers it.
 >
-> **If no cell qualifies, that is a result, not a failure.** The run still reports the frontier,
-> the escalation ladder (§9.3) distinguishes "no operating point exists at these constraints"
-> from "the vector is dead", and `operating_point.json` records the reason. Do not treat an
-> empty qualifying set as a broken run.
+> **If no cell qualifies, that is a result, not a failure.** The frontier is still reported, the
+> §9.3 escalation ladder distinguishes "no operating point exists at these constraints" from "the
+> vector is dead", and `operating_point.json` records the reason.
 
 ```bash
-python -m m2.run --concepts Origami                  # the pilot
-python -m m2.run --concepts Origami,Satellites       # the natural pair
+python -m m2.run --concepts Garlic                   # published 100% detection - the headline
+python -m m2.run --concepts Garlic,Origami           # headline + your own ground truth
+python -m m2.run --concepts Garlic,Chocolate,Trees   # all three published high-detection concepts
 ```
 
 ---
