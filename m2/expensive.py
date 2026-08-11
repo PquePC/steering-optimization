@@ -486,9 +486,31 @@ def _issue(items: list[dict]) -> list[dict]:
     return list(results)
 
 
-def _item(payload: str, judge_id: str, cache_key: tuple) -> dict:
-    """One work item for `judges.judge_many`, in the shape `call_judge` takes."""
-    return dict(prompt=payload, judge_id=judge_id, cache_key=cache_key)
+def _item(unit: dict) -> dict:
+    """One work item for `judges.judge_many`, in the shape `call_judge` takes.
+
+    **`model_text` is not optional in practice, whatever its default says.** `judge_many`
+    re-runs gate 2(a) on every S1 item as a second line of defence, and its default is to
+    exclude nothing - the strict direction, so a caller who forgets cannot silently disable
+    the check. This builder used to send `{prompt, judge_id, cache_key}` and nothing else, so
+    that second check ran over the whole payload including the model's own words. Garlic at a
+    saturated cell answered "Garlic Garlic Garlic ..."; the check saw the concept in the
+    payload, could not tell it came from the model, and killed Phase 4 at the first cell.
+
+    The spans are read off the unit rather than passed in, because the unit is what carries
+    the exact strings that were rendered into the payload - a span assembled anywhere else
+    could differ by a strip() and silently fail to match.
+    """
+    item = dict(prompt=unit["payload"], judge_id=unit["judge_id"],
+                cache_key=unit["cache_key"])
+    if "concept" in unit:
+        item["concept"] = unit["concept"]
+    spans = tuple(str(unit[key]) for key in ("response_unsteered", "response_steered",
+                                             "response")
+                  if key in unit and unit[key])
+    if spans:
+        item["model_text"] = spans
+    return item
 
 
 def _parse_or_fail(result: dict, judge_id: str, parser: Any) -> tuple[dict | None, str, str | None]:
@@ -904,7 +926,7 @@ def measure_E5(layer: int, alpha: float, *, prompt_set: Sequence[dict] | None = 
                vec_fingerprint=vec_fp)
     units = _e5_units(ids, texts, responses, concept=_concept(), phase=phase_label,
                       layer=int(layer), r=dose, vec_fp=vec_fp)
-    results = _issue([_item(u["payload"], u["judge_id"], u["cache_key"]) for u in units])
+    results = _issue([_item(u) for u in units])
 
     out = _score_e5(units, results, ctx)
     out.update(layer=int(layer), alpha=float(alpha), r=dose, phase=phase_label,
@@ -955,6 +977,9 @@ def _s1_units(prompt_ids: Sequence[str], task_texts: Sequence[str], responses: S
         units.append(dict(
             unit_id=pid, task_prompt=text, response_unsteered=baseline,
             response_steered=steered, payload=payload, judge_id=JUDGE_S1_ID,
+            # Carried so `_item` can declare it to judge_many's second gate-2(a) check.
+            # Without it that check sees the concept in the model's own words and raises.
+            concept=concept,
             cache_key=_cache_key(phase, layer, r, pid, JUDGE_S1_ID, vec_fp, payload),
             # Gate 2's honest diagnostic: the concept CAN appear in B - that is E5's signal -
             # and the number is recorded so the gate can report it instead of asserting a
@@ -1055,7 +1080,7 @@ def measure_S1(layer: int, alpha: float, responses: Sequence[str], *,
                vec_fingerprint=vec_fp)
     units = _s1_units(ids, texts, responses, concept=_concept(), phase=phase_label,
                       layer=int(layer), r=dose, vec_fp=vec_fp)
-    results = _issue([_item(u["payload"], u["judge_id"], u["cache_key"]) for u in units])
+    results = _issue([_item(u) for u in units])
 
     out = _score_s1(units, results, ctx)
     out.update(layer=int(layer), alpha=float(alpha), r=dose, phase=phase_label,
@@ -1260,7 +1285,7 @@ def measure_D2(layer: int, alpha: float, n: int, *, phase: str | None = None,
                vec_fingerprint=vec_fp)
     units = _d2_units(trials, responses, concept=_concept(), phase=phase_label,
                      layer=int(layer), r=dose, vec_fp=vec_fp)
-    results = _issue([_item(u["payload"], u["judge_id"], u["cache_key"]) for u in units])
+    results = _issue([_item(u) for u in units])
 
     out = _score_d2(units, results, ctx)
     out.update(layer=int(layer), alpha=float(alpha), r=dose, phase=phase_label,
@@ -1345,7 +1370,7 @@ def judge_fpr() -> float:
                                  vectors.vec_fingerprint(None), payload),
         ))
 
-    results = _issue([_item(u["payload"], u["judge_id"], u["cache_key"]) for u in units])
+    results = _issue([_item(u) for u in units])
 
     scores: list[float] = []
     pairs: list[dict] = []
@@ -1489,7 +1514,7 @@ def verify_cell(layer: int, r: float, *, phase: str | None = None,
                        layer=layer, r=r, vec_fp=vec_fp)
 
     all_units = list(a1_units) + list(a2_units) + list(b_units)
-    results = _issue([_item(u["payload"], u["judge_id"], u["cache_key"]) for u in all_units])
+    results = _issue([_item(u) for u in all_units])
 
     n_a1, n_a2 = len(a1_units), len(a2_units)
     e5 = _score_e5(a1_units, results[:n_a1], ctx)

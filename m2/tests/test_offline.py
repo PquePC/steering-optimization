@@ -705,3 +705,60 @@ def test_status_board_does_not_take_the_notebook_path_in_a_script():
     run. Presence of the module is not presence of a frontend.
     """
     assert monitor._in_notebook() is False, "pytest is not a ZMQ kernel"
+
+
+def test_s1_item_declares_the_model_spans_it_rendered():
+    """judge_many re-runs gate 2(a) on every S1 item, and its `model_text` default excludes
+    NOTHING - the strict direction, so a caller who forgets cannot silently disable the check.
+    expensive._item sent {prompt, judge_id, cache_key} and nothing else, so that second check
+    ran over the model's own words: Garlic at a saturated cell answered "Garlic Garlic
+    Garlic ...", the check called it a disclosure, and Phase 4 died at the first cell.
+    """
+    exp = pytest.importorskip("m2.expensive", reason="imports torch at module scope")
+    unit = dict(payload="rubric ... A: plain answer B: Garlic Garlic Garlic",
+                judge_id="S1", cache_key=("VERIFY", 60, 0.3, "p1", "S1", "fp"),
+                concept="Garlic", response_unsteered="plain answer",
+                response_steered="Garlic Garlic Garlic")
+    item = exp._item(unit)
+    assert item["concept"] == "Garlic"
+    assert "Garlic Garlic Garlic" in item["model_text"], "the steered span must be declared"
+    judges.assert_s1_blind(item["prompt"], item["concept"], model_text=item["model_text"])
+
+
+def test_s1_template_names_no_concept_from_either_list():
+    """Gate 2(a) failed a whole Garlic run because the S1 calibration example quoted
+    'Velocity', which is on the benign list: the template and the blindness requirement
+    contradicted each other for a concept nobody was measuring. The example needs no concept
+    word at all - its job is to show that fluency is not integrity.
+    """
+    assert judges.A2_TEMPLATE_CONFLICTS == (), (
+        f"JUDGE_S1 names {judges.A2_TEMPLATE_CONFLICTS}; S1 cannot be blind to those")
+
+
+def test_select_returns_an_envelope_that_is_never_a_bare_row():
+    """The driver read the envelope AS the row. It is a dict and never None, so
+    `winner is not None` was always true: CONFIRM died on winner['layer'], the controls
+    skipped because _cell_of found no layer either, and operating_point.json was written and
+    announced as OPERATING POINT FOUND while carrying found=False.
+    """
+    from m2 import driver
+    empty = phases.select_operating_point([])
+    assert empty["found"] is False and empty["winner"] is None
+    assert "layer" not in empty, "the envelope must never look like a row"
+    assert driver._cell_of(empty) is None
+    assert driver._cell_of(empty.get("winner")) is None
+
+
+def test_a_finished_phase_leaves_the_running_state():
+    """Nothing called end_phase, so every completed phase stayed `>>running` for the whole
+    run - `verdict` reported "running: CAL" forty minutes after CAL returned, and the
+    per-phase phone push that end_phase triggers never fired once.
+    """
+    from m2 import driver
+    board = monitor.RunStatus(driver.PHASE_ORDER, priors=monitor.PHASE_SECONDS_PRIOR)
+    first = driver.PHASE_ORDER[0]
+    board.start_phase(first, 1)
+    assert board.state[first] == "running"
+    board.unit_done(first)
+    board.end_phase(first)
+    assert board.state[first] == "done", "unit_done alone never ends a phase"

@@ -484,6 +484,11 @@ class _ConceptRun:
         runio.log(f"{name} done in {elapsed:.1f}s")
         if tracked:
             self.board.unit_done(name)
+            # `end_phase` is what moves a phase out of "running" - and nothing was calling it,
+            # so every finished phase stayed `>>running` for the whole run, `verdict` kept
+            # reporting "running: CAL" forty minutes after CAL returned, and the per-phase
+            # phone push (its `notify` side effect) never fired once.
+            self.board.end_phase(name)
             self.board.write_status_txt()
         return True, value
 
@@ -702,10 +707,27 @@ def run_concept(name: str, *, notifier: Any = None, wipe: bool = True, deliver: 
     # 7.1's argmax is over all of them. Reading one phase's return value would silently select
     # over half the evidence.
     verified_rows = runio.rows_for_run(VERIFIED_FILE)
-    ok_sel, winner = state.phase(
+    ok_sel, selection = state.phase(
         "SELECT", lambda: _phases().select_operating_point(verified_rows), tracked=False)
     if not ok_sel:
-        winner = None
+        selection = None
+
+    # `select_operating_point` returns an ENVELOPE - {found, winner, rule, ...} - deliberately,
+    # "so a caller cannot mistake 'no cell qualified' for 'the first row won'". This caller
+    # managed to mistake the envelope for the row: it is a dict and it is never None, so
+    # `winner is not None` was always true. On this run that meant CONFIRM died on
+    # `winner["layer"]`, the controls silently skipped because `_cell_of` could not find a
+    # layer either, and operating_point.json was written and announced as OPERATING POINT
+    # FOUND while carrying found=False. A successful run would have lost the controls the same
+    # way. Unwrap once, here, and let `winner` mean the row.
+    winner = None
+    if isinstance(selection, dict) and selection.get("found"):
+        candidate = selection.get("winner")
+        if isinstance(candidate, dict):
+            winner = candidate
+        else:
+            runio.log(f"SELECT reported found=True with a {type(candidate).__name__} winner; "
+                      "treating the run as having no operating point", "ERROR")
 
     qualifying = _qualifying(verified_rows)
     if qualifying:
@@ -780,25 +802,32 @@ def run_concept(name: str, *, notifier: Any = None, wipe: bool = True, deliver: 
     # ---- Acceptance gates, section 10. After the data exists and before the archive.
     _, gate_report = state.phase("GATES", lambda: _gates().run_acceptance_gates(), tracked=False)
 
-    # ---- The answer
-    if winner is not None:
-        payload = dict(winner)
-        payload.update(
-            concept=concept,
-            frontier=front if isinstance(front, list) else [],
-            covertness_margin=margins if isinstance(margins, list) else [],
-            confirm=confirm,
-            controls=ctrl if isinstance(ctrl, dict) else {},
-            control_verdicts=control_verdicts,
-            gates=gate_report,
-            failed_phases=list(state.failed),
-        )
-        try:
-            path = runio.write_json(OPERATING_POINT_FILE, payload)
-            runio.log(f"operating point -> {path.name}")
+    # ---- The answer. Written whether or not a cell qualified: "no operating point exists at
+    # these constraints" is a real result (spec 9.3), and the envelope carries the reason, the
+    # counts and the rule that produced it. `found` is the field to read. Only a real winner is
+    # announced as one - the phone message used to say OPERATING POINT FOUND over found=False.
+    payload = dict(winner) if winner is not None else {}
+    payload.update(
+        concept=concept,
+        found=bool(winner is not None),
+        selection=selection if isinstance(selection, dict) else None,
+        frontier=front if isinstance(front, list) else [],
+        covertness_margin=margins if isinstance(margins, list) else [],
+        confirm=confirm,
+        controls=ctrl if isinstance(ctrl, dict) else {},
+        control_verdicts=control_verdicts,
+        gates=gate_report,
+        failed_phases=list(state.failed),
+    )
+    try:
+        path = runio.write_json(OPERATING_POINT_FILE, payload)
+        runio.log(f"operating point -> {path.name}"
+                  if winner is not None else
+                  f"no operating point; the reason is in {path.name} (found=false)")
+        if winner is not None:
             _notify(notifier, board, "OPERATING POINT FOUND", _one_line(payload))
-        except Exception as exc:                        # noqa: BLE001
-            runio.log(f"operating_point.json write failed ({_label(exc)})", "ERROR")
+    except Exception as exc:                            # noqa: BLE001
+        runio.log(f"operating_point.json write failed ({_label(exc)})", "ERROR")
 
     status = "ok" if not state.failed else "failed"
     return _finish_concept(state, winner, control_verdicts, wipe=wipe, deliver=deliver,
