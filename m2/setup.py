@@ -1,7 +1,7 @@
-"""m2.doctor - find out what this pod already has, and set up whatever it does not.
+"""m2.setup - find out what this pod already has, and set up whatever it does not.
 
-    python -m m2.doctor            # report only, changes nothing
-    python -m m2.doctor --repair   # fix what can be fixed, then re-report
+    python -m m2.setup            # report only, changes nothing
+    python -m m2.setup --repair   # fix what can be fixed, then re-report
 
 Written because migrating the pod is routine, not exceptional. A network volume survives a
 migration and the container does not, so after every move the same four things are true and the
@@ -398,7 +398,7 @@ def diagnose() -> Report:
 def render(rep: Report) -> None:
     mark = {OK: "  ok  ", FIX: " FIX  ", BLOCKED: "BLOCK "}
     print("=" * 78)
-    print("M2 DOCTOR")
+    print("M2 SETUP")
     print("=" * 78)
     for c in rep.checks:
         print(f"[{mark[c.state]}] {c.name:<24} {c.detail}")
@@ -440,7 +440,7 @@ def repair(rep: Report) -> Report:
 
 def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
-        prog="python -m m2.doctor",
+        prog="python -m m2.setup",
         description="Report what this pod already has, and optionally set up what it does not.")
     ap.add_argument("--repair", action="store_true",
                     help="clone the harness, install packages, pull the repo, set HF_HOME for "

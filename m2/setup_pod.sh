@@ -6,6 +6,11 @@
 #
 # Clones the upstream harness, installs dependencies, and runs the offline tests. Does not
 # touch credentials and does not load the model - see QUICKSTART.md steps 4 and 5.
+#
+# PREFER `python -m m2.setup --repair`. It does everything this does AND diagnoses what is
+# already present - the model cache, the run data, the GPU, the credentials - which is what
+# you actually want after a pod migration. This script stays as the fallback for a pod so
+# bare that python is not usable yet.
 # =====================================================================================
 set -euo pipefail
 

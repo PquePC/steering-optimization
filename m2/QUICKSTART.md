@@ -1,56 +1,71 @@
 # M2 — quickstart
 
-**A complete runbook from an empty RunPod account to a finished experiment.** Copy-paste, in
-order. You do not need to read anything else to get a result.
+**The only guide you need.** Copy-paste, in order, from an empty RunPod account to a finished
+experiment.
 
 Total: ~15 min of setup, ~20 min of model download, then **~50–60 min per concept** (measured,
 not estimated). Cost: roughly **$1.60–2.50 per concept** — GPU dominates, judges are ~$0.50.
 
 ---
 
-## Step 1 — Rent the pod
+## Coming back to a pod you already used?
+
+Skip to this. Migrating pods is routine — the network volume survives, the container does not.
+
+```bash
+export HF_HOME=/workspace/hf
+cd "/workspace/Emergent-Introspection/Steering Optimization"
+python -m m2.setup --repair
+```
+
+That reinstalls what the container took, pulls any code updates, tells you what each concept has
+already measured, and names anything only you can fix. Then re-export your credentials
+(§5) and go to §8.
+
+If `/workspace/Emergent-Introspection` is missing, the volume did not follow — start at §1.
+
+---
+
+## 1. Rent the pod
 
 RunPod → **Deploy** → **Pods**.
 
 | Setting | Value | Why |
 |---|---|---|
-| **GPU** | **1× A100 80GB** or **H100 80GB** | Gemma3-27B in bf16 is **~54 GB of weights alone**. A 48 GB card physically cannot hold it. |
-| **Template** | any recent **PyTorch** template | it ships CUDA + torch |
+| **GPU** | **1× A100 80GB** or **H100 80GB** | Gemma3-27B in bf16 is **~54 GB of weights alone**. A 48 GB card physically cannot hold it, and splitting across two cards is not supported — the injection hook assumes one device. |
+| **Template** | any recent **PyTorch** template | ships CUDA + torch |
 | **Volume Disk** | **150 GB** (100 GB minimum) | 54 GB model + ~10 GB deps + run outputs |
 | **Volume Mount Path** | `/workspace` | everything below assumes this |
 | **Container Disk** | **40 GB** | pip wheels and CUDA libs |
 
-Deploy, wait for **Running**, then **Connect → Jupyter Lab**, and in Jupyter:
-**File → New → Terminal**.
+Prefer a **network volume** if you expect to move hosts — it survives termination and can be
+attached to a new pod **in the same datacentre**.
 
-> **The volume is the part that survives.** Auto-stop issues a STOP, not a terminate, so
-> everything under `/workspace` is still there when you restart the pod. Anything on container
-> disk is not.
+Deploy → wait for **Running** → **Connect → Jupyter Lab** → **File → New → Terminal**.
+
+> **Stop, never Terminate**, unless you mean it. Stop keeps the volume; terminate destroys a
+> pod volume. A *network* volume survives either.
 
 ---
 
-## Step 2 — Set `HF_HOME` first, in every shell
+## 2. `HF_HOME`, before anything else
 
-**Before anything touches HuggingFace.** This is the single most expensive mistake available
-here, and it has already happened once: the default cache is on container disk, so the 54 GB
-model does not survive a pod stop and re-downloads every time.
+**In every shell, every time.** This is the single most expensive mistake available here:
 
 ```bash
 export HF_HOME=/workspace/hf
 ```
 
-`setup_pod.sh` also writes this to `~/.bashrc`, **but `~/.bashrc` is on container disk and does
-not survive a new pod or a server migration.** Every new terminal, and every new pod, needs the
-export again. If you only ever type one thing from memory, make it this line.
+The default cache is on container disk, so without this the 54 GB model downloads to somewhere
+that evaporates on the next stop. `m2.setup` writes it to `~/.bashrc` too, **but `~/.bashrc` is
+itself on container disk** and does not survive a migration. If you memorise one line, this one.
 
 ---
 
-## Step 3 — Get the code
+## 3. Get the code
 
-You need a GitHub token with read access to this repo (github.com → Settings → Developer
-settings → Personal access tokens → Fine-grained, read-only on `Emergent-Introspection`).
-
-Paste this as one block, replacing `YOUR_GITHUB_TOKEN`:
+GitHub token with read access to this repo (github.com → Settings → Developer settings →
+Personal access tokens → Fine-grained, read-only on `Emergent-Introspection`).
 
 ```bash
 GH=YOUR_GITHUB_TOKEN
@@ -64,45 +79,46 @@ The `remote set-url` afterwards keeps the token out of `.git/config`.
 
 ---
 
-## Step 4 — Install everything
-
-One command. Idempotent — safe to re-run after a pod restart.
-
-```bash
-bash "/workspace/Emergent-Introspection/Steering Optimization/m2/setup_pod.sh"
-```
-
-It sets `HF_HOME=/workspace/hf` (so the 54 GB download survives a stop), clones the upstream
-harness from **`safety-research/introspection-mechanisms`**, installs dependencies, prints
-versions, and runs the offline tests.
-
-**Expected ending:** `53 passed`. If you see that, the code is intact.
-
-### After a pod migration, use the doctor instead
-
-Migrating is routine: the network volume survives, the container does not. Rather than working
-out by hand which half is missing:
+## 4. Set everything up
 
 ```bash
 cd "/workspace/Emergent-Introspection/Steering Optimization"
-python -m m2.doctor --repair
+python -m m2.setup --repair
 ```
 
-It checks the volume, `HF_HOME` and whether the model actually landed on it, the repo and
-branch, the harness clone, every Python package, the GPU and its VRAM, your credentials, **what
-each concept has already measured**, and the offline tests — then fixes what it can (clone the
-harness, install packages, pull the repo, trim a JSONL left half-written by a hard kill) and
-tells you plainly what only you can fix.
+**This is the install step.** It clones the upstream harness from
+`safety-research/introspection-mechanisms`, installs every dependency, pulls any code updates,
+and runs the offline tests. It imports nothing heavy, so it works when the missing thing *is*
+the dependencies.
 
-Three states, no ambiguity: `ok`, `FIX` (repairable), `BLOCK` (needs you — credentials, GPU,
-the volume itself). It imports nothing heavy, so it works when the missing thing *is* the
-dependencies.
+It also reports what it cannot fix. Expect this on a fresh pod:
 
-Run it read-only any time with `python -m m2.doctor`, or as `python -m m2.run --doctor`.
+```
+[  ok  ] persistent volume        /workspace, 148 GB free
+[ FIX  ] HF_HOME                  unset - not under /workspace
+[ FIX  ] model cache              absent - the preflight will download ~54 GB (15-25 min)
+[  ok  ] project repo             M2, up to date | bd22136 ...
+[ FIX  ] upstream harness         not found on any searched path
+[ FIX  ] python packages          missing: torch, transformers, ...
+[BLOCK ] credentials (required)   missing: HF_TOKEN, OPENROUTER_API_KEY
+[  ok  ] run data                 no previous runs - starting clean
+```
+
+Three states, no ambiguity:
+
+| | meaning |
+|---|---|
+| `ok` | present and usable |
+| `FIX` | `--repair` handles it |
+| `BLOCK` | only you can — credentials, GPU, the volume itself |
+
+`--repair` never deletes a measured row.
+
+**Read-only any time:** `python -m m2.setup`. Also available as `python -m m2.run --setup`.
 
 ---
 
-## Step 5 — Credentials
+## 5. Credentials
 
 **Prefix every line with a space** so it stays out of `~/.bash_history`.
 
@@ -115,55 +131,53 @@ Run it read-only any time with `python -m m2.doctor`, or as `python -m m2.run --
  export RUNPOD_API_KEY=rpa_...
 ```
 
-| Variable | Where to get it | Required? |
+| Variable | Where | Required? |
 |---|---|---|
 | `HF_TOKEN` | huggingface.co → Settings → Access Tokens (read). **Also accept the Gemma licence** on the [model page](https://huggingface.co/google/gemma-3-27b-it) or the download 403s | **yes** |
-| `OPENROUTER_API_KEY` | openrouter.ai → Keys. Put ~$5 of credit on it | **yes** |
-| `TELEGRAM_BOT_TOKEN` | message @BotFather, `/newbot` | no, but you are blind without it |
-| `TELEGRAM_CHAT_ID` | message your new bot once, then open `https://api.telegram.org/bot<TOKEN>/getUpdates` and read `result[0].message.chat.id` | as above |
-| `HEALTHCHECK_URL` | healthchecks.io → new check, **period 300 s**, copy the ping URL | no, but nothing else can tell you the pod died |
-| `RUNPOD_API_KEY` | RunPod → Settings → API Keys, set `api.runpod.io/graphql` to **Read/Write** | no, only for auto-stop |
+| `OPENROUTER_API_KEY` | openrouter.ai → Keys. ~$5 of credit is plenty | **yes** |
+| `TELEGRAM_BOT_TOKEN` | @BotFather → `/newbot` | no, but you are blind without it |
+| `TELEGRAM_CHAT_ID` | message your bot once, then `https://api.telegram.org/bot<TOKEN>/getUpdates` → `result[0].message.chat.id` | as above |
+| `HEALTHCHECK_URL` | healthchecks.io → new check, **period 300 s** | no, but nothing else can tell you the pod died |
+| `RUNPOD_API_KEY` | RunPod → Settings → API Keys, `api.runpod.io/graphql` = **Read/Write** | no, only for auto-stop |
 
-> **Never paste these into a screenshot, a chat, or an issue.** The Telegram bot token in
-> particular is the access credential for the entire chat history, and Telegram cloud chats are
-> not end-to-end encrypted. If one leaks: BotFather `/revoke`, RunPod key delete, OpenRouter key
-> delete, HF token revoke.
+> **Never paste these into a screenshot, a chat or an issue.** The Telegram bot token is the
+> access credential for the entire chat history, and Telegram cloud chats are not end-to-end
+> encrypted. If one leaks: BotFather `/revoke`, delete the RunPod and OpenRouter keys, revoke
+> the HF token.
 
 ---
 
-## Step 6 — Preflight
-
-**Do this before spending a GPU-hour.** It loads the model and runs the rig checks, then exits.
-No judge calls, no measurement.
+## 6. Confirm setup is green
 
 ```bash
-cd "/workspace/Emergent-Introspection/Steering Optimization"
+python -m m2.setup
+```
+
+Everything should read `ok` except the model cache, which is still absent until the preflight
+downloads it. You want to see:
+
+```
+READY. Next:
+  cd "/workspace/Emergent-Introspection/Steering Optimization"
+  python -m m2.run --concepts Garlic --preflight
+```
+
+If anything still says `BLOCK`, fix that first — it will not get better by running.
+
+---
+
+## 7. Preflight
+
+**Before spending a GPU-hour.** Loads the model, runs the rig checks, exits. No judge calls.
+
+```bash
 python -m m2.run --concepts Garlic --preflight
 ```
 
-First run downloads ~54 GB — **15–25 minutes**. Subsequent runs load from `/workspace/hf` in
-about two minutes.
-
-**Then confirm the model actually landed on the volume**, before you pay for a run:
-
-```bash
-du -sh /workspace/hf
-```
-
-Expect **~54 G**. If it is small or the directory does not exist, `HF_HOME` was not set in the
-shell that did the download and the model went to container disk, where it will not survive a
-stop. Fix step 2 and re-run the preflight; better to lose two minutes here than to discover it
-after a pod migration.
-
-**What you should see:**
+First run downloads ~54 GB — **15–25 minutes**. After that it loads in about two minutes.
 
 ```
-credentials
-  HF_TOKEN               set
-  OPENROUTER_API_KEY     set
-  ...
-importing m2
-  public surface: 77 names present
+provenance: NVIDIA A100-SXM4-80GB | torch 2.x | host <pod id>
 loading model
   gemma3_27b  62 layers  padding=left
 rig checks
@@ -173,29 +187,30 @@ rig checks
 --preflight: ... Nothing measured, no judge calls spent.
 ```
 
-**If R14 fails, stop.** It means the injection hook is not steering, every forward-pass measure
-would read exactly zero, and a mean of zero with a variance of zero passes most checks designed
-to catch a weak effect. Do not run a paid sweep on that.
+**If R14 fails, stop.** The injection hook is not steering; every forward-pass measure would read
+exactly zero, and a mean of zero with a variance of zero passes most checks designed to catch a
+weak effect.
+
+Then confirm the model landed on the volume — two minutes now beats discovering it after the
+next migration:
+
+```bash
+python -m m2.setup      # "model cache  54 GB at /workspace/hf/hub"
+```
 
 ---
 
-## Step 7 — Start the watchdog
+## 8. Run one concept
 
-**A second terminal** (File → New → Terminal). Not the notebook, not the same shell.
+Watchdog first, in a **second terminal** (a hung process holds the GIL, so detection must live
+outside it):
 
 ```bash
 export RUNPOD_API_KEY=rpa_...
 nohup bash "/workspace/Emergent-Introspection/Steering Optimization/pod_watchdog.sh" > /workspace/watchdog.log 2>&1 &
 ```
 
-Stops the pod after ~20 min of ≤5% GPU **while VRAM ≥ 10 GB**. The VRAM condition is what stops
-a long judge wait — during which the GPU is legitimately idle — from tripping it.
-
----
-
-## Step 8 — Run
-
-Back in the first terminal:
+Then, back in the first:
 
 ```bash
 cd "/workspace/Emergent-Introspection/Steering Optimization"
@@ -203,78 +218,64 @@ nohup python -m m2.run --concepts Garlic --no-stop-pod > /workspace/m2_garlic.ou
 tail -f /workspace/m2_garlic.out
 ```
 
-`nohup` is the point — the run survives a dropped SSH session and a closed browser. `Ctrl-C`
-stops the `tail`, not the run. To re-attach: `tail -f /workspace/m2.out`.
+**`--no-stop-pod` matters.** Without it the pod stops the moment the concept finishes and you
+cannot read the result or start the next one without a restart.
 
-**Why start with Garlic.** Garlic is the highest-detection concept Macar et al. published on
-Gemma3-27B — **100%** at their reference configuration (L37, α=4, 100 trials) — so it is the
-strongest possible "before" number, and it is citable. Origami is your control: v1 measured its
-full dose–response, so the pipeline should reproduce a known answer. Alternatives: Chocolate
-(99%), Trees (97%).
+`nohup` means the run survives a dropped SSH session and a closed browser. `Ctrl-C` stops the
+`tail`, not the run — re-attach with `tail -f /workspace/m2_garlic.out`.
 
-**One concept at a time, and `--no-stop-pod`.** Without that flag the pod stops the moment the
-concept finishes and you cannot inspect the result or start the next one without a restart.
-Roughly 50-60 minutes each. Watch the board in the log, or your phone.
+**Why Garlic first.** It is the highest-detection concept Macar et al. published on Gemma3-27B —
+**100%** at their reference configuration (L37, α=4, 100 trials) — so it is the strongest
+possible "before" number, and it is citable. Alternatives: Chocolate (99%), Trees (97%).
+**Origami** is the natural second: v1 measured its full dose–response, so the pipeline should
+reproduce a known answer.
 
-### Useful variants
+### Variants
 
 ```bash
-# one concept
-python -m m2.run --concepts Garlic
-
-# a list from a file (one per line, # comments allowed)
-python -m m2.run --concepts-file my_concepts.txt
-
-# also test whether spreading the dose over k layers lowers detection (+15 min/concept)
-python -m m2.run --concepts Garlic --multilayer
-
-# change a constant; this gets its own run folder and cannot resume into the old grid
-python -m m2.run --concepts Garlic --set D2_MAX=0.25 --set SCAN_DOSES=0.15,0.30,0.45
-
-# keep the loose run folders after delivery
-python -m m2.run --concepts Garlic --no-wipe
+python -m m2.run --concepts-file my_concepts.txt              # one per line, # comments ok
+python -m m2.run --concepts Garlic --multilayer               # k in {2,3,5}, +15 min
+python -m m2.run --concepts Garlic --no-wipe                  # keep the loose run folder
+python -m m2.run --concepts Garlic --set D2_MAX=0.25          # own run folder, cannot resume
+                                    --set SCAN_DOSES=0.15,0.30,0.45
 ```
 
 ---
 
-## Step 9 — Read the result
+## 9. Read the result
 
 ```bash
 cat /workspace/m2_runs/garlic_*/operating_point.json | python -m json.tool | head -40
 ```
 
-`operating_point.json` is the deliverable: the winning `(layer, α, r)`, every metric with its
-standard error, the control verdicts, and the frontier of near-optimal alternatives.
+Three numbers decide it:
 
-The three numbers that matter:
+- **E5** — concept influence, 0–10, judged against the model's own unsteered reply. Needs **≥ 4**.
+- **D2** — forced identification rate. Needs **≤ 0.20**. *This is the constraint the pipeline
+  exists to satisfy.*
+- **S4** — `min(S1, S2, S3)`: integrity, degeneracy, capability. Needs **≥ 0.70**.
 
-- **E5** — concept influence, 0–10, judged against the model's own unsteered reply. Needs ≥ 4.
-- **D2** — forced identification rate. Needs ≤ 0.20. **This is the constraint the whole pipeline
-  exists to satisfy.**
-- **S4** — `min(S1, S2, S3)`: integrity, degeneracy, capability. Needs ≥ 0.70.
+Then read **gate 5** in the gates report — the Spearman ρ of the cheap D3 proxy against real D2.
+Below 0.70 and the shortlist's residual ranking was unreliable, which changes how much you should
+trust which cells got measured.
 
-**If no cell qualifies, that is a result, not a failure.** The frontier is still there, and the
+**If no cell qualifies, that is a result, not a failure.** The frontier is still reported, and the
 escalation ladder distinguishes "no operating point exists at these constraints" from "the vector
 is dead". `operating_point.json` records which.
 
-Everything else in the folder exists so a number can be traced to the generation that produced
-it — `judge_e5.jsonl`, `judge_s1.jsonl`, `judge_d2.jsonl`, `D2_transcripts.jsonl`,
-`cis_transcripts.jsonl`, `scan.jsonl`, `verified.jsonl`, `controls.jsonl`.
+Everything else in the folder exists so a number traces to the generation that produced it:
+`judge_e5.jsonl`, `judge_s1.jsonl`, `judge_d2.jsonl`, `D2_transcripts.jsonl`,
+`cis_transcripts.jsonl`, `scan.jsonl`, `verified.jsonl`, `controls.jsonl`, `provenance.jsonl`.
 
 ---
 
-## Step 10 — Use the result
-
-```bash
-cd "/workspace/Emergent-Introspection/Steering Optimization"
-python
-```
+## 10. Use the result
 
 ```python
 from m2 import model, config, steer
 model.load_model(config.CONFIG)
 
-steer.use("/workspace/m2_runs/garlic_abc123")      # the folder from step 8
+steer.use("/workspace/m2_runs/garlic_abc123")      # the folder from §9
 steer.compare("Tell me a short story.")            # steered vs unsteered, side by side
 steer.session()                                    # interactive; blank line to exit
 steer.sweep("Describe a landscape.", [0.10, 0.15, 0.20, 0.30])
@@ -289,66 +290,81 @@ with steer.steering(concept="Garlic", layer=37, r=0.20):
 
 ---
 
-## Step 11 — Get the results off the pod and stop it
+## 11. Next concept, and finishing up
 
-Bundles are delivered to Telegram automatically as each concept finishes. To pull them by hand:
-JupyterLab file browser → `/workspace/m2_runs/` → right-click the `.zip` → Download.
+```bash
+nohup python -m m2.run --concepts Origami --no-stop-pod > /workspace/m2_origami.out 2>&1 &
+```
 
-The pod auto-stops after a clean batch if `RUNPOD_API_KEY` is set. Otherwise: RunPod console →
-**Stop**. **Stop, not Terminate** — stop keeps the volume, terminate destroys it.
+Bundles go to Telegram as each concept finishes. To pull one by hand: JupyterLab file browser →
+`/workspace/m2_runs/` → right-click the `.zip` → Download.
+
+When done: RunPod console → **Stop** (not Terminate). The pod auto-stops after a batch if
+`RUNPOD_API_KEY` is set and you did not pass `--no-stop-pod`.
 
 ---
 
 ## Troubleshooting
 
+**First move for almost everything below:** `python -m m2.setup`. It names the problem and
+whether `--repair` can fix it.
+
 | What you see | What it means | Fix |
 |---|---|---|
-| `Username for 'https://github.com':` on the harness clone | wrong URL — GitHub prompts for auth instead of 404ing on a repo that does not exist | the URL is `safety-research/introspection-mechanisms`. Re-run `setup_pod.sh` |
-| `Could not open requirements file` | the clone above failed, so there is nothing to install | same |
-| `No module named pytest` | step 3 not run, or run in a different shell | `bash .../m2/setup_pod.sh` |
-| `No module named m2` | wrong directory | `cd "/workspace/Emergent-Introspection/Steering Optimization"` |
-| `refusing to start: HF_TOKEN, OPENROUTER_API_KEY not set` | credentials missing — there is no TTY under `nohup`, so nothing can prompt | step 4, in the same shell |
+| `No module named pytest` / `torch` / `m2` | dependencies gone (container disk) or wrong directory | `cd` to the project dir, then `python -m m2.setup --repair` |
+| `Username for 'https://github.com':` on a clone | wrong URL — GitHub prompts for auth rather than 404ing | the harness is `safety-research/introspection-mechanisms`; `--repair` uses the right one |
+| `Could not open requirements file` | the clone above failed | same |
+| `refusing to start: HF_TOKEN, OPENROUTER_API_KEY not set` | no TTY under `nohup`, so nothing can prompt | §5, in the same shell |
 | 403 downloading the model | Gemma licence not accepted | accept it on the model page with the same HF account |
-| Re-downloads 54 GB after a restart | `HF_HOME` on container disk | `export HF_HOME=/workspace/hf` — `setup_pod.sh` sets and persists this |
-| `UNIMPORTABLE vectors: No module named 'torch'` | step 3 not run | `bash .../m2/setup_pod.sh` |
+| Re-downloads 54 GB after a restart | `HF_HOME` was unset when it first downloaded | §2. The setup detects a model stranded outside `HF_HOME` and tells you how to move it |
+| Run folder looks empty after a migration | volume did not follow, or a hard kill truncated a file | `python -m m2.setup` prints per-concept row counts and repairs truncated JSONL |
 | **R14 fails** | the injection hook is not steering | **stop.** Every forward-pass measure would read zero |
-| R5 fails | extraction broken, or this concept sits far from the norm distribution | checked at the reference layer only; >1σ is normal per-concept variation |
-| Judge FPR warning after Phase 0 | the judge invents influence on unsteered pairs | it puts a floor under every E5 in the run — fix before spending GPU time |
-| CUDA out of memory | card smaller than 80 GB, or something else on the GPU | `nvidia-smi`; the model needs ~54 GB resident |
-| Run died; will re-running redo the work? | no | re-run the same command. Rows are skipped at row level and **no judge call is ever paid for twice** |
+| R5 fails | extraction broken, or this concept is far from the norm distribution | reference layer only; >1σ is normal per-concept variation |
+| Judge FPR warning after Phase 0 | the judge invents influence on unsteered pairs | it puts a floor under every E5 — fix before spending GPU time |
+| `status board unavailable` | board could not be built | fixed in `276e3be`; `--repair` pulls it |
+| CUDA out of memory | card under 80 GB, or something else on the GPU | `nvidia-smi`; the model needs ~54 GB resident |
+| Run died — will re-running redo the work? | no | re-run the same command. Rows skip at row level and **no judge call is ever paid for twice** |
 | No Telegram messages | token or chat id wrong | `python -c "from m2 import monitor; monitor.notify_test()"` |
 
 ---
 
-## One-page summary
+## One page
 
 ```bash
 # 1. pod: A100 80GB, 150 GB volume at /workspace, PyTorch template, Jupyter terminal
 
-# 2. code
+# 2. every shell, always
+export HF_HOME=/workspace/hf
+
+# 3. code
 GH=YOUR_GITHUB_TOKEN
 git clone https://x-access-token:$GH@github.com/PquePC/Emergent-Introspection.git /workspace/Emergent-Introspection
 git -C /workspace/Emergent-Introspection remote set-url origin https://github.com/PquePC/Emergent-Introspection.git
 git -C /workspace/Emergent-Introspection checkout M2 && unset GH
 
-# 3. install  (expect: 53 passed)
-bash "/workspace/Emergent-Introspection/Steering Optimization/m2/setup_pod.sh"
+# 4. set up / check everything
+cd "/workspace/Emergent-Introspection/Steering Optimization"
+python -m m2.setup --repair
 
-# 4. credentials  (note the leading spaces)
+# 5. credentials  (leading spaces)
  export HF_TOKEN=... OPENROUTER_API_KEY=...
  export TELEGRAM_BOT_TOKEN=... TELEGRAM_CHAT_ID=... HEALTHCHECK_URL=... RUNPOD_API_KEY=...
 
-# 5. preflight  (expect: R5, R7, R14 all PASS)
-cd "/workspace/Emergent-Introspection/Steering Optimization"
+# 6. confirm green
+python -m m2.setup
+
+# 7. preflight  (expect R5, R7, R14 all PASS)
 python -m m2.run --concepts Garlic --preflight
 
-# 6. watchdog, in a SECOND terminal
+# 8. watchdog, SECOND terminal
 nohup bash "/workspace/Emergent-Introspection/Steering Optimization/pod_watchdog.sh" > /workspace/watchdog.log 2>&1 &
 
-# 7. run
+# 9. run
 nohup python -m m2.run --concepts Garlic --no-stop-pod > /workspace/m2_garlic.out 2>&1 &
 tail -f /workspace/m2_garlic.out
 
-# 8. read
+# 10. read
 cat /workspace/m2_runs/garlic_*/operating_point.json | python -m json.tool
 ```
+
+**Returning to a migrated pod:** steps 2, 4, 5, then 9.
