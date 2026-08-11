@@ -509,6 +509,13 @@ def _draw_mmlu(split: str, n: int) -> list[dict]:
     """Draw the sample from the hub. Raises, with the fix named, if it cannot."""
     try:
         from datasets import load_dataset
+        # 57 subject configs x 3 splits = 171 progress bars into the run log, which buries the
+        # calibration output they sit between. The download itself is a few megabytes.
+        try:
+            from datasets.utils.logging import disable_progress_bar
+            disable_progress_bar()
+        except Exception:                       # noqa: BLE001 - cosmetic, never fatal
+            pass
     except Exception as exc:                       # ImportError, or a broken datasets install
         raise RuntimeError(
             "S3 item set unavailable: the `datasets` library could not be imported and no "

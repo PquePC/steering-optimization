@@ -546,6 +546,29 @@ def test_concepts_file_ignores_comments_and_blanks(tmp_path):
     assert m2run._read_concepts(args) == ["Irony", "Silk"], "and de-duplicated, order kept"
 
 
+def test_run_status_accepts_the_arguments_the_driver_passes(tmp_path):
+    """The driver built the board positionally against a signature that takes keywords, so
+    `Path(a_dict)` raised TypeError, the driver's except degraded to a board-free run, and a
+    whole concept ran with no progress board, no ETA and no stall detection - announced by one
+    WARN line. Graceful degradation around a wrong call signature is how a defect survives a
+    run, so the call is pinned here instead.
+    """
+    from m2 import driver
+    board = monitor.RunStatus(driver.PHASE_ORDER,
+                              path=tmp_path / "status.txt",
+                              priors=monitor.PHASE_SECONDS_PRIOR)
+    assert board.order == list(driver.PHASE_ORDER)
+    assert set(board.priors) == set(driver.PHASE_ORDER)
+
+
+def test_every_driver_phase_has_a_seconds_prior():
+    """RunStatus hard-indexes the prior per phase and raises on a missing one, so a phase the
+    driver runs but monitor has not priced would kill the board at construction."""
+    from m2 import driver
+    missing = [p for p in driver.PHASE_ORDER if p not in monitor.PHASE_SECONDS_PRIOR]
+    assert not missing, f"unpriced phases: {missing}"
+
+
 def test_s4_is_a_minimum_not_a_mean():
     """Spec 7. S1-S3 are three different ways to be unusable; passing one must not compensate
     for failing another. A mean of (1.0, 1.0, 0.1) is 0.70 and would pass S4_MIN."""

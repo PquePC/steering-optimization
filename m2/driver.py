@@ -266,8 +266,16 @@ def _make_board(run_dir: Path) -> _Board:
     """
     try:
         monitor = _monitor()
-        impl = monitor.RunStatus(PHASE_ORDER, monitor.PHASE_SECONDS_PRIOR,
-                                 Path(run_dir) / STATUS_FILE)
+        # KEYWORDS, NOT POSITION. The real signature is
+        #     RunStatus(order, path=None, totals=None, priors=None, notifier=None)
+        # so the positional call this replaced passed PHASE_SECONDS_PRIOR as `path` and the
+        # Path as `totals`, and `Path(a_dict)` raised TypeError. The except below then did
+        # exactly what it promises - degraded to a board-free run - so a whole concept ran
+        # with no progress board, no ETA and no stall detection, announced by one WARN line.
+        # Graceful degradation around a wrong call signature is how a defect survives a run.
+        impl = monitor.RunStatus(PHASE_ORDER,
+                                 path=Path(run_dir) / STATUS_FILE,
+                                 priors=monitor.PHASE_SECONDS_PRIOR)
         return _Board(impl)
     except Exception as exc:                            # noqa: BLE001
         runio.log(f"status board unavailable ({_label(exc)}) - running without it", "WARN")
