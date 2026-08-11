@@ -66,8 +66,35 @@ def ensure_repo_path(verbose: bool = False) -> tuple[Path, list[str]]:
     rather than only where the clone happens.
 
     Returns the repo root and the subdirectories this call added (empty if already on path).
+
+    SEARCHES SEVERAL LOCATIONS rather than one hard-coded default. The v1 lab cloned the
+    harness under `$WORK_DIR` (default `/workspace/steering-opt`); the M2 quickstart and
+    `setup_pod.sh` clone it to `/workspace/introspection-mechanisms`; on a development machine
+    it sits beside this package. Committing to one of those makes the other fail with
+    `ModuleNotFoundError: No module named 'model_utils'` from inside `load_model`, which reads
+    as a broken install rather than a path that looked in the wrong place.
+
+    A candidate counts only if `src/model_utils.py` is actually there. An empty or
+    half-finished clone directory must not win the search and then fail on import.
     """
-    repo = Path(os.environ.get("WORK_DIR", "/workspace/steering-opt")) / "introspection-mechanisms"
+    candidates: list[Path] = []
+    explicit = os.environ.get("M2_HARNESS_DIR")
+    if explicit:
+        candidates.append(Path(explicit))
+    work_dir = os.environ.get("WORK_DIR")
+    if work_dir:
+        candidates.append(Path(work_dir) / "introspection-mechanisms")
+    here = Path(__file__).resolve().parent            # .../Steering Optimization/m2
+    candidates += [
+        Path("/workspace/introspection-mechanisms"),          # quickstart / setup_pod.sh
+        Path("/workspace/steering-opt/introspection-mechanisms"),   # v1 WORK_DIR default
+        here.parent / "introspection-mechanisms",             # beside the package
+        here.parent.parent / "introspection-mechanisms",      # repo root
+    ]
+
+    repo = next((c for c in candidates if (c / "src" / "model_utils.py").is_file()),
+                candidates[0])
+
     added: list[str] = []
     for sub in ("src", "experiments"):
         d = str(repo / sub)
@@ -75,12 +102,47 @@ def ensure_repo_path(verbose: bool = False) -> tuple[Path, list[str]]:
             sys.path.insert(0, d)
             added.append(sub)
     if verbose:
-        if not repo.exists():
-            print(f"repo path  : {repo} (not cloned yet)")
+        if not (repo / "src" / "model_utils.py").is_file():
+            print(f"repo path  : NOT FOUND. Searched:")
+            for c in candidates:
+                print(f"             {c}")
+            print("             Clone it, or set M2_HARNESS_DIR:")
+            print("             git clone --depth 1 "
+                  "https://github.com/safety-research/introspection-mechanisms "
+                  "/workspace/introspection-mechanisms")
         else:
             print(f"repo path  : {repo}"
                   + (f"  (added {', '.join(added)})" if added else "  (already on path)"))
     return repo, added
+
+
+def require_repo_path() -> Path:
+    """`ensure_repo_path` but fatal, with every location it looked in.
+
+    Called from `load_model` so the failure names the fix. The bare
+    `ModuleNotFoundError: No module named 'model_utils'` that this replaces is bug 15's
+    symptom and says nothing about where to put the clone.
+    """
+    repo, _ = ensure_repo_path()
+    if (repo / "src" / "model_utils.py").is_file():
+        return repo
+    searched = "\n  ".join(str(c) for c in (
+        os.environ.get("M2_HARNESS_DIR") or "(M2_HARNESS_DIR unset)",
+        (Path(os.environ["WORK_DIR"]) / "introspection-mechanisms")
+        if os.environ.get("WORK_DIR") else "(WORK_DIR unset)",
+        Path("/workspace/introspection-mechanisms"),
+        Path("/workspace/steering-opt/introspection-mechanisms"),
+        Path(__file__).resolve().parent.parent / "introspection-mechanisms",
+    ))
+    raise RuntimeError(
+        "the upstream harness (introspection-mechanisms) is not on any searched path, so "
+        "`from model_utils import load_model` cannot work.\n\nSearched:\n  " + searched +
+        "\n\nFix, on a pod:\n"
+        "  git clone --depth 1 https://github.com/safety-research/introspection-mechanisms "
+        "/workspace/introspection-mechanisms\n"
+        "or point at an existing clone:\n"
+        "  export M2_HARNESS_DIR=/path/to/introspection-mechanisms\n\n"
+        "`m2/setup_pod.sh` does the clone and the dependency install in one step.")
 
 
 # BUG 15, defence 14. Called at IMPORT of this module, not only where the repo is installed:
@@ -147,8 +209,10 @@ def load_model(cfg: dict) -> Any:
     """
     _require_torch()
 
-    # BUG 15 again: this cell can be re-run after a kernel restart without the install cell.
-    ensure_repo_path()
+    # BUG 15 again: this can be re-run after a kernel restart without the install step.
+    # require_repo_path raises with every location it searched and the exact clone command,
+    # rather than letting the import below fail with a bare ModuleNotFoundError.
+    require_repo_path()
     from model_utils import load_model as _repo_load_model  # noqa: WPS433 (deferred by design)
 
     mw = _repo_load_model(cfg["model"], dtype=cfg["dtype"])
