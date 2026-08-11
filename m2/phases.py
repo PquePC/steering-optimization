@@ -974,15 +974,42 @@ def _size_shortlist(candidates: list[dict], per_layer: dict,
                          "round-robin across routes, never by effectiveness (spec 7.2)")
 
     # Too few: widen for coverage.
+    #
+    # A LIVE POOL FIRST. Widening picks the layer whose E6 is FARTHEST from everything already
+    # selected, which buys coverage of the E6 range (spec 8 route 2) - but with no floor it
+    # maximises distance by choosing the deadest layer available. On Garlic, whose E6 is 0.00
+    # from L13 to ~L52 and 1.00 at L60, that put L13, L14 and L15 on the shortlist at
+    # reach=0.00 and D3=0.000: no concept mass on any of the twelve prompts, so E5 cannot
+    # reach E5_FLOOR and the cell cannot qualify however it is measured. Three such cells cost
+    # ~150 judge calls and ~8 minutes of Phase 4 to confirm a zero that Phase 1 already knew.
+    #
+    # Sub-E6_FLOOR layers are still wanted - the target cells are outliers from the
+    # influence-detection relationship, which is the whole reason route 2 exists - so the bar
+    # here is not E6_FLOOR. It is "something happened at all". Dead layers are used only if
+    # nothing else is left, and the note says so.
     chosen = list(candidates)
-    pool = [layer for layer in sorted(per_layer) if layer not in by_layer]
+    unpicked = [layer for layer in sorted(per_layer) if layer not in by_layer]
+
+    def _has_signal(layer: int) -> bool:
+        entry = per_layer[layer]
+        return float(entry["e6"]) > 0.0 or float(entry["d3"] or 0.0) > 0.0
+
+    live = [layer for layer in unpicked if _has_signal(layer)]
+    dead = [layer for layer in unpicked if not _has_signal(layer)]
+    pool = live + dead
+    n_live = len(live)
     added: list[int] = []
     while len(chosen) < want_lo and pool:
         have = [float(cand["e6"]) for cand in chosen]
 
         def gap(layer: int) -> tuple:
             e6 = float(per_layer[layer]["e6"])
-            return (-min(abs(e6 - h) for h in have), layer) if have else (0.0, layer)
+            # Live layers sort ahead of dead ones regardless of how much coverage a dead one
+            # would buy: a cell with no concept mass anywhere buys coverage of a range the
+            # answer cannot be in.
+            alive = 0 if _has_signal(layer) else 1
+            span = -min(abs(e6 - h) for h in have) if have else 0.0
+            return (alive, span, layer)
 
         layer = min(pool, key=gap)
         pool.remove(layer)
@@ -996,8 +1023,15 @@ def _size_shortlist(candidates: list[dict], per_layer: dict,
             routes=["widen"], merged_from=[]))
         added.append(layer)
     chosen.sort(key=lambda cand: cand["layer"])
-    note = (f"widened to {len(chosen)} candidates by E6 coverage (added "
-            f"{['L' + str(layer) for layer in added]})" if added else None)
+    n_dead_added = sum(1 for layer in added if not _has_signal(layer))
+    note = None
+    if added:
+        note = (f"widened to {len(chosen)} candidates by E6 coverage (added "
+                f"{['L' + str(layer) for layer in added]})")
+        if n_dead_added:
+            note += (f"; {n_dead_added} of them have no signal at all (E6 = 0 and D3 = 0) "
+                     f"because only {n_live} live layers were left unpicked - those cells "
+                     "cannot clear E5_FLOOR and are being measured only to fill SHORTLIST_N")
     return chosen, note
 
 
