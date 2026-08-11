@@ -93,7 +93,7 @@ an external service noticing that pings *stopped* covers it.
 
 ```bash
 cd "/workspace/Emergent-Introspection/Steering Optimization"
-git clone --depth 1 https://github.com/tmacar/introspection-mechanisms.git /workspace/introspection-mechanisms
+git clone --depth 1 https://github.com/safety-research/introspection-mechanisms /workspace/introspection-mechanisms
 pip install -q -r /workspace/introspection-mechanisms/requirements.txt
 pip install -q nest_asyncio datasets pytest
 ```
