@@ -608,3 +608,100 @@ def test_phase0_runs_hook_liveness_itself():
     assert "hook_liveness()" in src, "phase 0 no longer checks the hook"
     assert src.index("hook_liveness()") < src.index("load_mmlu_items"), (
         "liveness must precede the first thing that measures anything")
+
+
+# ---------------------------------------------------------------------------------------
+# undefined global names
+# ---------------------------------------------------------------------------------------
+
+_DUNDERS = {"__file__", "__name__", "__doc__", "__package__", "__spec__", "__loader__",
+            "__builtins__", "__path__", "__debug__"}
+
+
+def _undefined_globals(path):
+    """Names read as module globals inside some function, but bound nowhere at module level.
+
+    `symtable` classes a name as global when the enclosing function neither binds it nor
+    inherits it from a closure, so this is a real scope analysis and not a text search.
+    """
+    import builtins
+    import symtable
+    src = Path(path).read_text(encoding="utf-8")
+    top = symtable.symtable(src, str(path), "exec")
+    known = ({s.get_name() for s in top.get_symbols()} | set(dir(builtins)) | _DUNDERS)
+    out = []
+
+    def walk(tab, trail):
+        for sym in tab.get_symbols():
+            if sym.is_global() and sym.is_referenced() and sym.get_name() not in known:
+                out.append(f"{trail}: {sym.get_name()}")
+        for child in tab.get_children():
+            walk(child, f"{trail}.{child.get_name()}")
+
+    walk(top, Path(path).stem)
+    return out
+
+
+def test_the_undefined_name_detector_actually_detects(tmp_path):
+    """A detector that never fires is worse than none - it reads as evidence."""
+    good = tmp_path / "good.py"
+    good.write_text("import time\ndef f():\n    return time.time()\n", encoding="utf-8")
+    bad = tmp_path / "bad.py"
+    bad.write_text("def f():\n    return _now()\n", encoding="utf-8")
+    assert _undefined_globals(good) == []
+    assert _undefined_globals(bad) == ["bad.f: _now"]
+
+
+def test_no_module_reads_a_global_that_does_not_exist():
+    """The driver called a bare `_now()` that lives in runio, so writing the provenance row
+    raised NameError. The block is wrapped in `except Exception` so a run could never afford
+    to lose a row over it - which meant the defect logged one WARN line and cost the run the
+    record of which GPU produced its numbers, the exact question a mid-run pod migration
+    makes unanswerable. Broad excepts are right here; they just need this test behind them.
+    """
+    pkg = Path(__file__).resolve().parent.parent
+    found = {}
+    for path in sorted(pkg.glob("*.py")) + sorted((pkg / "tests").glob("*.py")):
+        bad = _undefined_globals(path)
+        if bad:
+            found[path.name] = bad
+    assert not found, f"undefined global names: {found}"
+
+
+def _flat_grid():
+    """A Garlic-shaped surface: dead below L53, alive only in the last handful of layers."""
+    per_layer = {}
+    for layer in range(13, 62):
+        e6 = {53: 0.17, 57: 0.33, 58: 0.42, 60: 1.00, 61: 0.92}.get(layer, 0.0)
+        # 1e-4 is what a dead layer really reads. D3 is a probability mass; it is never 0.
+        d3 = {58: 0.027, 60: 0.999, 61: 1.000}.get(layer, 0.0001)
+        per_layer[layer] = dict(layer=layer, e6=e6, d3=d3, s3=1.0, resid=-0.065,
+                                e6_at_r=0.30, reach_by_dose={}, d3_by_dose={}, n_doses=2)
+    return per_layer
+
+
+def test_shortlist_never_widens_onto_a_dead_layer():
+    """Widening maximises DISTANCE in E6, so with no live-pool guard it prefers the deadest
+    layer on the grid. Garlic put L13/L14/L15 on the shortlist at reach 0.00 - each one ~50
+    judge calls and ~2 minutes of Phase 4 to confirm a zero Phase 1 already reported. The
+    first guard tested `d3 > 0.0`, which every layer passes because D3 is a probability mass.
+    """
+    from m2 import phases
+    per_layer = _flat_grid()
+    seed = [dict(layer=60, r=0.30, e6=1.00, d3=0.999, s3=1.0, resid=-0.132,
+                 reach_by_dose={}, d3_by_dose={}, why=[], routes=["local_max"], merged_from=[])]
+    sized, note = phases._size_shortlist(seed, per_layer, 8, 12)
+    picked = [c["layer"] for c in sized]
+    assert 13 not in picked and 14 not in picked and 15 not in picked, f"dead layers: {picked}"
+    assert all(per_layer[l]["e6"] > 0.0 for l in picked), "every pick showed concept mass"
+    assert len(sized) < 8, "an honestly short shortlist, not one padded to SHORTLIST_N"
+    assert "below SHORTLIST_N" in (note or ""), "and it must say so"
+
+
+def test_status_board_does_not_take_the_notebook_path_in_a_script():
+    """IPython is installed on every PyTorch pod image, so `from IPython.display import
+    display` succeeded under nohup, printed repr() of the mimebundle instead of raising, and
+    left `_sticky` True - a literal {'text/plain': '...'} blob between every phase for a whole
+    run. Presence of the module is not presence of a frontend.
+    """
+    assert monitor._in_notebook() is False, "pytest is not a ZMQ kernel"

@@ -607,7 +607,7 @@ def run_concept(name: str, *, notifier: Any = None, wipe: bool = True, deliver: 
     # be able to see that afterwards instead of reconstructing it from memory.
     try:
         prov = _model().provenance()
-        prov["ts"] = _now()
+        prov["ts"] = runio._now()
         prov["phase_entered_at"] = "run_concept"
         runio.write_row(PROVENANCE_FILE, prov)
         runio.log(f"provenance: {prov.get('gpu', '?')} | torch {prov.get('torch', '?')} | "

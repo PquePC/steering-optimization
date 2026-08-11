@@ -1226,11 +1226,21 @@ class RunStatus:
         The heartbeat drives status.txt, the phone pushes and the dead man's switch.
         Nothing outbound happens before this call.
         """
-        try:
-            from IPython.display import display
-            display({"text/plain": self.text()}, raw=True, display_id=self._display_id)
-            self._sticky = True
-        except Exception:            # noqa: BLE001 - not a notebook, or no display support
+        # The import succeeding is NOT evidence of a notebook. IPython is installed on every
+        # PyTorch pod image, so under `nohup python -m m2.run` the import worked, `display`
+        # found no frontend, fell back to printing repr() of what it was handed, and did not
+        # raise - so `_sticky` stayed True and every redraw for the whole run printed a literal
+        # `{'text/plain': '...'}` blob into the log between phases. Ask for a kernel, not a
+        # module.
+        if _in_notebook():
+            try:
+                from IPython.display import display
+                display({"text/plain": self.text()}, raw=True, display_id=self._display_id)
+                self._sticky = True
+            except Exception:        # noqa: BLE001 - no display support after all
+                self._sticky = False
+                print(self.text(), flush=True)
+        else:
             self._sticky = False
             print(self.text(), flush=True)
         self.write_status_txt()      # one write immediately, so the file exists from t=0
@@ -1283,6 +1293,22 @@ class RunStatus:
 # Jupyter shows cell output in the browser and nowhere else. Everything printed during a
 # run - sample responses, judge verdicts, top-k tokens - is exactly what is needed to check
 # a measure by hand, so it is mirrored to console.log as well.
+
+def _in_notebook() -> bool:
+    """True only inside a kernel with a frontend that can host an updatable display.
+
+    `ZMQInteractiveShell` is Jupyter/Colab. A terminal IPython session is `TerminalInteractive
+    Shell` and a plain `python -m` script has no shell at all; both must take the print path,
+    because `IPython.display.display` does not raise in either - it silently prints the repr of
+    the mimebundle it was given.
+    """
+    try:
+        from IPython import get_ipython          # noqa: PLC0415 - optional, and only here
+    except Exception:                            # noqa: BLE001 - IPython not installed
+        return False
+    shell = get_ipython()
+    return shell is not None and type(shell).__name__ == "ZMQInteractiveShell"
+
 
 class _Tee:
     """Duplicate stdout to a file, so nothing printed is lost if the browser is closed.

@@ -118,6 +118,11 @@ SMOOTH_WINDOW: int = 3          # "lightly smoothed over L" (spec 8 Phase 2)
 STRATIFIED_BINS: int = 4        # coverage across the E6 range, spec 8 Phase 2 route 2
 RESID_SIGMA: float = 1.0        # a layer is "low D3 for its E6" at 1 SD below the fit
 RESID_MAX_CANDIDATES: int = 4   # bound on route 3, so it cannot swamp the shortlist
+# Floor under "this layer produced any concept mass at all", used only to decide whether a
+# layer is worth WIDENING onto the shortlist. It never gates a measurement or a selection.
+# D3 is a probability mass and is never exactly zero, so the test has to be against something;
+# the unsteered baseline is the honest comparator and this is the floor under it.
+D3_SIGNAL_MIN: float = 0.005
 
 # Phase 3 knobs.
 BISECT_ESCALATE: float = 1.5    # dose multiplier while hunting for the insane end of the bracket
@@ -922,6 +927,20 @@ def _merge_adjacent(candidate_layers: Sequence[int], per_layer: dict, reasons: d
     return out
 
 
+def _d3_baseline() -> float:
+    """Phase 0's unsteered forced-ID mass, or 0.0 if Phase 0 has not run.
+
+    Read defensively. Phase 2 is otherwise a pure function of the scan rows and is called
+    directly by the offline tests, which never run Phase 0 - a missing baseline must fall back
+    to the `D3_SIGNAL_MIN` floor, not raise.
+    """
+    try:
+        value = _run().base.get(BASE_D3_KEY)
+    except Exception:                    # noqa: BLE001 - no run context in a unit test
+        return 0.0
+    return float(value) if isinstance(value, (int, float)) else 0.0
+
+
 def _size_shortlist(candidates: list[dict], per_layer: dict,
                     want_lo: int, want_hi: int) -> tuple[list[dict], str | None]:
     """Bring the merged candidate list inside `SHORTLIST_N`, without turning it into a top-K.
@@ -990,13 +1009,29 @@ def _size_shortlist(candidates: list[dict], per_layer: dict,
     chosen = list(candidates)
     unpicked = [layer for layer in sorted(per_layer) if layer not in by_layer]
 
+    # The bar for "something happened" is NOT `d3 > 0`. D3 is a probability mass over the
+    # forced-ID logits and is essentially never exactly zero - the unsteered baseline itself is
+    # a small positive number - so `> 0.0` passed every layer on the grid and the live-pool
+    # guard never fired. Garlic's L13/L14/L15 went onto the shortlist at reach 0.00 and D3
+    # 0.000 (printed; ~1e-4 in fact) exactly as before the guard existed.
+    #
+    # Against the unsteered baseline instead, with a floor under it so a near-zero baseline
+    # cannot make noise look like signal. Reach still decides on its own: a layer whose concept
+    # mass shows up in free generation is live whatever D3 says.
+    d3_base = _d3_baseline()
+
     def _has_signal(layer: int) -> bool:
         entry = per_layer[layer]
-        return float(entry["e6"]) > 0.0 or float(entry["d3"] or 0.0) > 0.0
+        if float(entry["e6"]) > 0.0:
+            return True
+        return float(entry["d3"] or 0.0) > max(D3_SIGNAL_MIN, d3_base)
 
     live = [layer for layer in unpicked if _has_signal(layer)]
-    dead = [layer for layer in unpicked if not _has_signal(layer)]
-    pool = live + dead
+    # Dead layers are no longer a fallback pool. A cell with no concept mass in any of the
+    # twelve prompts at either scan dose cannot clear E5_FLOOR, so Phase 4 would spend ~50
+    # judge calls and ~2 minutes per cell to confirm a zero Phase 1 already reported. A
+    # shortlist that is honestly short beats a full one padded with cells that cannot win.
+    pool = list(live)
     n_live = len(live)
     added: list[int] = []
     while len(chosen) < want_lo and pool:
@@ -1023,15 +1058,18 @@ def _size_shortlist(candidates: list[dict], per_layer: dict,
             routes=["widen"], merged_from=[]))
         added.append(layer)
     chosen.sort(key=lambda cand: cand["layer"])
-    n_dead_added = sum(1 for layer in added if not _has_signal(layer))
     note = None
     if added:
         note = (f"widened to {len(chosen)} candidates by E6 coverage (added "
                 f"{['L' + str(layer) for layer in added]})")
-        if n_dead_added:
-            note += (f"; {n_dead_added} of them have no signal at all (E6 = 0 and D3 = 0) "
-                     f"because only {n_live} live layers were left unpicked - those cells "
-                     "cannot clear E5_FLOOR and are being measured only to fill SHORTLIST_N")
+    if len(chosen) < want_lo:
+        short = (f"shortlist stops at {len(chosen)}, below SHORTLIST_N={want_lo}: only "
+                 f"{n_live} unpicked layer(s) showed any signal at the scan doses "
+                 f"{'; '.join(f'{d:g}' for d in _cfg()['SCAN_DOSES'])}. The rest read reach "
+                 f"0.00 with D3 at baseline, cannot clear E5_FLOOR, and are NOT measured. "
+                 f"This is a real result about the concept, not a failure to fill a quota - "
+                 f"if you want the early layers probed, raise SCAN_DOSES rather than pad")
+        note = f"{note}; {short}" if note else short
     return chosen, note
 
 
