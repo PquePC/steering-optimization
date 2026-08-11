@@ -169,8 +169,13 @@ def check_hf_home(rep: Report) -> None:
                      f"{DEFAULT_HF_HOME}/\n"
                      "      or accept a re-download on the next pod.")
     else:
-        rep.add("model cache", FIX, "absent - the preflight will download ~54 GB (15-25 min)",
-                hint="Not an error on a fresh volume. Just budget the time.")
+        # OK, not FIX. An absent cache on a fresh volume is the expected state, and the
+        # preflight resolves it by design - `--repair` has nothing to do here and would report
+        # a permanently unfixable item, which makes READY unreachable and trains you to ignore
+        # the summary line. A PARTIAL or STRANDED cache is a real defect and is FIX above.
+        rep.add("model cache", OK,
+                "absent - the preflight downloads ~54 GB (15-25 min), which is expected on a "
+                "fresh volume")
 
 
 def check_repo(rep: Report) -> None:
