@@ -865,15 +865,33 @@ All provisional; every one is a tuning knob, and those marked ⚑ are load-beari
 
 | phase | wall time | judge calls |
 |---|---|---:|
-| 0 · calibration | ~2 min | 2 |
-| 1 · full-depth scan (50 layers × 2 doses) | ~7–10 min | **0** |
+| phase | wall time | judge calls |
+|---|---|---:|
+| 0 · calibration | **~7 min** (measured) | 2 |
+| 1 · full-depth scan (49 layers × 2 doses) | **~21 min** (measured, 13 s/cell) | **0** |
 | 2 · shortlist | free | **0** |
-| 3 · dose bisection | ~1 min | **0** |
+| 3 · dose bisection | ~1–3 min | **0** |
 | 4 · verification (10 cells × 49) | ~8–10 min | 490 |
 | 5 · local refinement (~10 cells × 49) | ~8 min | 490 |
 | 6 · confirmation | ~4 min | ~150 |
 | controls | ~4 min | ~75 |
-| **total** | **~35 min/concept** | **~1,210** |
+| **total** | **~50–60 min/concept** | **~1,210** |
+
+> **Phases 0 and 1 are measured** on Gemma3-27B / 1× A100 80GB / 49 layers in scope. The rest
+> are still estimates. The earlier figures (2 min and 7–10 min) assumed E6 and D3 would batch
+> their prompts; **they cannot**, because a batched forward pass with a scalar steering start
+> position mis-steers left-padded rows of unequal length — bug 25b — and `model.injected`
+> refuses it rather than repeating that silently.
+>
+> A scan cell is therefore **~27 single forward passes plus one 57-item batch**: E6 12 (one per
+> E5 prompt, each with its own start position), D3 5 steered + 5 unsteered + up to 5 filler
+> extensions, S3 one batch. At ~0.35 s per pass on a 27B that is the observed 13 s.
+>
+> **If the scan ever becomes the bottleneck**, the fix already exists in this codebase:
+> `multilayer.steering_mask` builds a per-row mask from the left-padded encoding, which is what
+> makes a batched pass with per-row start positions correct. Applying it to E6 would collapse
+> 12 passes into 1. That is a real optimisation, not a hack — but the scan is ~⅓ of the run and
+> Phases 4–5 are the larger half, so it is not where the next hour goes.
 
 **Against v1:** ~30 min/concept for 6 layers and ~4,000 judge calls, with no output-level
 effectiveness and no controls. M2 buys full layer resolution, a behavioural effectiveness metric,

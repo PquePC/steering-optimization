@@ -345,9 +345,18 @@ def measure_D3(layer: int, alpha: float, verbose: bool = False) -> dict:
     rate_thresh = float(_cfg()["D3_RATE_THRESH"])
 
     start, steered = _d3_forward(layer, alpha, D3_TRIALS)
-    # The unsteered read on the SAME prompts. Not cached across cells: the saving is five short
-    # forward passes per cell, and a cache of unsteered logits that outlives a concept switch is
-    # the exact shape of bug 23 for a saving the scan does not need.
+    # The unsteered read on the SAME prompts. Not cached across cells: a cache of unsteered
+    # logits that outlives a concept switch is the exact shape of bug 23.
+    #
+    # MEASURED COST OF THAT CHOICE, so the trade is visible with numbers rather than assumed:
+    # this is 5 of the ~27 single forward passes a scan cell runs, about 2.5s of 13s per cell,
+    # so roughly 4 minutes of a 98-cell Phase 1. The output is genuinely independent of both
+    # `layer` and `alpha` -- it is the same five prompts through an unhooked model -- so it
+    # COULD be memoised once per (concept, config_hash) and reused. That is a real 19% saving
+    # on the scan and it is safe if and only if the key carries the concept.
+    # Deliberately not done here: the scan is not the bottleneck (Phase 4/5 are), and bug 23
+    # was precisely a cache whose key omitted the thing that changed. Revisit only with the
+    # concept in the key and a test that a concept switch misses.
     _base_start, base = _d3_forward(layer, 0.0, D3_TRIALS)
 
     per: list[dict] = []

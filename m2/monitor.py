@@ -662,11 +662,21 @@ def notify_test() -> bool:
 # This replaces v1's CELL_SECONDS_PRIOR, which was per MEASURE over a fixed grid.
 
 PHASE_SECONDS_PRIOR: dict[str, float] = dict(
-    CAL=120.0,       # once per concept
-    SCAN=2.0,        # per (layer, dose)
+    # MEASURED on Gemma3-27B, 1x A100 80GB, Garlic, 49 layers in scope (2026-08-09).
+    CAL=420.0,       # once per concept. 49-layer extraction 34s + residual norms + 36 unsteered
+                     # generations + the MMLU download and cap_base pass. Was 120.
+    SCAN=13.0,       # per (layer, dose). Was 2.0, which assumed E6 and D3 batched. They do not,
+                     # and cannot with a scalar start position (bug 25b) - see the decomposition
+                     # in cheap.scan_cell. ~27 single forward passes plus one 57-item batch.
+
+    # STILL PRIORS - not yet observed. A multi-unit phase replaces its prior with its own
+    # measured rate after two units, so these only drive the first two units and the opening
+    # ETA. CAL and CONFIRM are single-unit, so their numbers are never corrected by measurement
+    # and are the two worth getting right.
     SHORTLIST=0.0,   # free
-    BISECT=1.0,      # per bisection step
-    VERIFY=50.0,     # per cell: 12 (E5) + 12 (S1) + 25 (B) judge calls, E5/S1 concurrent
+    BISECT=8.0,      # per bisection step: one probe, ~= a scan cell without D3
+    VERIFY=50.0,     # per cell: 12 (E5) + 12 (S1) + 25 (D2) judge calls, E5/S1 concurrent,
+                     # plus two batched generations of MAX_NEW_TOKENS
     REFINE=50.0,     # per cell
     CONFIRM=240.0,   # once
     CONTROLS=60.0,   # per control run

@@ -456,8 +456,13 @@ def test_phase_priors_cover_every_phase_and_price_verify_highest():
     prior = monitor.PHASE_SECONDS_PRIOR
     for name in ("CAL", "SCAN", "SHORTLIST", "BISECT", "VERIFY", "CONFIRM", "CONTROLS"):
         assert name in prior
-    assert prior["VERIFY"] > prior["SCAN"] * 10
+    # A verification cell generates and judges; a scan cell is forward passes only. The
+    # earlier form of this test asserted VERIFY > SCAN * 10, which was a guessed ratio, not an
+    # invariant - measurement put SCAN at 13 s against VERIFY's 50 s prior and the assertion
+    # failed on correct data. Assert the ordering that is actually load-bearing.
+    assert prior["VERIFY"] > prior["SCAN"]
     assert prior["SHORTLIST"] == 0.0
+    assert all(v >= 0.0 for v in prior.values())
 
 
 def test_classify_exc_returns_a_label_never_the_message():
