@@ -306,3 +306,33 @@ adds `SHORTLIST_TIER_SIZE` layers to both BISECT and VERIFY — about 7.5 minute
 default — so `PHASE_UNITS_PRIOR` must account for it from the opening board.
 
 **Result:** task [05](handoff/05-gate6-false-negative-audit.md), *Decided*.
+
+## 2026-08-12 — Task 05 landed; Garlic shakedown moves ahead of further static review
+**By:** PquePC (decision), Sol (execution)
+**Kind:** task complete + run-order decision
+
+Task [05](handoff/05-gate6-false-negative-audit.md) is implemented in `63cdc35`. Phase 2 now emits
+tier 0 plus ordered live rejected tiers; tier 1 always runs, while deeper tiers escalate only on
+failure and respect the configured limit. The approved ordering alternates `e6`, residual, `e6`
+and excludes dead layers through the same `D3_SIGNAL_MIN`/unsteered-baseline guard before either
+queue ranks them. Every verified/refined row retains its source tier and ordering route, and
+`tier_verification.json` records per-tier verdicts and the explicit stop reason.
+
+Gate 6 now audits the current run rather than hard-coded M1.5 cells: an equal-or-better outer-tier
+qualifier fails the gate while remaining eligible for normal selection; lower outer qualifiers are
+reported. Exhaustive coverage receives `NOT_APPLICABLE`, distinct from PASS and SKIP. The five
+settled config constants landed together and therefore produce one new `config_hash`; BISECT and
+VERIFY opening priors each count 11 units (eight expected tier-0 units plus three mandatory audit
+units). `--exhaustive` reports the full cell, judge-call and time estimate before measurement.
+
+The offline suite is green at 96 passed and 2 environment-dependent skips; edited modules also
+pass compilation and diff checks. No measurement was run during implementation.
+
+**Run-order decision:** stop static-review work after Task 05 and run Garlic as a deliberately
+non-reportable shakedown. Its purpose is to execute VERIFY, REFINE, CONFIRM and CONTROLS for the
+first time and obtain Gate 5's rho; it is not evidence for publication. Task 10 is not started.
+Task 15 is dropped from the pre-run queue because R5 portability does not affect Garlic on
+Gemma3-27B. Tasks 06 and 13 step 2 wait for the shakedown. Tasks 08 and 09 item 1 follow the
+shakedown and still precede the real run.
+
+**Result:** `63cdc35`, task 05 complete; next action is the Garlic shakedown from task 11.

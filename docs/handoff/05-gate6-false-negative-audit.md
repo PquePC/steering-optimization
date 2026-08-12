@@ -1,7 +1,8 @@
 # 05 — A tiered shortlist: escalation and false-negative audit
 
-**Status: BUILD NOW.** Blocking. Names, ordering and the exhaustive-mode gate behaviour were
-settled on 2026-08-12 - see **Decided** at the end. No further proposal needed.
+**Status: DONE — `63cdc35`.** The tiered shortlist, mandatory live-signal audit, exhaustive mode,
+Gate 6 replacement, provenance record and opening ETA units landed together. Offline suite:
+96 passed, 2 environment-dependent skips.
 
 ## What Phase 2 does, and its one dangerous failure
 
