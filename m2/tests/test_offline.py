@@ -772,6 +772,8 @@ def test_phase_priors_cover_every_phase_and_price_verify_highest():
     assert prior["VERIFY"] > prior["SCAN"]
     assert prior["SHORTLIST"] == 0.0
     assert all(v >= 0.0 for v in prior.values())
+    assert monitor.PHASE_UNITS_PRIOR["BISECT"] == 11  # candidates, incl. audit tier
+    assert monitor.PHASE_UNITS_PRIOR["VERIFY"] == 11  # cells, incl. audit tier
 
 
 def test_classify_exc_returns_a_label_never_the_message():
@@ -842,6 +844,37 @@ def test_override_changes_the_config_hash():
     m2run.apply_overrides(cfg, ["D2_MAX=0.25"])
     after = config.config_hash({k: v for k, v in cfg.items() if k != "config_hash"})
     assert before != after
+
+
+def test_every_tier_knob_is_in_config_and_reachable_through_set():
+    from m2 import run as m2run
+    cfg = dict(config.CONFIG)
+    applied = m2run.apply_overrides(cfg, [
+        "SHORTLIST_TIER_SIZE=4",
+        "SHORTLIST_AUDIT_TIERS=2",
+        "SHORTLIST_MAX_TIER=null",
+        "SHORTLIST_TIER_ORDER=e6_desc",
+        "SHORTLIST_EXHAUSTIVE=true",
+    ])
+    assert set(applied) == {
+        "SHORTLIST_TIER_SIZE", "SHORTLIST_AUDIT_TIERS", "SHORTLIST_MAX_TIER",
+        "SHORTLIST_TIER_ORDER", "SHORTLIST_EXHAUSTIVE"}
+    assert cfg["SHORTLIST_TIER_SIZE"] == 4 and cfg["SHORTLIST_AUDIT_TIERS"] == 2
+    assert cfg["SHORTLIST_MAX_TIER"] is None
+    assert cfg["SHORTLIST_TIER_ORDER"] == "e6_desc"
+    assert cfg["SHORTLIST_EXHAUSTIVE"] is True
+
+
+def test_exhaustive_flag_and_cost_estimate_are_explicit_before_measurement():
+    from m2 import run as m2run
+    args = m2run._parser().parse_args(["--concepts", "Garlic", "--exhaustive"])
+    estimate = m2run.exhaustive_cost_estimate(49)
+    assert args.exhaustive is True
+    assert estimate["bisection_candidates"] == estimate["verification_cells"] == 49
+    assert estimate["judge_calls"] == 49 * 49
+    assert estimate["seconds"] == pytest.approx(
+        49 * (monitor.PHASE_SECONDS_PRIOR["BISECT"]
+              + monitor.PHASE_SECONDS_PRIOR["VERIFY"]))
 
 
 def test_required_credentials_are_the_two_the_run_cannot_proceed_without():
@@ -1005,6 +1038,87 @@ def test_shortlist_never_widens_onto_a_dead_layer():
     assert all(per_layer[l]["e6"] > 0.0 for l in picked), "every pick showed concept mass"
     assert len(sized) < 8, "an honestly short shortlist, not one padded to SHORTLIST_N"
     assert "below SHORTLIST_N" in (note or ""), "and it must say so"
+
+
+def test_tier_residual_ordering_cannot_reintroduce_a_dead_layer():
+    """Task 05: a negative fit residual is not evidence on an E6~=D3~=0 layer."""
+    from m2 import phases
+    per_layer = _flat_grid()
+    per_layer[13]["resid"] = -9.0       # would rank first without the shared signal guard
+    per_layer[57]["resid"] = -0.20
+    per_layer[58]["resid"] = -0.50
+    per_layer[60]["resid"] = 0.10
+    ordered, dead = phases._order_rejected_layers(
+        per_layer, [13, 57, 58, 60], "e6_residual_interleave", d3_base=0.0)
+    assert 13 not in [row["layer"] for row in ordered]
+    assert 13 in dead
+    assert [row["layer"] for row in ordered[:3]] == [60, 58, 57]
+    assert [row["tier_ordering"] for row in ordered[:3]] == [
+        "e6_desc", "residual_asc", "e6_desc"]
+
+
+def test_tier1_runs_even_after_tier0_finds_a_qualifier():
+    from m2 import phases
+    runs, reason = phases._should_execute_tier(
+        1, has_qualifier=True, audit_tiers=1, max_tier=3, exhaustive=False)
+    assert runs is True
+    assert "mandatory" in reason
+
+
+def test_tier_escalation_stops_at_the_configured_limit_and_says_so():
+    from m2 import phases
+    runs, reason = phases._should_execute_tier(
+        4, has_qualifier=False, audit_tiers=1, max_tier=3, exhaustive=False)
+    assert runs is False
+    assert "SHORTLIST_MAX_TIER=3" in reason
+
+
+def test_tier_ordering_rejects_an_unknown_value():
+    from m2 import phases
+    cfg = dict(config.CONFIG)
+    cfg["SHORTLIST_TIER_ORDER"] = "e6_typo"
+    with pytest.raises(ValueError, match="not recognised"):
+        phases._tier_config(cfg)
+
+
+def _gate6_row(layer, tier, e5, qualifies, *, source=None):
+    return dict(layer=layer, r=0.3, tier=tier, tier_source_layer=source or layer,
+                tier_ordering="e6_desc" if tier else "tier0_routes",
+                e5=e5, d2=0.1, s4=0.9, usable=True, qualifies=qualifies)
+
+
+def _gate6_plan(*, exhaustive=False):
+    return dict(
+        exhaustive=exhaustive, audit_tiers=1,
+        n_rejected=6, n_rejected_live=5, n_rejected_dead=1,
+        tiers=[
+            dict(tier=0, candidates=[dict(layer=31)]),
+            dict(tier=1, candidates=[dict(layer=40), dict(layer=41), dict(layer=42)]),
+        ])
+
+
+def test_gate6_fails_when_tier1_finds_a_better_qualifier_and_winner_changes():
+    gates.gates_reset()
+    rows = [_gate6_row(31, 0, 6.0, True),
+            _gate6_row(40, 1, 8.0, True),
+            _gate6_row(41, 1, 2.0, False),
+            _gate6_row(42, 1, 1.0, False)]
+    reading = gates.gate6_e6_shortlist_recall(
+        verified_rows=rows, tier_plan=_gate6_plan())
+    assert reading["passed"] is False
+    assert reading["tier0_winner"]["layer"] == 31
+    assert reading["final_winner"]["layer"] == 40
+    assert reading["audit_sampled"] == 3 and reading["rejected_live"] == 5
+
+
+def test_gate6_exhaustive_is_not_applicable_not_skipped_or_passed():
+    gates.gates_reset()
+    reading = gates.gate6_e6_shortlist_recall(
+        verified_rows=[], tier_plan=_gate6_plan(exhaustive=True))
+    summary = gates.gates_summary()
+    assert reading["state"] == "NOT_APPLICABLE"
+    assert summary["not_applicable"] == 1
+    assert summary["passed"] == summary["skipped"] == 0
 
 
 def test_status_board_does_not_take_the_notebook_path_in_a_script():

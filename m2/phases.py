@@ -73,6 +73,7 @@ __all__ = [
     "predict",
     "stratified_pick",
     "SCAN_FILE", "SHORTLIST_FILE", "BISECT_FILE", "VERIFIED_FILE", "CONFIRM_FILE",
+    "TIER_VERIFICATION_FILE",
     "BASELINES_FILE", "UNSTEERED_DIR", "OPERATING_POINT_FILE",
     "BASE_P_KEY", "BASE_D3_KEY",
     "PHASE0", "PHASE1", "PHASE3", "PHASE4", "PHASE5", "PHASE6",
@@ -91,6 +92,7 @@ CONFIRM_FILE: str = "confirm.jsonl"
 BASELINES_FILE: str = "baselines.jsonl"
 UNSTEERED_DIR: str = "unsteered"
 OPERATING_POINT_FILE: str = "operating_point.json"
+TIER_VERIFICATION_FILE: str = "tier_verification.json"
 
 # The phase label stamped on every row and, via `expensive.phase_scope`, on every judge call.
 # It is what keeps a Phase 4 screening E5 distinguishable from the Phase 6 confirmation of the
@@ -123,6 +125,7 @@ RESID_MAX_CANDIDATES: int = 4   # bound on route 3, so it cannot swamp the short
 # D3 is a probability mass and is never exactly zero, so the test has to be against something;
 # the unsteered baseline is the honest comparator and this is the floor under it.
 D3_SIGNAL_MIN: float = 0.005
+TIER_ORDERINGS: frozenset[str] = frozenset({"e6_desc", "e6_residual_interleave"})
 
 # Phase 3 knobs.
 BISECT_ESCALATE: float = 1.5    # dose multiplier while hunting for the insane end of the bracket
@@ -781,9 +784,51 @@ def _by_layer(scan_rows: Sequence[dict]) -> dict[int, dict]:
     return per
 
 
+def _tier_config(cfg: dict) -> dict:
+    """Validate and normalise every Task 05 knob; defaults are never supplied here."""
+    size = int(cfg["SHORTLIST_TIER_SIZE"])
+    audit = int(cfg["SHORTLIST_AUDIT_TIERS"])
+    maximum_raw = cfg["SHORTLIST_MAX_TIER"]
+    maximum = None if maximum_raw is None else int(maximum_raw)
+    ordering = str(cfg["SHORTLIST_TIER_ORDER"])
+    exhaustive = bool(cfg["SHORTLIST_EXHAUSTIVE"])
+    if size <= 0:
+        raise ValueError(f"SHORTLIST_TIER_SIZE must be positive, got {size}")
+    if audit < 0:
+        raise ValueError(f"SHORTLIST_AUDIT_TIERS must be non-negative, got {audit}")
+    if maximum is not None and maximum < audit:
+        raise ValueError(
+            f"SHORTLIST_MAX_TIER={maximum} is below SHORTLIST_AUDIT_TIERS={audit}; the "
+            "audit tiers are mandatory, so this configuration contradicts itself")
+    if ordering not in TIER_ORDERINGS:
+        raise ValueError(
+            f"SHORTLIST_TIER_ORDER={ordering!r} is not recognised; choose one of "
+            f"{sorted(TIER_ORDERINGS)}")
+    return dict(tier_size=size, audit_tiers=audit, max_tier=maximum,
+                tier_order=ordering, exhaustive=exhaustive)
+
+
+def _should_execute_tier(tier: int | None, *, has_qualifier: bool,
+                         audit_tiers: int, max_tier: int | None,
+                         exhaustive: bool) -> tuple[bool, str]:
+    """Pure tier state transition, including the always-run audit and stop limit."""
+    if exhaustive:
+        return True, "exhaustive mode verifies every in-scope layer"
+    number = int(tier or 0)
+    if number == 0:
+        return True, "tier 0 is the primary shortlist"
+    if number <= int(audit_tiers):
+        return True, f"tier {number} is a mandatory false-negative audit tier"
+    if has_qualifier:
+        return False, "a qualifying cell already exists and mandatory audit tiers are complete"
+    if max_tier is not None and number > int(max_tier):
+        return False, f"configured SHORTLIST_MAX_TIER={int(max_tier)} reached"
+    return True, "no qualifying cell yet; failure-driven escalation continues"
+
+
 def phase2_shortlist(scan_rows: Sequence[dict], *,
-                     n_bins: int = STRATIFIED_BINS, write: bool = True) -> list[dict]:
-    """Turn the Phase 1 surface into 8-12 candidate LAYERS. Free - no model, no judge.
+                     n_bins: int = STRATIFIED_BINS, write: bool = True) -> dict:
+    """Turn Phase 1 into tier 0 plus an adversarial ordering of live rejected layers.
 
     Three routes, all three of them, per spec 8 Phase 2:
 
@@ -796,8 +841,9 @@ def phase2_shortlist(scan_rows: Sequence[dict], *,
          D3 - predicted_D3(E6)` at least `RESID_SIGMA` residual-SDs below the fit. This route
          aims directly at the objective - a cell that under-detects for its influence.
 
-    Candidates within +/-1 layer are merged, keeping the better and unioning the reasons, and
-    every candidate records WHY it was selected in `shortlist.json`.
+    Candidates within +/-1 layer are merged, keeping the better and unioning the reasons.
+    That is tier 0. Every LIVE rejected layer is then ordered into fixed-size outer tiers;
+    dead layers are excluded before either E6 or residual ranking can see them.
 
     **NEVER top-K by effectiveness.** Spec 7.2: E5 and D2 are positively correlated, so a
     shortlist built by argmax on the cheap effectiveness proxy systematically walks away from
@@ -809,6 +855,7 @@ def phase2_shortlist(scan_rows: Sequence[dict], *,
     `select_operating_point` applies spec 7.1 and does not use it.
     """
     cfg = _cfg()
+    tier_cfg = _tier_config(cfg)
     doses = [float(d) for d in cfg["SCAN_DOSES"]]
     floor = float(cfg["E6_FLOOR"])
     want_lo, want_hi = (int(x) for x in cfg["SHORTLIST_N"])
@@ -906,31 +953,112 @@ def phase2_shortlist(scan_rows: Sequence[dict], *,
     if size_note:
         notes.append(size_note)
 
+    tier0: list[dict] = []
+    for rank, candidate in enumerate(sized, start=1):
+        tier0.append(dict(candidate, tier=0, tier_rank=rank,
+                          tier_ordering="tier0_routes",
+                          tier_order_rank=rank,
+                          tier_source_layer=int(candidate["layer"]),
+                          exhaustive=False))
+
+    all_scanned_layers = sorted({int(row["layer"]) for row in scan_rows})
+    tier0_layers = {int(row["layer"]) for row in tier0}
+    rejected_layers = [layer for layer in all_scanned_layers if layer not in tier0_layers]
+    outer_order, dead_rejected = _order_rejected_layers(
+        per_layer, rejected_layers, tier_cfg["tier_order"], d3_base=_d3_baseline())
+
+    tiers: list[dict] = [dict(tier=0, kind="shortlist", mandatory=True,
+                              candidates=tier0,
+                              layers=[int(row["layer"]) for row in tier0])]
+    size = tier_cfg["tier_size"]
+    for offset in range(0, len(outer_order), size):
+        number = 1 + offset // size
+        chunk = [dict(row, tier=number, tier_rank=i + 1, exhaustive=False)
+                 for i, row in enumerate(outer_order[offset:offset + size])]
+        tiers.append(dict(
+            tier=number,
+            kind="audit" if number <= tier_cfg["audit_tiers"] else "escalation",
+            mandatory=(number <= tier_cfg["audit_tiers"]),
+            candidates=chunk,
+            layers=[int(row["layer"]) for row in chunk],
+        ))
+
+    exhaustive_candidates: list[dict] = []
+    if tier_cfg["exhaustive"]:
+        # Best-candidate-first for interruptibility, but every in-scope layer remains present.
+        ranked = tier0 + [dict(row, tier=None, exhaustive=True) for row in outer_order]
+        ranked_layers = {int(row["layer"]) for row in ranked}
+        for layer in all_scanned_layers:
+            if layer in ranked_layers:
+                continue
+            entry = per_layer.get(layer)
+            ranked.append(dict(
+                layer=layer,
+                r=(entry["e6_at_r"] if entry is not None else min(doses)),
+                e6=(entry["e6"] if entry is not None else None),
+                d3=(entry["d3"] if entry is not None else None),
+                s3=(entry["s3"] if entry is not None else None),
+                resid=(entry.get("resid") if entry is not None else None),
+                reach_by_dose=(entry["reach_by_dose"] if entry is not None else {}),
+                d3_by_dose=(entry["d3_by_dose"] if entry is not None else {}),
+                why=["exhaustive mode: verify every in-scope layer regardless of scan signal"],
+                routes=[], merged_from=[], tier=None, tier_rank=None,
+                tier_ordering="exhaustive_remainder", tier_order_rank=None,
+                tier_source_layer=layer, exhaustive=True,
+            ))
+        exhaustive_candidates = [dict(row, tier=None, tier_rank=i + 1,
+                                      exhaustive=True)
+                                 for i, row in enumerate(ranked)]
+        tiers = [dict(tier=None, kind="exhaustive", mandatory=True,
+                      candidates=exhaustive_candidates,
+                      layers=[int(row["layer"]) for row in exhaustive_candidates])]
+
     payload = dict(
         phase=PHASE2,
         e6_floor=floor, shortlist_n=[want_lo, want_hi], doses=doses,
-        n_layers_scanned=len(layers), n_candidates=len(sized),
+        n_layers_scanned=len(all_scanned_layers), n_candidates=len(tier0),
         d3_vs_e6_fit=fit, notes=notes,
         routes={name: sorted(members) for name, members in routes.items()},
-        candidates=sized,
+        candidates=tier0,
+        tiers=tiers,
+        exhaustive=tier_cfg["exhaustive"],
+        tier_size=tier_cfg["tier_size"],
+        audit_tiers=tier_cfg["audit_tiers"],
+        max_tier=tier_cfg["max_tier"],
+        tier_order=tier_cfg["tier_order"],
+        n_rejected=len(rejected_layers),
+        n_rejected_live=len(outer_order),
+        n_rejected_dead=len(dead_rejected),
+        rejected_dead_layers=dead_rejected,
     )
     if write:
         _write_json(SHORTLIST_FILE, payload)
 
     print("=" * 78)
-    print(f"PHASE 2 - shortlist: {len(sized)} layers from {len(layers)} scanned")
+    print(f"PHASE 2 - tiered shortlist: {len(tier0)} tier-0 layers from "
+          f"{len(all_scanned_layers)} scanned")
     print("=" * 78)
     for note in notes:
         print(f"   note: {note}")
     print(f"   {'layer':>6} {'reach':>7} {'D3':>7} {'resid':>8}  why")
-    for cand in sized:
+    for cand in tier0:
         entry = per_layer[cand["layer"]]
         resid = entry["resid"]
         print(f"   {'L' + str(cand['layer']):>6} {entry['e6']:>7.2f} "
               f"{(entry['d3'] if entry['d3'] is not None else float('nan')):>7.3f} "
               f"{(resid if resid is not None else float('nan')):>8.3f}  "
               f"{'; '.join(cand['routes'])}")
-    return sized
+    if tier_cfg["exhaustive"]:
+        print(f"   EXHAUSTIVE: {len(exhaustive_candidates)} in-scope layers will be bisected "
+              "and verified; qualifiers never stop execution")
+    else:
+        print(f"   outer audit population: {len(outer_order)}/{len(rejected_layers)} rejected "
+              f"layers are live; {len(dead_rejected)} excluded by D3_SIGNAL_MIN guard")
+        for tier in tiers[1:]:
+            sources = [row["tier_ordering"] for row in tier["candidates"]]
+            print(f"   tier {tier['tier']}: {tier['layers']} via {sources} "
+                  f"({'always runs' if tier['mandatory'] else 'failure escalation'})")
+    return payload
 
 
 def _merge_adjacent(candidate_layers: Sequence[int], per_layer: dict, reasons: dict,
@@ -993,6 +1121,92 @@ def _d3_baseline() -> float:
     except Exception:                    # noqa: BLE001 - no run context in a unit test
         return 0.0
     return float(value) if isinstance(value, (int, float)) else 0.0
+
+
+def _layer_has_signal(entry: dict, *, d3_base: float | None = None) -> bool:
+    """Whether one collapsed scan layer belongs to any widening/audit population.
+
+    This is the single implementation of commit 1dc85b1's guard. Both E6 and residual tier
+    orderings call it before ranking: otherwise a dead layer with E6~=D3~=0 can acquire a
+    mildly negative fit residual and jump to the front of the false-negative audit.
+    """
+    base = _d3_baseline() if d3_base is None else float(d3_base)
+    if float(entry["e6"]) > 0.0:
+        return True
+    d3 = entry["d3"]
+    return d3 is not None and float(d3) > max(D3_SIGNAL_MIN, base)
+
+
+def _order_rejected_layers(per_layer: dict[int, dict], rejected_layers: Sequence[int],
+                           ordering: str, *, d3_base: float | None = None) -> tuple[list[dict], list[int]]:
+    """Order only LIVE rejected layers; return `(ordered rows, excluded dead layers)`.
+
+    `e6_residual_interleave` alternates E6, residual, E6 ... and deduplicates. Each output
+    records which queue selected it, so an outer-tier qualifier traces back to the shortlist
+    route the audit caught. Unknown order names raise rather than silently changing the run.
+    """
+    mode = str(ordering)
+    if mode not in TIER_ORDERINGS:
+        raise ValueError(
+            f"SHORTLIST_TIER_ORDER={mode!r} is not recognised; choose one of "
+            f"{sorted(TIER_ORDERINGS)}. No fallback is allowed because it would mislabel "
+            "the audit recorded in config.json")
+    rejected = [int(layer) for layer in rejected_layers]
+    live = [layer for layer in rejected if layer in per_layer
+            and _layer_has_signal(per_layer[layer], d3_base=d3_base)]
+    dead = sorted(set(rejected) - set(live))
+    by_e6 = sorted(live, key=lambda layer: (-float(per_layer[layer]["e6"]), layer))
+    by_resid = sorted(
+        [layer for layer in live if per_layer[layer].get("resid") is not None],
+        key=lambda layer: (float(per_layer[layer]["resid"]),
+                           -float(per_layer[layer]["e6"]), layer))
+
+    picked: list[tuple[int, str]] = []
+    seen: set[int] = set()
+
+    def take(queue: list[int], source: str) -> bool:
+        while queue and queue[0] in seen:
+            queue.pop(0)
+        if not queue:
+            return False
+        layer = queue.pop(0)
+        seen.add(layer)
+        picked.append((layer, source))
+        return True
+
+    if mode == "e6_desc":
+        while take(by_e6, "e6_desc"):
+            pass
+    else:
+        # Starting with E6 makes TIER_SIZE=3 read E6 #1, residual #1, E6 #2. If one queue
+        # empties, the other supplies the remainder; deduplication never shrinks a tier while
+        # a live rejected layer is still available.
+        turn = 0
+        while len(seen) < len(live):
+            source = "e6_desc" if turn % 2 == 0 else "residual_asc"
+            queue = by_e6 if source == "e6_desc" else by_resid
+            if not take(queue, source):
+                other_source = "residual_asc" if source == "e6_desc" else "e6_desc"
+                other = by_resid if source == "e6_desc" else by_e6
+                if not take(other, other_source):
+                    # A live layer may lack a residual; E6 is the total fallback ordering.
+                    if not take(by_e6, "e6_desc"):
+                        break
+            turn += 1
+
+    rows: list[dict] = []
+    for rank, (layer, source) in enumerate(picked, start=1):
+        entry = per_layer[layer]
+        rows.append(dict(
+            layer=layer, r=entry["e6_at_r"], e6=entry["e6"], d3=entry["d3"],
+            s3=entry["s3"], resid=entry.get("resid"),
+            reach_by_dose=entry["reach_by_dose"], d3_by_dose=entry["d3_by_dose"],
+            why=[f"live layer rejected from tier 0; outer ordering selected it by {source} "
+                 f"at overall rank {rank}"],
+            routes=[], merged_from=[], tier_ordering=source,
+            tier_order_rank=rank, tier_source_layer=layer,
+        ))
+    return rows, dead
 
 
 def _size_shortlist(candidates: list[dict], per_layer: dict,
@@ -1073,14 +1287,8 @@ def _size_shortlist(candidates: list[dict], per_layer: dict,
     # cannot make noise look like signal. Reach still decides on its own: a layer whose concept
     # mass shows up in free generation is live whatever D3 says.
     d3_base = _d3_baseline()
-
-    def _has_signal(layer: int) -> bool:
-        entry = per_layer[layer]
-        if float(entry["e6"]) > 0.0:
-            return True
-        return float(entry["d3"] or 0.0) > max(D3_SIGNAL_MIN, d3_base)
-
-    live = [layer for layer in unpicked if _has_signal(layer)]
+    live = [layer for layer in unpicked
+            if _layer_has_signal(per_layer[layer], d3_base=d3_base)]
     # Dead layers are no longer a fallback pool. A cell with no concept mass in any of the
     # twelve prompts at either scan dose cannot clear E5_FLOOR, so Phase 4 would spend ~50
     # judge calls and ~2 minutes per cell to confirm a zero Phase 1 already reported. A
@@ -1096,7 +1304,7 @@ def _size_shortlist(candidates: list[dict], per_layer: dict,
             # Live layers sort ahead of dead ones regardless of how much coverage a dead one
             # would buy: a cell with no concept mass anywhere buys coverage of a range the
             # answer cannot be in.
-            alive = 0 if _has_signal(layer) else 1
+            alive = 0 if _layer_has_signal(per_layer[layer], d3_base=d3_base) else 1
             span = -min(abs(e6 - h) for h in have) if have else 0.0
             return (alive, span, layer)
 
@@ -1301,6 +1509,13 @@ def phase3_bisect(candidates: Sequence[dict], *,
             n_evaluations=len(history), history=history,
             why=cand["why"] if "why" in cand else [],
             routes=cand["routes"] if "routes" in cand else [],
+            tier=cand["tier"] if "tier" in cand else 0,
+            tier_rank=cand["tier_rank"] if "tier_rank" in cand else None,
+            tier_ordering=cand["tier_ordering"] if "tier_ordering" in cand else "tier0_routes",
+            tier_order_rank=cand["tier_order_rank"] if "tier_order_rank" in cand else None,
+            tier_source_layer=(cand["tier_source_layer"]
+                               if "tier_source_layer" in cand else layer),
+            exhaustive=bool(cand["exhaustive"]) if "exhaustive" in cand else False,
         )
         _append_row(BISECT_FILE, row)
         out.append(row)
@@ -1402,7 +1617,20 @@ def _verify_cells(cells: Sequence[dict], phase: str, *,
                        e5=None, e5_min=None, e5_se=None, s1=None, s2=None, s3=None,
                        s4=None, d2=None, d2_se=None, d2_ci_low=None, d2_ci_high=None,
                        n_d2=None, d4=None,
-                       usable=False, qualifies=False, resid=None, covertness_margin=None)
+                       usable=False, qualifies=False, resid=None, covertness_margin=None,
+                       why=cell["why"] if "why" in cell else [],
+                       tier=cell["tier"] if "tier" in cell else 0,
+                       tier_rank=cell["tier_rank"] if "tier_rank" in cell else None,
+                       tier_ordering=(cell["tier_ordering"] if "tier_ordering" in cell
+                                      else "tier0_routes"),
+                       tier_order_rank=(cell["tier_order_rank"]
+                                        if "tier_order_rank" in cell else None),
+                       tier_source_layer=(cell["tier_source_layer"]
+                                          if "tier_source_layer" in cell else layer),
+                       exhaustive=bool(cell["exhaustive"])
+                       if "exhaustive" in cell else False,
+                       refined_from=(cell["refined_from"]
+                                     if "refined_from" in cell else None))
             _append_row(VERIFIED_FILE, row)
             out.append(row)
             print(f"   L{layer} r={r:.4f}: UNREACHABLE (alpha {exc.alpha:.1f} > "
@@ -1433,6 +1661,16 @@ def _verify_cells(cells: Sequence[dict], phase: str, *,
             r_below=cell["r_below"] if "r_below" in cell else None,
             r_above=cell["r_above"] if "r_above" in cell else None,
             step=cell["step"] if "step" in cell else None,
+            tier=cell["tier"] if "tier" in cell else 0,
+            tier_rank=cell["tier_rank"] if "tier_rank" in cell else None,
+            tier_ordering=(cell["tier_ordering"] if "tier_ordering" in cell
+                           else "tier0_routes"),
+            tier_order_rank=(cell["tier_order_rank"]
+                             if "tier_order_rank" in cell else None),
+            tier_source_layer=(cell["tier_source_layer"]
+                               if "tier_source_layer" in cell else layer),
+            exhaustive=bool(cell["exhaustive"]) if "exhaustive" in cell else False,
+            refined_from=cell["refined_from"] if "refined_from" in cell else None,
         )
         _append_row(VERIFIED_FILE, row)
         out.append(row)
@@ -1516,7 +1754,19 @@ def phase5_refine(top_cells: Sequence[dict], *, n_top: int = 3,
             if key in seen:
                 continue
             seen.add(key)
-            cells.append(dict(layer=nlayer, r=nr, why=[why], step=step))
+            cells.append(dict(
+                layer=nlayer, r=nr, why=[why], step=step,
+                tier=base["tier"] if "tier" in base else 0,
+                tier_rank=base["tier_rank"] if "tier_rank" in base else None,
+                tier_ordering=(base["tier_ordering"] if "tier_ordering" in base
+                               else "tier0_routes"),
+                tier_order_rank=(base["tier_order_rank"]
+                                 if "tier_order_rank" in base else None),
+                tier_source_layer=(base["tier_source_layer"]
+                                   if "tier_source_layer" in base else layer),
+                exhaustive=bool(base["exhaustive"]) if "exhaustive" in base else False,
+                refined_from=dict(layer=layer, r=r),
+            ))
 
     print("=" * 78)
     print(f"PHASE 5 - local refinement around {len(ranked)} cells -> {len(cells)} neighbours")

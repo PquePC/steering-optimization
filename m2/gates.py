@@ -65,6 +65,7 @@ __all__ = [
     "rig_checks",
     # recorders and record management
     "gate_skipped",
+    "gate_not_applicable",
     "gate_note",
     "gates_reset",
     "gates_summary",
@@ -94,7 +95,6 @@ __all__ = [
     "m15_dir",
     "m15_file",
     "M15_DIR_ENV",
-    "M15_QUALIFYING_CELLS",
 ]
 
 
@@ -111,23 +111,6 @@ __all__ = [
 # became covert. Reading that as covertness is the spectacular false result M2 exists to
 # avoid, so the rebuilt sanity MUST reject this cell.
 ANCHOR_BROKEN_CELL: tuple[str, int, float] = ("Velocity", 37, 3.0)
-
-# Spec 10 gate 6: the seven qualifying M1.5 cells, from `M2 - Pipeline Plan.md` section 1.1.
-# An E6-based shortlist has to RETAIN these; recall dominates precision, because a false
-# positive costs one verification cell and a false negative loses the answer. Four of the
-# seven sit at L31 while effectiveness peaks at L46, which is the whole reason section 7.2
-# demotes the residual to a search device.
-#   (concept, layer, alpha, effectiveness (E1, nats), D2, sanity)
-M15_QUALIFYING_CELLS: tuple[tuple[str, int, float, float, float, float], ...] = (
-    ("karma", 37, 2.0, 21.32, 0.16, 0.88),
-    ("karma", 31, 4.0, 14.91, 0.16, 0.75),
-    ("karma", 31, 3.0, 14.38, 0.00, 0.87),
-    ("silk",  31, 3.0, 12.11, 0.08, 0.98),
-    ("karma", 46, 1.0, 11.53, 0.00, 0.96),
-    ("karma", 37, 1.0,  9.73, 0.04, 0.97),
-    ("irony", 31, 4.0,  8.88, 0.04, 0.75),
-)
-
 
 # =====================================================================================
 # Gate thresholds that the spec does not tabulate
@@ -314,6 +297,21 @@ def gate_skipped(name: str, reason: str) -> bool:
     return False
 
 
+def gate_not_applicable(name: str, reason: str) -> bool:
+    """Record a gate whose premise was eliminated by stronger coverage.
+
+    This is neither PASS nor SKIP. SKIP means missing evidence; NOT_APPLICABLE means the
+    experiment made the tested failure impossible to instantiate. Gate 6 in exhaustive mode
+    is the motivating case: there is no rejected population that could contain a false negative.
+    """
+    try:
+        print(f"{name}: NOT APPLICABLE - {reason}")
+        _record(name, "NOT_APPLICABLE", None, str(reason))
+    except Exception:                    # noqa: BLE001 - a recorder must not raise
+        pass
+    return False
+
+
 def gate_note(name: str, detail: str, value: Any = None) -> None:
     """Record a DIAGNOSTIC. Never a pass, never a fail, always in the run record.
 
@@ -348,7 +346,7 @@ def gates_reset() -> int:
 def gates_summary(rows: Sequence[dict] | None = None) -> dict:
     """Counts by state plus the names that did not pass, for the board and the run record."""
     items = list(GATES if rows is None else rows)
-    states = {"PASS": 0, "FAIL": 0, "SKIP": 0, "INFO": 0}
+    states = {"PASS": 0, "FAIL": 0, "SKIP": 0, "NOT_APPLICABLE": 0, "INFO": 0}
     for row in items:
         state = row["state"]
         states[state] = states[state] + 1 if state in states else 1
@@ -357,6 +355,7 @@ def gates_summary(rows: Sequence[dict] | None = None) -> dict:
         passed=states["PASS"],
         failed=states["FAIL"],
         skipped=states["SKIP"],
+        not_applicable=states["NOT_APPLICABLE"],
         info=states["INFO"],
         failures=[r["name"] for r in items if r["state"] == "FAIL"],
         skips=[r["name"] for r in items if r["state"] == "SKIP"],
@@ -1523,81 +1522,116 @@ def gate5_d3_vs_d2(*, rows: Sequence[dict] | None = None) -> dict:
 
 
 # =====================================================================================
-# GATE 6 -- E6 shortlist recall over the seven qualifying M1.5 cells
+# GATE 6 -- the current run's tier-0 false-negative audit
 # =====================================================================================
 
-def gate6_e6_shortlist_recall(*, scan_rows: Sequence[dict] | None = None) -> dict:
-    """Spec 10 gate 6. An E6-based shortlist must RETAIN the qualifying M1.5 cells.
+def gate6_e6_shortlist_recall(*, verified_rows: Sequence[dict] | None = None,
+                              tier_plan: dict | None = None) -> dict:
+    """No outer-tier cell may qualify at or above tier 0's own winner.
 
-    Recall, not ranking. A false positive costs one verification cell; a false negative
-    loses the answer -- and four of the seven qualifying cells sit at L31 while
-    effectiveness peaks at L46, so a shortlist that hill-climbs on effectiveness walks away
-    from all four (Pipeline Plan 1.1, spec 7.2).
-
-    Measured at LAYER resolution, because Phase 2 selects layers and merges candidates
-    within +/-1 of each other; a qualifying cell counts as retained if any shortlisted layer
-    is within one of it.
+    This is a run gate, not an external comparison. Tier 1 is an adversarial sample of this
+    run's live rejected population, so Gate 6 can execute on any concept or model. A lower E5
+    outer qualifier is imprecision and is reported; an equal-or-higher one proves tier 0
+    dropped the answer. If tier 0 found nothing and an outer tier did, that is also a failure.
     """
-    name = "gate 6 E6 shortlist recall"
-    concept = _concept_ready()
-    if concept is None:
-        reason = "no concept set: gate 6 is measured per concept against its qualifying cells"
-        return dict(gate=name, passed=False, skipped=True, reason=reason,
-                    ok=gate_skipped(name, reason))
-
-    wanted = [(c, L, a) for (c, L, a, _e, _d, _s) in M15_QUALIFYING_CELLS
-              if c.lower() == concept.lower()]
-    if not wanted:
-        reason = (f"concept {concept!r} has no qualifying M1.5 cell (the seven are on "
-                  f"{sorted({c for c, *_ in [(q[0],) for q in M15_QUALIFYING_CELLS]})}); "
-                  "gate 6 has nothing to test recall against for this concept")
-        return dict(gate=name, passed=False, skipped=True, reason=reason,
-                    ok=gate_skipped(name, reason))
-
-    if scan_rows is None:
-        scan = _run_file("scan.jsonl")
-        if scan is None:
-            reason = ("no scan.jsonl in the run folder: gate 6 shortlists the Phase 1 "
-                      "surface, so Phase 1 must have run")
+    name = "gate 6 tier-0 false-negative audit"
+    if tier_plan is None:
+        path = _run_file("shortlist.json")
+        if path is None:
+            reason = "no shortlist.json: the tier population and audit denominator are unknown"
             return dict(gate=name, passed=False, skipped=True, reason=reason,
                         ok=gate_skipped(name, reason))
-        scan_rows = _read_jsonl(scan)
+        tier_plan = json.loads(path.read_text(encoding="utf-8"))
+    if verified_rows is None:
+        path = _run_file("verified.jsonl")
+        if path is None:
+            reason = "no verified.jsonl: no tier verdicts exist"
+            return dict(gate=name, passed=False, skipped=True, reason=reason,
+                        ok=gate_skipped(name, reason))
+        verified_rows = _read_jsonl(path)
 
-    try:
-        phases = _mod("phases")
-        candidates = phases.phase2_shortlist(list(scan_rows))
-    except Exception as exc:             # noqa: BLE001 - reported as a gate, never a crash
-        reason = f"phases.phase2_shortlist could not run: {type(exc).__name__}: {exc}"
+    exhaustive = bool(_field(tier_plan, "exhaustive", "shortlist.json"))
+    if exhaustive:
+        reason = ("every in-scope layer was verified; there is no rejected population to "
+                  "audit. Exhaustive coverage is stronger than a Gate 6 pass.")
+        gate_not_applicable(name, reason)
+        return dict(gate=name, passed=False, skipped=False, not_applicable=True,
+                    state="NOT_APPLICABLE", reason=reason)
+
+    n_rejected = int(_field(tier_plan, "n_rejected", "shortlist.json"))
+    n_live = int(_field(tier_plan, "n_rejected_live", "shortlist.json"))
+    n_dead = int(_field(tier_plan, "n_rejected_dead", "shortlist.json"))
+    rows = [row for row in verified_rows
+            if row.get("qualifies") is not None and row.get("e5") is not None]
+    tier0 = [row for row in rows if row.get("tier") == 0]
+    outer = [row for row in rows
+             if row.get("tier") is not None and int(row["tier"]) > 0]
+    audited_layers = sorted({int(row.get("tier_source_layer", row["layer"])) for row in outer})
+
+    audit_tiers = int(_field(tier_plan, "audit_tiers", "shortlist.json"))
+    expected_audit = {int(candidate["layer"])
+                      for tier in _field(tier_plan, "tiers", "shortlist.json")
+                      if tier["tier"] is not None and 0 < int(tier["tier"]) <= audit_tiers
+                      for candidate in tier["candidates"]}
+    missing = sorted(expected_audit - set(audited_layers))
+    if missing:
+        reason = (f"mandatory audit layers {[f'L{x}' for x in missing]} have no verification "
+                  "verdict. Gate 6 could not run; this is an evidence gap, not a pass.")
         return dict(gate=name, passed=False, skipped=True, reason=reason,
+                    audit_sampled=len(audited_layers), rejected_live=n_live,
                     ok=gate_skipped(name, reason))
 
-    shortlisted = sorted({int(c["layer"]) for c in candidates})
-    retained: list[tuple[int, float]] = []
-    lost: list[tuple[int, float]] = []
-    for _c, layer, alpha in wanted:
-        if any(abs(s - layer) <= 1 for s in shortlisted):
-            retained.append((layer, alpha))
-        else:
-            lost.append((layer, alpha))
+    if n_live == 0:
+        reason = ("tier 0 rejected no layer with scan signal; the remaining rejected layers "
+                  "were excluded by the shared D3_SIGNAL_MIN guard and cannot form an audit "
+                  "population")
+        gate_not_applicable(name, reason)
+        return dict(gate=name, passed=False, skipped=False, not_applicable=True,
+                    state="NOT_APPLICABLE", reason=reason,
+                    audit_sampled=0, rejected=n_rejected, rejected_live=0,
+                    rejected_dead=n_dead)
 
-    print(f"   shortlist: {len(shortlisted)} layers {shortlisted}")
-    print(f"   qualifying M1.5 cells for {concept}: "
-          + ", ".join(f"L{L} alpha={a:g}" for _c, L, a in wanted))
-    recall_ci = _mod("cheap").wilson_interval(len(retained), len(wanted))
-    print(f"   retained {len(retained)}/{len(wanted)} (95% Wilson "
-          f"[{recall_ci[0]:.3f}, {recall_ci[1]:.3f}])"
-          + (f"   LOST: " + ", ".join(f"L{L} alpha={a:g}" for L, a in lost) if lost else ""))
-    ok = gate(name, not lost,
-              f"the shortlist misses {len(lost)} of {len(wanted)} qualifying M1.5 cells "
-              f"({[f'L{L}' for L, _a in lost]}). A false negative loses the answer, so a "
-              "shortlist that drops a known qualifying layer is not usable - widen it or "
-              "lower E6_FLOOR before running Phase 4")
-    return dict(gate=name, passed=ok, skipped=False, concept=concept,
-                shortlisted=shortlisted, wanted=wanted,
-                retained=retained, lost=lost,
-                recall=(len(retained) / len(wanted)) if wanted else None,
-                recall_ci_low=recall_ci[0], recall_ci_high=recall_ci[1],
-                recall_n=len(wanted))
+    phases = _mod("phases")
+    tier0_selection = phases.select_operating_point(tier0)
+    all_selection = phases.select_operating_point(rows)
+    tier0_winner = tier0_selection["winner"] if tier0_selection["found"] else None
+    outer_qualifiers = [row for row in outer if bool(row["qualifies"])]
+    if tier0_winner is None:
+        damaging = list(outer_qualifiers)
+    else:
+        floor = float(tier0_winner["e5"])
+        damaging = [row for row in outer_qualifiers if float(row["e5"]) >= floor]
+    lower = [row for row in outer_qualifiers if row not in damaging]
+
+    print(f"   audit power: {len(audited_layers)}/{n_live} live rejected layers sampled "
+          f"({n_dead} dead/unreachable rejected layers excluded before ordering)")
+    print("   A sample that finds no miss is evidence, not proof that every rejected layer "
+          "was safe.")
+    if tier0_winner is None:
+        print("   tier 0 winner: none")
+    else:
+        print(f"   tier 0 winner: L{tier0_winner['layer']} r={tier0_winner['r']:.3f}, "
+              f"E5={tier0_winner['e5']:.2f}")
+    for row in outer_qualifiers:
+        print(f"   outer qualifier: tier {row['tier']} L{row['layer']} r={row['r']:.3f}, "
+              f"E5={row['e5']:.2f}, ordered by {row.get('tier_ordering')}")
+
+    ok = gate(name, not damaging,
+              ((f"tier 0 found no qualifying cell, but {len(damaging)} outer-tier cell(s) "
+                "did; the shortlist dropped the result") if tier0_winner is None else
+               f"{len(damaging)} outer-tier qualifier(s) reached E5 at or above tier 0's "
+               f"winner ({float(tier0_winner['e5']):.2f}); tier 0 demonstrably dropped an "
+               "equal or better answer. Widen E6_FLOOR/residual routing before trusting it"))
+    return dict(
+        gate=name, passed=ok, skipped=False, not_applicable=False,
+        audit_sampled=len(audited_layers), audit_layers=audited_layers,
+        rejected=n_rejected, rejected_live=n_live, rejected_dead=n_dead,
+        power_statement=(f"sampled {len(audited_layers)} of {n_live} live rejected layers; "
+                         "failure to find a miss does not prove none exists"),
+        tier0_winner=tier0_winner,
+        final_winner=all_selection["winner"] if all_selection["found"] else None,
+        damaging_outer=damaging, lower_outer_qualifiers=lower,
+    )
 
 
 # =====================================================================================
@@ -2650,7 +2684,8 @@ def run_acceptance_gates(*, allow_judge_calls: bool = True,
     summary = gates_summary()
     print("=" * 78)
     print(f"ACCEPTANCE GATES: {summary['passed']} pass, {summary['failed']} FAIL, "
-          f"{summary['skipped']} SKIPPED, {summary['info']} diagnostics")
+          f"{summary['skipped']} SKIPPED, {summary['not_applicable']} NOT APPLICABLE, "
+          f"{summary['info']} diagnostics")
     if summary["failures"]:
         print("  failed : " + "; ".join(summary["failures"]))
     if summary["skips"]:

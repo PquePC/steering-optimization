@@ -100,6 +100,10 @@ def _parser() -> argparse.ArgumentParser:
                         "which read zero at all 30 cells of a real v1 run.")
     p.add_argument("--multilayer", action="store_true",
                    help="after each concept's winner, run the multi-layer arm (k in {2,3,5})")
+    p.add_argument("--exhaustive", action="store_true",
+                   help="set SHORTLIST_EXHAUSTIVE=True: bisect and verify every in-scope "
+                        "layer regardless of whether an earlier tier qualifies. Prints the "
+                        "estimated cell, judge-call and time cost before measurement starts.")
     p.add_argument("--transcripts-override", action="store_true",
                    help="include transcripts in the bundle for concepts that are NOT on "
                         "BENIGN_CONCEPTS. Read spec 14.3 before using this.")
@@ -179,6 +183,18 @@ def apply_overrides(cfg: dict, pairs: Sequence[str]) -> dict:
         cfg[key] = value
         applied[key] = value
     return applied
+
+
+def exhaustive_cost_estimate(n_cells: int, *, judge_calls_per_cell: int = 49) -> dict:
+    """Opening exhaustive-mode estimate in the same units the status board prices."""
+    from m2 import monitor                         # noqa: PLC0415 - lightweight, no model
+    cells = int(n_cells)
+    if cells < 0:
+        raise ValueError(f"n_cells must be non-negative, got {cells}")
+    seconds = cells * (float(monitor.PHASE_SECONDS_PRIOR["BISECT"])
+                       + float(monitor.PHASE_SECONDS_PRIOR["VERIFY"]))
+    return dict(cells=cells, bisection_candidates=cells, verification_cells=cells,
+                judge_calls=cells * int(judge_calls_per_cell), seconds=seconds)
 
 
 def check_environment(strict: bool = True) -> dict:
@@ -269,6 +285,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     from m2 import config, gates                    # noqa: PLC0415 - after sys.path is set
 
     applied = apply_overrides(config.CONFIG, args.overrides)
+    if args.exhaustive:
+        config.CONFIG["SHORTLIST_EXHAUSTIVE"] = True
+        applied["SHORTLIST_EXHAUSTIVE"] = True
     if applied:
         print(f"  overrides  : {applied}")
         print("               (these change config_hash, so this run gets its own folder)")
@@ -302,7 +321,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return EXIT_OK
 
     # ---- model, monitor, rig checks -------------------------------------------------------
-    from m2 import driver, model, monitor           # noqa: PLC0415
+    from m2 import driver, model, monitor, phases   # noqa: PLC0415
+
+    # Validate the ordering and the relationship among the tier knobs before loading the
+    # model. An invalid string must never survive until Phase 2 and quietly become another
+    # ordering after paid work has started.
+    phases._tier_config(config.CONFIG)
 
     log_path = args.log or None
     if log_path is not None:
@@ -318,6 +342,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     ctx = model.load_model(config.CONFIG)
     print(f"  {config.CONFIG['model']}  {ctx.n_layers} layers  "
           f"padding={ctx.tok.padding_side}  ({time.time() - t0:.0f}s)")
+
+    if config.CONFIG["SHORTLIST_EXHAUSTIVE"]:
+        n_cells = len(phases.layers_in_scope(int(ctx.n_layers),
+                                             float(config.CONFIG["D_MIN"])))
+        estimate = exhaustive_cost_estimate(n_cells)
+        print("\nEXHAUSTIVE SHORTLIST MODE")
+        print(f"  {n_cells} in-scope layers x (1 bisection candidate + 1 verification cell)")
+        print(f"  approximately {estimate['judge_calls']} judge calls and "
+              f"{estimate['seconds'] / 60:.1f} minutes "
+              "before refinement/confirmation, using current priors")
+        print("  every layer runs even after a qualifying cell is found")
 
     driver.set_concept(concepts[0])
 

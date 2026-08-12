@@ -457,6 +457,8 @@ class _ConceptRun:
         self.results: dict[str, Any] = {}
         self.failed: list[str] = []
         self.labels: dict[str, str] = {}
+        self._planned: dict[str, int] = {}
+        self._plan_floor: dict[str, int] = {}
 
     def tick(self, name: str) -> Callable[[Any], None]:
         """An `on_cell` callback that advances the board one unit. Never raises.
@@ -471,14 +473,32 @@ class _ConceptRun:
                 pass
         return _tick
 
-    def plan(self, name: str) -> Callable[[int], None]:
-        """An `on_plan` callback that tells the board how many units this phase will run."""
+    def plan(self, name: str, *, cumulative: bool = False) -> Callable[[int], None]:
+        """Tell the board a phase's size, optionally adding repeated tier chunks.
+
+        BISECT and VERIFY reopen once per executed tier. Their unit is still one candidate and
+        one cell respectively, so cumulative plans grow the same counters instead of resetting
+        a completed 11-unit phase to a three-unit denominator.
+        """
         def _plan(total: int) -> None:
             try:
-                self.board.size_phase(name, int(total))
+                value = int(total)
+                if cumulative:
+                    value += self._planned.get(name, 0)
+                self._planned[name] = value
+                self.board.size_phase(name, max(value, self._plan_floor.get(name, 0)))
             except Exception:                           # noqa: BLE001 - never cost a cell
                 pass
         return _plan
+
+    def prime_plan(self, name: str, total: int) -> None:
+        """Put mandatory tier work into the ETA before either repeated phase starts."""
+        value = int(total)
+        self._plan_floor[name] = value
+        try:
+            self.board.size_phase(name, value)
+        except Exception:                               # noqa: BLE001 - never cost a cell
+            pass
 
     def phase(self, name: str, fn: Callable[[], Any], *, units: int | None = None,
               tracked: bool = True, self_reporting: bool = False) -> tuple[bool, Any]:
@@ -734,34 +754,164 @@ def run_concept(name: str, *, notifier: Any = None, wipe: bool = True, deliver: 
                   f"{SCAN_FILE}", "WARN")
 
     # ---- Phase 2
-    ok_short, candidates = state.phase(
+    ok_short, tier_plan = state.phase(
         "SHORTLIST", lambda: _phases().phase2_shortlist(scan_rows), units=1)
+    candidates = (tier_plan.get("candidates", [])
+                  if isinstance(tier_plan, dict) else [])
     if ok_short and candidates:
-        layers = sorted({int(c["layer"]) for c in candidates
-                         if isinstance(c, dict) and "layer" in c})
+        layers = sorted({int(c["layer"]) for c in candidates if "layer" in c})
         span = f"L{layers[0]}-L{layers[-1]}" if layers else "no layer field"
         _notify(notifier, board, "Phase 2 shortlist chosen",
-                f"{len(candidates)} candidates, {span}")
+                f"{len(candidates)} tier-0 candidates, {span}; "
+                f"{tier_plan['n_rejected_live']} live rejected layers available for audit")
 
-    # ---- Phase 3. ASSUMPTION: phase4_verify consumes phase3_bisect's rows.
-    ok_bisect, bisect_rows = state.phase(
-        "BISECT", lambda: _phases().phase3_bisect(candidates or [],
-                                                  on_cell=state.tick("BISECT"),
-                                                  on_plan=state.plan("BISECT")),
-        self_reporting=True)
-    cells = bisect_rows if (ok_bisect and bisect_rows) else runio.rows_for_run(BISECT_FILE)
+    # ---- Phases 3/4, tiered. Bisection and verification are intentionally interleaved.
+    # Tier 1 always runs, even when tier 0 qualifies; deeper tiers are created lazily only
+    # while no qualifier exists. Paying all bisections up front would turn a three-cell audit
+    # into a nine-cell cost at MAX_TIER=3 even on a successful tier 0.
+    tier_records: list[dict] = []
+    tiers = tier_plan.get("tiers", []) if isinstance(tier_plan, dict) else []
+    mandatory_units = sum(len(tier["candidates"]) for tier in tiers
+                          if tier["mandatory"])
+    if mandatory_units:
+        # Truth replaces the opening default before work starts. Units are CANDIDATES for
+        # BISECT and CELLS for VERIFY; both include tier 1 even if tier 0 later succeeds.
+        state.prime_plan("BISECT", mandatory_units)
+        state.prime_plan("VERIFY", mandatory_units)
+    if not tiers:
+        runio.log("SHORTLIST produced no tier plan; BISECT and VERIFY have nothing to run",
+                  "WARN")
+    for tier_spec in tiers:
+        current_verified = runio.rows_for_run(VERIFIED_FILE)
+        has_qualifier = bool(_qualifying(current_verified))
+        should_run, reason = _phases()._should_execute_tier(
+            tier_spec["tier"], has_qualifier=has_qualifier,
+            audit_tiers=int(tier_plan["audit_tiers"]),
+            max_tier=tier_plan["max_tier"],
+            exhaustive=bool(tier_plan["exhaustive"]))
+        number = tier_spec["tier"]
+        label = "exhaustive" if number is None else f"tier {number}"
+        if not should_run:
+            runio.log(f"tier escalation stopped before {label}: {reason}")
+            tier_records.append(dict(tier=number, state="NOT_RUN", reason=reason,
+                                     layers=tier_spec["layers"], verdicts=[]))
+            break
 
-    # ---- Phases 4 and 5. These are the expensive ones and the two the ETA most needs sized:
-    # a verified cell is ~50 s against SCAN's ~13, so a board that cannot count them cannot
-    # say anything useful about the hour ahead.
-    state.phase("VERIFY", lambda: _phases().phase4_verify(cells or [],
-                                                          on_cell=state.tick("VERIFY"),
-                                                          on_plan=state.plan("VERIFY")),
+        tier_candidates = list(tier_spec["candidates"])
+        runio.log(f"{label}: BISECT {len(tier_candidates)} layer(s) - {reason}")
+
+        # Resume at layer/tier granularity. The config hash includes every tier knob, so a
+        # matching stored bisection row was produced under this exact plan.
+        stored_bisect = runio.rows_for_run(BISECT_FILE)
+        def _same_tier(row: dict) -> bool:
+            return (row.get("tier") == number and
+                    bool(row.get("exhaustive", False)) == bool(tier_plan["exhaustive"]))
+        existing = {int(row["layer"]): row for row in stored_bisect if _same_tier(row)}
+        todo = [row for row in tier_candidates if int(row["layer"]) not in existing]
+        bisected_new: list[dict] = []
+        ok_bisect = True
+        if todo:
+            ok_bisect, got = state.phase(
+                "BISECT", lambda todo=todo: _phases().phase3_bisect(
+                    todo, scan_rows=scan_rows, on_cell=state.tick("BISECT"),
+                    on_plan=state.plan("BISECT", cumulative=True)),
                 self_reporting=True)
+            bisected_new = got if ok_bisect and isinstance(got, list) else []
+        else:
+            runio.log(f"{label}: all {len(existing)} bisection rows recovered from disk")
+        tier_bisected = list(existing.values()) + bisected_new
+
+        if not ok_bisect or not tier_bisected:
+            stop_reason = f"{label} bisection failed or produced no cells"
+            tier_records.append(dict(tier=number, state="FAILED", reason=stop_reason,
+                                     layers=tier_spec["layers"], verdicts=[]))
+            runio.write_json(_phases().TIER_VERIFICATION_FILE, dict(
+                phase="TIERED_VERIFY", exhaustive=bool(tier_plan["exhaustive"]),
+                n_rejected=tier_plan["n_rejected"],
+                n_rejected_live=tier_plan["n_rejected_live"], tiers=tier_records,
+                termination=stop_reason))
+            break
+
+        runio.log(f"{label}: VERIFY {len(tier_bisected)} bisected cell(s)")
+        ok_verify, _new_rows = state.phase(
+            "VERIFY", lambda cells=tier_bisected: _phases().phase4_verify(
+                cells, on_cell=state.tick("VERIFY"),
+                on_plan=state.plan("VERIFY", cumulative=True)),
+            self_reporting=True)
+        all_verified = runio.rows_for_run(VERIFIED_FILE)
+        verdicts = [row for row in all_verified
+                    if row.get("phase") == _phases().PHASE4 and row.get("tier") == number
+                    and bool(row.get("exhaustive", False)) == bool(tier_plan["exhaustive"])]
+        tier_records.append(dict(
+            tier=number, state="DONE" if ok_verify else "FAILED", reason=reason,
+            kind=tier_spec["kind"], mandatory=bool(tier_spec["mandatory"]),
+            layers=tier_spec["layers"], orderings=[row.get("tier_ordering")
+                                                   for row in tier_candidates],
+            n_bisected=len(tier_bisected), n_verified=len(verdicts),
+            verdicts=[dict(layer=row["layer"], r=row["r"], e5=row.get("e5"),
+                           d2=row.get("d2"), s4=row.get("s4"),
+                           qualifies=row.get("qualifies"),
+                           tier_ordering=row.get("tier_ordering"))
+                      for row in verdicts]))
+        runio.write_json(_phases().TIER_VERIFICATION_FILE, dict(
+            phase="TIERED_VERIFY", exhaustive=bool(tier_plan["exhaustive"]),
+            tier_size=tier_plan["tier_size"], audit_tiers=tier_plan["audit_tiers"],
+            max_tier=tier_plan["max_tier"], tier_order=tier_plan["tier_order"],
+            n_rejected=tier_plan["n_rejected"],
+            n_rejected_live=tier_plan["n_rejected_live"],
+            n_rejected_dead=tier_plan["n_rejected_dead"],
+            tiers=tier_records, termination=None))
+        if not ok_verify:
+            break
+
+    # If every planned tier ran without an early stop, say whether coverage or success ended it.
+    if tier_records:
+        executed = [row for row in tier_records if row["state"] == "DONE"]
+        final_qualifiers = _qualifying(runio.rows_for_run(VERIFIED_FILE))
+        termination = ("every in-scope layer verified" if tier_plan["exhaustive"] else
+                       "qualifying cell found after mandatory audit"
+                       if final_qualifiers else
+                       "all configured/live tiers exhausted without a qualifying cell")
+        runio.log(f"tiered verification: {termination}")
+        record = runio.read_json(_phases().TIER_VERIFICATION_FILE)
+        # A stop decision is appended after the last tier write. Persist the complete
+        # in-memory record, including the NOT_RUN tier and its reason, rather than leaving
+        # the file looking as though the plan simply ended at the preceding tier.
+        record["tiers"] = tier_records
+        record["termination"] = termination
+        record["n_tiers_executed"] = len(executed)
+        record["n_qualifying"] = len(final_qualifiers)
+        runio.write_json(_phases().TIER_VERIFICATION_FILE, record)
+
+    # ---- Phase 5. It refines the best verified cells from every tier, carrying their tier
+    # provenance so a better outer-tier neighbour remains visible to Gate 6.
     state.phase("REFINE", lambda: _phases().phase5_refine(runio.rows_for_run(VERIFIED_FILE),
                                                           on_cell=state.tick("REFINE"),
                                                           on_plan=state.plan("REFINE")),
                 self_reporting=True)
+
+    # Phase 5 neighbours inherit the source tier. Add their verdicts to the durable tier
+    # record so an outer-tier winner can be traced through the route that exposed its layer,
+    # even when the winning dose or adjacent layer was found only during refinement.
+    if tier_records:
+        record = runio.read_json(_phases().TIER_VERIFICATION_FILE)
+        refined = runio.rows_for_run(VERIFIED_FILE)
+        for tier_record in record.get("tiers", []):
+            number = tier_record.get("tier")
+            rows = [row for row in refined
+                    if row.get("phase") == _phases().PHASE5
+                    and row.get("tier") == number
+                    and bool(row.get("exhaustive", False)) ==
+                    bool(tier_plan["exhaustive"])]
+            tier_record["refinement_verdicts"] = [
+                dict(layer=row["layer"], r=row["r"], e5=row.get("e5"),
+                     d2=row.get("d2"), s4=row.get("s4"),
+                     qualifies=row.get("qualifies"),
+                     tier_ordering=row.get("tier_ordering"),
+                     tier_source_layer=row.get("tier_source_layer"),
+                     refined_from=row.get("refined_from"))
+                for row in rows]
+        runio.write_json(_phases().TIER_VERIFICATION_FILE, record)
 
     # Selection reads the FILE, not either phase's return value: Phase 4 and Phase 5 both
     # write `verified.jsonl`, a resumed run may have rows from a previous kernel, and section

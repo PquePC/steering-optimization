@@ -86,6 +86,32 @@ CONSTANTS: dict = {
     # its detection axis.
     "SHORTLIST_N": (8, 12),
 
+    # Number of LIVE rejected layers per tier beyond tier 0. Tier 1 is always paid as the
+    # false-negative audit, so increasing this adds the same number of BISECT candidates and
+    # VERIFY cells even when tier 0 already found a qualifying cell.
+    "SHORTLIST_TIER_SIZE": 3,
+
+    # Number of outer tiers always verified. Tier 0 is implicit and not counted here; 1 means
+    # tier 1 runs even when tier 0 succeeds, because otherwise successful runs would carry no
+    # evidence that the shortlist did not discard an equal or better answer.
+    "SHORTLIST_AUDIT_TIERS": 1,
+
+    # Highest numbered tier permitted during failure-driven escalation. None means keep
+    # escalating through every LIVE rejected tier only while no qualifying cell has been found,
+    # then stop. This is deliberately different from SHORTLIST_EXHAUSTIVE: None still stops on
+    # success, whereas exhaustive mode verifies every in-scope layer regardless of success.
+    "SHORTLIST_MAX_TIER": 3,
+
+    # Ordering over the live rejected population. The implementation validates this string and
+    # raises on an unknown value; silently falling back would run a different audit from the one
+    # named in config.json. Interleaving starts E6, residual, E6 and deduplicates.
+    "SHORTLIST_TIER_ORDER": "e6_residual_interleave",
+
+    # Verify every in-scope layer, ignoring tiers and never stopping when a qualifier is found.
+    # This is deliberately different from SHORTLIST_MAX_TIER=None, which remains a tiered search
+    # and stops as soon as an outer tier finds a qualifying cell.
+    "SHORTLIST_EXHAUSTIVE": False,
+
     # Bisection evaluations per candidate layer on the sanity boundary; 5 gives ~3%
     # resolution in r. Sound because sanity is monotone in dose -- 0/18 violations across
     # the M1.5 (concept, layer) series.

@@ -673,14 +673,24 @@ Any `(L, r)` requiring `α > ALPHA_CEIL` is logged as unreachable and skipped.
 3. any layer whose `D3` is **low relative to its `E6`** — the residual signal, aimed
    directly at the objective.
 
-Merge candidates within ±1 layer, keeping the better. Target `SHORTLIST_N` ≈ 8–12 layers.
+Merge candidates within ±1 layer, keeping the better. These `SHORTLIST_N` ≈ 8–12 layers are
+**tier 0**. Order every rejected layer that still carries live concept signal into fixed-size
+outer tiers by interleaving `E6` descending and most-negative `D3~E6` residual, starting with
+`E6` and deduplicating. Apply the same `D3_SIGNAL_MIN`/unsteered-baseline guard before either
+ordering, so fit noise cannot promote a dead layer.
+
+Tier 1 always runs as a false-negative audit, even when tier 0 qualifies. If no cell qualifies,
+continue through deeper tiers up to `SHORTLIST_MAX_TIER`; `None` means continue through all live
+tiers but still stop on success. `SHORTLIST_EXHAUSTIVE=True` is different: it verifies every
+in-scope layer regardless of success. An unrecognised tier-order value is an error, never a silent
+fallback.
 
 **Never top-K by effectiveness.** §7 explains why.
 
 ### Phase 3 — Dose bisection
 **Judge calls: 0.** ~1 min.
 
-Per candidate layer:
+Per candidate layer in each tier that executes:
 1. **Bracket** — lowest `r` clearing `E6_FLOOR`; lowest `r` failing cheap sanity.
 2. **Bisect** on the sanity boundary, `BISECT_STEPS` evaluations (5 gives ~3% resolution in `r`).
 3. Take the point just inside the boundary; keep one step either side for Phase 4.
@@ -691,9 +701,11 @@ violations were the lobotomised velocity L37 α=3.0 cell, which leaves the valid
 is measured correctly.
 
 ### Phase 4 — Verification
-For each shortlisted `(L, r)`: run Judge E5 (12 calls), Judge S1 (12 calls) and Judge D2 (25 calls).
-**Judge calls: 49/cell.** ~8–10 min for 10 cells — E5 and S1 issue concurrently, so the extra 12
-calls cost tokens, not wall time.
+For each bisected `(L, r)`: run Judge E5 (12 calls), Judge S1 (12 calls) and Judge D2 (25 calls).
+**Judge calls: 49/cell.** Tier 0 plus the three-cell mandatory audit is normally about 11 cells;
+E5 and S1 issue concurrently, so the extra 12 calls cost tokens, not wall time. Bisection and
+verification proceed tier by tier so deeper escalation stops as soon as the configured rule says
+it should.
 
 Fit `D2 ~ E5`; rank by residual (§7).
 
@@ -816,7 +828,7 @@ The pipeline is not trusted until all of these pass. Ordered by how much collaps
 | 3 | **Judge E5 FPR** | Control pairs score ≈ 0. Non-zero puts a floor under every E5 in the run |
 | 4 | **Sanity acceptance** | At this run's converged failing bisection endpoint, the three live terms must disagree and `min(S1,S2,S3)` must reject while their mean would accept. This reproduces the aggregation property of the lost Velocity anchor without borrowing another concept's data |
 | 5 | **D2-lite vs D2** | Spearman ρ ≥ `D3_MIN_RHO`. On failure, Phase 1 loses its detection axis; shortlist on `E6` alone and raise `SHORTLIST_N` |
-| 6 | **E6 shortlist recall** | A `E6`-based shortlist must retain the seven qualifying M1.5 cells (§7) |
+| 6 | **Tier-0 false-negative audit** | Among live layers rejected by tier 0, no audited outer-tier cell may qualify at an `E5` at or above tier 0's winner. Report sampled `k` beside the full live rejected population. A lower outer-tier qualifier is diagnostic, not fatal. If tier 0 has no qualifier and an outer tier does, fail and still select the better outer result. In exhaustive mode report `NOT APPLICABLE`, distinct from both pass and skip, because no layer was rejected |
 | 7 | **D2 transcript capture** | Must land before §9.2's primary control can run |
 | 8 | **Judge stability** | Re-judge one cell twice; report disagreement. A 0–10 scale needs its noise floor known before cells are ranked by it |
 | 9 | **Depth floor** | Phase 1 re-tests `D_MIN` every run; check the log rather than trusting it |
@@ -838,6 +850,11 @@ All provisional; every one is a tuning knob, and those marked ⚑ are load-beari
 | `E6_THRESH` | 0.01 | concept mass counting as reachable |
 | `E6_FLOOR` | 0.20 | minimum `reach` to shortlist a layer |
 | `SHORTLIST_N` | 8–12 | raise if gate 5 fails |
+| `SHORTLIST_TIER_SIZE` | 3 | live rejected layers per outer tier; adds the same number of BISECT candidates and VERIFY cells for every mandatory tier |
+| `SHORTLIST_AUDIT_TIERS` | 1 | outer tiers that always run, including after tier-0 success |
+| `SHORTLIST_MAX_TIER` | 3 | highest failure-escalation tier; `None` exhausts live tiers only until success, unlike exhaustive mode |
+| `SHORTLIST_TIER_ORDER` | `e6_residual_interleave` | alternate `E6`, residual, `E6`, deduplicating after the live-signal guard; unknown values raise |
+| `SHORTLIST_EXHAUSTIVE` | false | verify every in-scope layer regardless of success; stronger coverage than a Gate 6 pass |
 | `BISECT_STEPS` | 5 | ~3% resolution in `r` |
 | `E5_FLOOR` | 4.0 | ⚑ "slight but real" on the Judge E5 anchors |
 | `D2_MAX` | 0.20 | ⚑ the detection constraint |
@@ -911,9 +928,10 @@ constraint, not the judge.**
 | `norms.jsonl`, `dose_map.json` | §5.1 — `‖v_L‖`, `‖h_L‖`, `α(L,r)`, unreachable cells |
 | `baselines.jsonl`, `unsteered/*.jsonl` | unsteered completions, `cap_base`, `p_base`, `d3_base` |
 | `scan.jsonl` | one row per `(L, r)` from Phase 1 — `reach`, `d3`, cheap sanity |
-| `shortlist.json` | Phase 2 candidates with the reason each was selected |
+| `shortlist.json` | Phase 2 tier-0 candidates plus ordered live audit/escalation tiers and ordering provenance |
 | `bisect.jsonl` | Phase 3 bracket, steps, chosen dose per candidate |
 | `verified.jsonl` | Phase 4/5 — E5, S1, D2, D4, sanity, residual |
+| `tier_verification.json` | per-tier layers, ordering route, Phase 4/refinement verdicts, coverage and termination reason |
 | `judge_e5.jsonl`, `judge_s1.jsonl`, `judge_d2.jsonl` | every judge call: prompt, response, parsed fields, raw text |
 | `D2_transcripts.jsonl` | **new, required** — forced-ID completions |
 | `controls.jsonl` | §9.1 random-direction, §9.2 control-concept, §9.3 escalation |

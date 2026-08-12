@@ -217,7 +217,7 @@ strips the overhang.
 ```python
 def phase0_calibrate() -> dict
 def phase1_scan() -> list[dict]
-def phase2_shortlist(scan_rows) -> list[dict]      # local maxima + stratified + residual
+def phase2_shortlist(scan_rows) -> dict            # tier-0 candidates + ordered audit tiers
 def phase3_bisect(candidates) -> list[dict]
 def phase4_verify(cells) -> list[dict]
 def phase5_refine(top_cells) -> list[dict]
@@ -226,6 +226,17 @@ def select_operating_point(rows) -> dict           # §7.1 argmax E5 s.t. qualif
 def frontier(rows) -> list[dict]
 def covertness_margin(rows) -> list[dict]          # d2 - predicted_d2(e5); reported, not selected on
 ```
+
+`phase2_shortlist` writes and returns an envelope whose `candidates` field is the original
+local-maxima + stratified + residual shortlist (tier 0) and whose `tiers` field carries the
+ordered verification plan. Tier 1 always runs as the false-negative audit. Deeper live tiers run
+only while no qualifier exists, subject to `SHORTLIST_MAX_TIER`; exhaustive mode instead verifies
+every in-scope layer regardless of success. Both outer orderings apply the same `D3_SIGNAL_MIN`
+live-signal guard before ranking, and an unknown `SHORTLIST_TIER_ORDER` raises.
+
+`tier_verification.json` is the durable tier run record: layers, ordering provenance, Phase 4 and
+refinement verdicts, stop reason, and audit coverage. `verified.jsonl` rows carry the same tier
+provenance so selection and Gate 6 can trace an outer-tier winner back to its route.
 
 `select_operating_point` implements §7.1 exactly: `argmax(E5)` over `qualifies`, ties inside
 `E5_TIE_BAND` broken by lower D2 then higher S4. It must **not** use the residual. Phase 2 may.
@@ -253,6 +264,10 @@ GATES: list[dict]                        # every gate call, in order, for the ru
 def run_acceptance_gates() -> dict        # §10 gates 1-11
 def rig_checks() -> dict                  # R4, R5, R7, R8, R14, R15
 ```
+
+Gate records have four states: `PASS`, `FAIL`, `SKIP`, and `NOT_APPLICABLE`. The last is not an
+evidence gap: Gate 6 uses it in exhaustive mode because verifying every in-scope layer leaves no
+rejected population whose false-negative rate could be audited.
 
 Gate 11 is an addition to the spec's list and is flagged as such in its own output:
 **Judge D2 vs the repo's judge** — on a sample of stored forced-ID transcripts, M2's
