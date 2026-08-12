@@ -105,6 +105,11 @@ field that matters). See [`docs/handoff/README.md`](docs/handoff/README.md).
   `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>` line.
 - If you find a file mid-change by someone else, do not resolve it by reverting their work — say
   what you found and ask.
+- **Git operations are expected to require the operator's approval, and that is deliberate.** If a
+  commit, a push or anything touching `.git` is blocked by your sandbox, **ask for approval — do
+  not route around it.** Do not disable hooks (`--no-verify`), override config, escalate your own
+  permissions, or reach for a shell trick that writes to `.git` indirectly. The friction is the
+  control. The same applies to network access: if a command needs the internet and is blocked, ask.
 - **Documentation is owned by the orchestrating agent.** Do not restructure, merge, rename, move or
   delete a markdown file. Appending to `docs/DECISIONS.md`, `docs/TODO.md` and `docs/DEBUG-LOG.md`
   is expected and required; restructuring them is not yours.
