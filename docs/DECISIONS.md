@@ -193,6 +193,31 @@ true rate is exactly zero.
 
 **Result:** `4b1e66a`, tasks 02 and 17. Offline suite: 80 passed, 2 environment-dependent skips.
 
+## 2026-08-12 — Gate 4 reanchored on the live aggregation contrast
+**By:** PquePC (decision), Sol (proposal and execution)
+**Kind:** task complete
+
+Gate 4 now prefers `hi`, the failing endpoint of the winning layer's converged Phase 3 interval,
+and falls back to another shortlisted layer with a boundary. It measures S1, S2 and S3 live without
+spending unrelated E5 or D2 calls. The gate passes only when the terms disagree, the minimum falls
+below `S4_MIN`, and their mean remains at or above it. Thus the evidence is that `min` catches a
+failed term a mean would hide; the guaranteed fact that S3—and therefore the minimum—is below the
+floor at `hi` is recorded but never counted as proof.
+
+“Comfortably above” is derived as one third of the remaining headroom above `S4_MIN`, currently
+0.80. If `hi` is uniformly damaged, the only fixed retries are the midpoint and then `lo`, always
+decreasing dose. A disagreeing anchor whose mean also rejects fails immediately rather than being
+searched away. If no shortlisted layer reached a boundary, Gate 4 is SKIPPED and reports that
+sanity held at every reachable shortlist dose. The historical M1.5 path remains diagnostic-only
+because stored text cannot reconstruct S3.
+
+**Why:** `_cheap_sane` defines `hi` by `s3 < S4_MIN`, so `min(S1,S2,S3) < S4_MIN` there is true by
+arithmetic and cannot validate a gate. The lost Velocity anchor mattered because the old merged
+sanity accepted a cell whose weakest term failed. The live min-versus-mean contrast reproduces that
+load-bearing property without borrowing another concept's data.
+
+**Result:** `97fb032`, task 03. Offline suite: 84 passed, 2 environment-dependent skips.
+
 ## 2026-08-12 — Tasks 02 and 17 landed; gate 4's anchor settled and its criterion corrected
 **By:** Sol (implementation and proposal), PquePC (decision), Opus (review)
 **Kind:** task complete + decision

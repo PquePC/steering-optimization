@@ -1,8 +1,7 @@
 # 03 — Gate 4 on this run's own damaged cell
 
-**Status: BUILD NOW.** Blocking. The anchor location and the pass criterion were settled on
-2026-08-12 — see **Decided** below. The criterion is NOT `s4 < S4_MIN`; read that section before
-writing code.
+**Status: DONE — `97fb032`.** Gate 4 now measures all three sanity terms live at the converged
+failing endpoint and passes only when `min` rejects a disagreement that the mean would hide.
 
 ## Goal
 
