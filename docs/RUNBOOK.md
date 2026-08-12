@@ -1,4 +1,11 @@
-# M2 — quickstart
+# Runbook — bare pod to a measured operating point
+
+**Authority on: how to run the pipeline.** The only operating guide; it absorbed the three that
+overlapped it (`RUNBOOK.md`, `M2 — HOW TO RUN.md` and the operational half of
+`m2/README.md`). For what each measure *means*, see [`SPECIFICATION.md`](SPECIFICATION.md).
+
+---
+
 
 **The only guide you need.** Copy-paste, in order, from an empty RunPod account to a finished
 experiment.
@@ -374,3 +381,149 @@ cat /workspace/m2_runs/garlic_*/operating_point.json | python -m json.tool
 ```
 
 **Returning to a migrated pod:** steps 2, 4, 5, then 9.
+
+---
+
+# Beyond the quickstart
+
+### 4b. The notebook
+
+**Kernel → Restart & Run All.** In order: control panel → Setup 1–6 → RUN ALL.
+
+Setup 5 runs the rig checks, and none of them is decoration:
+
+| Check | What it catches |
+|---|---|
+| **R5** vector norm at the reference layer | broken extraction. ±2σ of Macar's 4664 ± 982, at the **reference layer only** — bug 19 declared a working rig broken by applying the band at every depth |
+| **R7** forced-ID prompt equivalence | a batched D2 path that drifted from what the repo would send. Calls the repo's own function with the generator swapped for a recorder |
+| **R14** hook liveness, both paths | bug 26 — the repo's hook silently declines to steer whenever `start_pos` is set, and measured an unsteered model at all 30 cells of a real v1 run |
+
+**If R14 fails, stop.** Every forward-pass measure would read exactly zero, and a mean of zero
+with a variance of zero passes most checks designed to catch a weak effect.
+
+Per concept, RUN ALL executes:
+
+| Phase | What | Judge calls | Wall |
+|---|---|---:|---|
+| 0 · calibrate | vectors, `‖v_L‖`, `‖h_L‖`, dose map, unsteered baselines, `cap_base` | 2 | ~2 min |
+| 1 · full-depth scan | every layer ≥ `D_MIN` × 2 doses: E6, D3, S3, S2 | **0** | ~7–10 min |
+| 2 · shortlist | local maxima + stratified + residual | **0** | free |
+| 3 · dose bisection | bracket then bisect the sanity boundary | **0** | ~1 min |
+| 4 · verify | E5 (E5), S1 (S1), D2+D4 (B) on ~10 cells | 490 | ~8–10 min |
+| 5 · refine | layer ±1, ±2 and one dose step either side | 490 | ~8 min |
+| 6 · confirm | winner on **held-out** prompts at `N_CONFIRM`, no adaptive stopping | ~150 | ~4 min |
+| controls | §9.1 random direction, §9.2 forced-ID capability | ~75 | ~4 min |
+
+**~35 min and ~1,210 judge calls per concept.** Judge cost is well under a dollar; wall time is
+the binding constraint.
+
+**Phases 1–5 are screening — their numbers are not reportable. Only Phase 6 output is.**
+
+---
+
+
+## 6. What arrives on your phone
+
+Every message carries the **whole board**, not a summary line — a message that prompts a
+follow-up you cannot make is a bad message when the only way to look deeper is to open a laptop.
+
+Notification points: run started (and whether the dead man's switch is armed), each phase
+completed, **the Phase 0 judge-FPR gate result**, **the Phase 2 shortlist**, **the Phase 4
+qualifying set**, any phase failure, verdict changes, **the operating point**, run finished with
+`operating_point.json` attached, and a slow beat every 600 s.
+
+Four verdicts, which say what to **do**:
+
+| Banner | Meaning |
+|---|---|
+| RECOVERED — nothing needs you | — |
+| RUNNING SLOW — no action needed | slower than expected; the ETA already accounts for it |
+| NEEDS YOU WHEN IT FINISHES | something died; the rest is still worth having |
+| **STOP THE POD** | it will not recover; stop paying |
+
+Three M2-specific triggers for *needs you*: the **judge FPR breaching `JUDGE_FPR_MAX`** (fires as
+soon as Phase 0 completes, before GPU time is spent on a run whose numbers cannot be trusted);
+an **empty qualifying set after Phase 4** (not broken — the frontier and the escalation ladder
+are still the answer to "does an operating point exist for this concept"); and **both controls
+rejecting the winner** (that verdict *is* the finding).
+
+**What never leaves the pod in an alert:** exception messages and tracebacks. An API error can
+quote its request payload back at you, and under M2 that payload is a steered generation or a
+judge prompt containing one — arriving unbidden, in a message you did not choose to send.
+Exceptions are mapped to classified labels; anything unmatched degrades to the class name alone,
+which is safe by construction.
+
+**Push only.** The pod talks; it never listens. There is no command channel, and none should be
+added.
+
+---
+
+
+## 8. Failures, resuming, and the fatal abort
+
+A phase that dies does not take the concept with it; a concept that dies does not take the batch
+with it. `FATAL_CONSECUTIVE_D4S` compromised concepts in a row aborts the batch — that is
+structural (OOM, judge auth, a bad install), not bad luck.
+
+**Just re-run to resume.** The run folder is deterministic in `(concept, config)`, and:
+
+- Phase 1 skips `(L, r)` already in `scan.jsonl`
+- Phase 3 skips candidates in `bisect.jsonl`
+- Phases 4–5 skip cells in `verified.jsonl`
+- Phase 6 skips if `confirm.jsonl` is complete
+- a concept whose archive already exists is skipped entirely
+
+**No judge call is ever paid for twice.** The cache key is
+`(phase, layer, r, prompt_id, judge_id, vec_fingerprint)`. Both trailing fields are load-bearing:
+without `vec_fingerprint`, switching concepts in a live kernel returns the previous concept's
+result (v1 bug 23); without `judge_id`, S1 returns E5's row and every S1 becomes a silent copy
+of E5/10.
+
+---
+
+## 9. ⚠️ Before running harmful concepts
+
+Everything M2 currently runs on is benign, and a transcript of a model steered toward *silk*
+carries no dual-use risk. **The harmful arm is a different object** — those transcripts are what
+a refusal-ablated model said with `weapon`, `poison` or `assault` injected, the exact artifact
+`CLAUDE.md` hard rule 3 names.
+
+The pipeline enforces this rather than trusting it: `transcripts_allowed()` refuses to put
+transcripts in a bundle for any concept not on `m2.config.BENIGN_CONCEPTS` unless
+`EXPORT_TRANSCRIPTS_OVERRIDE=True` is passed **at the call site**. It is deliberately not a
+config key, an environment variable or a module global — all three are inheritable, and the batch
+driver would carry a `True` set for the benign arm straight into the harmful arm when the concept
+list changed.
+
+Two facts worth having explicit before that point:
+
+- **Telegram cloud chats are not end-to-end encrypted.** Messages and documents sit on Telegram's
+  servers, and the bot token is the access credential.
+- `CLAUDE.md` requires explicit approval before *any* upload to an external host. The transcript
+  export policy is approved **for benign concepts only**.
+
+Vectors, activations and weights are excluded from every bundle unconditionally. They regenerate
+from a published config in minutes — **regeneration is the backup.**
+
+Also note **acceptance gate 10**: M2 tunes on benign concepts, and Macar's gate analysis is
+entirely benign (`cos(d_detect, d_refusal) = −0.09`). Validate the optimum on an arm-3 concept
+before committing the harmful arm. If it moves, fit per arm — and the per-arm difference becomes
+a result.
+
+---
+
+## 10. When a number looks wrong
+
+Read `DEBUG-LOG.md` §6 first. Ten patterns, each of which produced more than one bug. The two
+that cost the most time:
+
+> **Read the code, not a summary of the paper.** Bugs 7, 19 and 25 all came from trusting a
+> description over the source — including a function whose name and docstring both said "batch"
+> over a body that was a `for` loop.
+
+> **"The cell ran without error" is not evidence the cell did anything.**
+
+`CONTRACT.md` §6 maps all 20 structural defences to the bug each one exists to prevent. If a
+number is wrong, the fastest route is usually to find which defence should have caught it and
+check whether it is still wired in — `python -m pytest m2/tests/test_offline.py -q` checks 46 of
+those invariants in under a second.

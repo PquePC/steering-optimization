@@ -1,7 +1,7 @@
 # Pipeline M2 — Specification
 
 *Implementation-ready spec for the operating-point finder. Rationale, evidence and the decision
-log live in [`M2 — Pipeline Plan.md`](M2%20%E2%80%94%20Pipeline%20Plan.md); this document is what
+log live in [`DESIGN-RATIONALE.md`](DESIGN-RATIONALE.md); this document is what
 to build.*
 
 ---
@@ -1245,7 +1245,7 @@ scale is a defect, not a feature.
 Second constraint: the blocks must be written **before** any steered transcript is read. A
 rubric authored after looking at results is an answer key, and it sits directly on the primary
 effectiveness metric — the same class of researcher degree of freedom that got v1's E1
-redesigned (Session 3, `DEBUG LOG.md`).
+redesigned (Session 3, `DEBUG-LOG.md`).
 
 ### 15.2 Sprejer's discourse-coherence rubric as a second S1 reading
 

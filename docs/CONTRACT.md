@@ -1,10 +1,10 @@
 # M2 — module contract
 
-**Read `../M2 — Specification.md` first; it is the authority on *what* to build. This file is
+**Read `SPECIFICATION.md` first; it is the authority on *what* to build. This file is
 the authority on *where each piece lives and what it is called*, so that independently written
 modules compose.** If the two disagree, the spec wins on science and this file wins on naming.
 
-Also mandatory reading before writing any code: `../DEBUG LOG.md` §4 (bug register) and §6
+Also mandatory reading before writing any code: `DEBUG-LOG.md` §4 (bug register) and §6
 (patterns). Every bug in that register is a bug this pipeline must be structurally unable to
 reproduce. §9 below lists the ones with a named defence.
 
@@ -32,7 +32,9 @@ steering-optimization/            # repo root
     tests/
       test_offline.py  everything checkable without a GPU or a judge key
   m2_pipeline.ipynb    thin driver notebook: CONTROL PANEL + setup + RUN ALL
-  M2 — HOW TO RUN.md
+  README.md            orientation, the measure codes, the phases
+  AGENTS.md            working conventions for agents
+  docs/                every other document; README.md says which is authoritative on what
 ```
 
 **No module may import a sibling that appears later in that list.** The order is the dependency

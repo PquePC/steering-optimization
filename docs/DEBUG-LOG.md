@@ -23,7 +23,7 @@ cause is what you fix.
 | `Pipeline v1 Implementation Plan.md` | M1 build spec: pod, patch, logging, escalation, code audit |
 | `pipeline_v1.ipynb` | End-to-end M1 pipeline → one frontier plot |
 | `measurement_lab.ipynb` | Every measure as an independent unit. `AUTORUN=True` (default): Run All, then leave it — one RUN ALL cell sweeps everything with per-measure exception isolation and writes the per-cell Detection/Effectiveness/Sanity summary. `AUTORUN=False`: one measure at a time, by hand |
-| `DEBUG LOG.md` | This file |
+| `DEBUG-LOG.md` | This file |
 | `introspection-mechanisms/` | Clone of Macar et al.'s repo (upstream, unmodified except the OpenRouter patch applied at runtime) |
 
 **Environment:** RunPod, 1× A100 80GB, `/workspace` persistent volume, Gemma3-27B bf16,
@@ -1042,3 +1042,36 @@ Rejected candidates are recorded in the debug dump but no longer printed. A cont
 is certain about is simply not usable and there is nothing to inspect. Two further candidates
 with honest "no" answers were added so the set does not depend on any single question
 surviving the check.
+
+---
+
+## 2026-08-11 — first end-to-end M2 run (Garlic), Phases 0–3
+
+*Moved here from `m2/TODO.md` in the 2026-08-12 consolidation: the TODO carries open decisions,
+this log carries what went wrong and why it survived.*
+
+
+| # | Defect | Why it survived | Commit |
+|---|---|---|---|
+| 1 | `_item` dropped `model_text`, so `judge_many`'s second gate-2(a) check ran over the model's own words and killed Phase 4 at the first cell | The strict default is correct and deliberate; the caller simply never declared the spans. Both layers were individually right | `955495f` |
+| 2 | S1's calibration example quoted `'Velocity'`, a benign-list concept, so gate 2(a) failed a run measuring something else | The existing test only checked for a `{concept}` *placeholder*; a hard-coded name passed it | `955495f` |
+| 3 | Driver read `select_operating_point`'s envelope as the winning row | The envelope is a dict and never `None`, so `winner is not None` always held | `955495f` |
+| 4 | Nothing called `end_phase` — phases never left `running`, and the per-phase phone push never fired once | The board degrades silently by design | `955495f` |
+| 5 | Shortlist widened onto dead layers (L13/L14/L15, reach 0.00) | The guard tested `d3 > 0.0`, and D3 is a probability mass that is never exactly zero | `3d9572d` |
+| 6 | Status board printed `{'text/plain': ...}` blobs between phases | IPython ships with the pod image, so the import succeeded, `display()` found no frontend and printed `repr()` rather than raising | `3d9572d` |
+| 7 | Provenance row called a bare `_now()` that lives in `runio` | Wrapped in `except Exception` so it cost one WARN line, not a row | `3d9572d` |
+| 8 | The undefined-name detector referenced an unimported `pathlib` — the exact class of defect it hunts | It had never been run | `3d9572d` |
+| 9 | `m2.setup` reported `nest_asyncio` missing after installing it | The probe printed `pkg.__version__`, which `nest_asyncio` has never defined | `79fc04d` |
+| 10 | Absent model cache reported as a permanently unfixable `FIX` | No repair function exists for it, and none should — the preflight downloads it | `4a53c17` |
+| 11 | R14's skip text said "RUN IT BEFORE ANY SWEEP" in a preflight, where it is structurally impossible and already handled | The message was written for a different caller | `cacdf83` |
+| 12 | ETA read `0m00s` for a whole 40-minute run | `eta()` skips phases whose unit total is 0, and a total was only set when a phase *started* — so every phase ahead contributed nothing | *(this change)* |
+| 13 | `_Board` had no forwarder for `end_phase`/`size_phase`/`skip_phase` | A missing method is an `AttributeError` on the adaptor, **outside** its `_call` guard — fatal, not degraded | *(this change)* |
+
+### Pattern worth naming
+Six of the thirteen are **checks that could not fail**: `d3 > 0.0` on a quantity that is never
+zero, an import test used as a frontend test, a `{concept}` placeholder test that a hard-coded
+name passes, a detector that was never run. A guard that passes everything is worse than no
+guard, because it reads as evidence. New guards should be tested against a case that *should*
+trip them — `test_the_undefined_name_detector_actually_detects` is the model to copy.
+
+---

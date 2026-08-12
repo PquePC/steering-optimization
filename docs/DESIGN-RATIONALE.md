@@ -6,7 +6,7 @@ with the model still intact.*
 
 > **This document is the *why*.** Evidence, red-teaming, reversals and the decision log.
 > The *what to build* — formulas, thresholds, judge prompt text, procedures, file schemas — is
-> [M2 — Specification.md](M2%20%E2%80%94%20Specification.md), which is authoritative for
+> [SPECIFICATION.md](SPECIFICATION.md), which is authoritative for
 > anything executable.
 >
 > Grounded in the six-concept M1.5 batch (`Irony`, `Karma`,
@@ -340,7 +340,7 @@ generations*: Judge A reads task-prompt responses, Judge B reads forced-identifi
 produced from a different prompt with a prefill. Everything that judges the *same* response is
 merged into one call.
 
-> **The full text of both prompts lives in [Spec §6](M2%20%E2%80%94%20Specification.md)** — Judge A
+> **The full text of both prompts lives in [Spec §6](SPECIFICATION.md)** — Judge A
 > (`CONCEPT_INFLUENCE_AND_INTEGRITY`, returning `Score_Influence` and `Score_Integrity`) and
 > Judge B (`FORCED_ID_AND_FAILURE_MODE`, returning `Identified` and `Failure_Mode`). One
 > authoritative copy, so a wording change cannot land in only one document.
@@ -424,7 +424,7 @@ Two concrete wastes:
 forced-ID trial). Roughly a **4× reduction**, and it runs only on shortlisted cells rather
 than every cell in the grid. **Phases 1–3 make zero judge calls.**
 
-Per-phase breakdown in [Spec §12](M2%20%E2%80%94%20Specification.md).
+Per-phase breakdown in [Spec §12](SPECIFICATION.md).
 
 No overlap by construction: every generation is judged exactly once, and each call returns
 everything derivable from the response it reads.
@@ -538,7 +538,7 @@ are screening; they rank cells and their numbers are not reportable. Only Phase 
 
 ## 6. Controls — why two, and what each one kills
 
-**Procedures, gates and thresholds: [Spec §9](M2%20%E2%80%94%20Specification.md).** What follows is only the argument
+**Procedures, gates and thresholds: [Spec §9](SPECIFICATION.md).** What follows is only the argument
 for their existence.
 
 The objective — *high influence, low forced-ID* — has **two cheap ways to be satisfied that
@@ -578,7 +578,7 @@ would be a finding.
 
 ## 7. Cost — the argument, not the table
 
-**Per-phase wall time and judge calls: [Spec §12](M2%20%E2%80%94%20Specification.md).**
+**Per-phase wall time and judge calls: [Spec §12](SPECIFICATION.md).**
 
 The claim the design rests on: **M2 costs roughly what v1 cost, and buys considerably more.**
 
@@ -739,3 +739,101 @@ by where it lands in this document. **A reversal is recorded as a reversal, not 
 | 48 | **Vectors and activations stay excluded** | `CLAUDE.md` hard rules 1 and 3. Reusable attack artifacts that regenerate from a published config in minutes — regeneration is the backup, so there is no reason to move them |
 | 49 | **Alert *text* still carries no exception messages or tracebacks** | Unchanged from v1, and unaffected by #47: an API error can quote a steered generation back at you inside a message you did not choose to send. Deliberate file transfer is a different thing from uncontrolled text in alerts |
 | 50 | **`EXPORT_TRANSCRIPTS` gated to the benign concept list** | The approval recorded in §14.3 covers benign concepts. Harmful-arm transcripts are what a refusal-ablated model said with `weapon` injected, and Telegram cloud chats are not end-to-end encrypted — the bot token is the access credential. The gate stops the harmful arm inheriting the setting when the concept list changes |
+
+---
+
+# Appendix — which concept to start with, and why
+
+*Absorbed from `m2/README.md` §6 during the 2026-08-12 documentation consolidation. This is
+design rationale, not an operating instruction; the runbook links here rather than repeating it.*
+
+Start with **Garlic**, and run **Origami** alongside it as the validation control.
+
+### 6.1 The published baseline
+
+Macar et al., *Mechanisms of Introspective Awareness* (Macar, Yang, Wang, Wallich, Ameisen,
+Lindsey), ran **the majority of their experiments on Gemma3-27B** — the same model this pipeline
+targets — over **500 concepts** (Lindsey's 50 plus 450 across 20 semantic categories), at **100
+trials per concept**.
+
+Their reference configuration is stated outright: **L = 37, α = 4**, because it *"yields the
+highest overall introspection rate for Gemma3-27B (62 layers total)"*. That is the default this
+pipeline is trying to beat, and it is the same cell the v1 rig check reproduced.
+
+Detection rates across the 500 span 0–100%, **mean 38.2%, median 30.0%**, and the distribution is
+**bimodal**: 55 concepts detect at ≥90%, 63 detect at exactly 0%.
+
+Concepts named with rates in the paper (Gemma3-27B, L37, α=4):
+
+| Concept | Detection | |
+|---|---|---|
+| **Garlic** | **100%** | high-detection concepts are "concrete, sensory-rich, and distinctive" |
+| **Chocolate** | **99%** | |
+| **Trees** | **97%** | |
+| Thunderstorms, Scorpions | high | named qualitatively |
+| Irony, Karma, Skepticism | **0%** | abstract |
+| Pillows, Silk, Mirrors | **0%** | concrete but semantically generic |
+
+**Garlic at 100% is the strongest possible "before" number, and it is published**, on this model,
+at this configuration. That makes the comparison citable rather than self-referential.
+
+### 6.2 Origami as the control
+
+Origami is not in Macar's reported numbers — it is one of Lindsey's 50, and the **0.933** figure
+is the v1 M0 rig check's own measurement at L37/α=4, n=30. Its value is that you already have the
+full dose–response:
+
+| α | r | D1 self-report | D2 forced ID | E4 | sanity |
+|---|---|---|---|---|---|
+| 1 | 0.10 | 0.00 | 0.00 | 0.34 | 0.97 |
+| 2 | 0.20 | **0.08** | **0.96** | 0.69 | 0.93 |
+| 3 | 0.30 | 0.20 | 1.00 | 1.44 | 0.88 |
+| 4 | 0.39 | 0.92 | 1.00 | — | — |
+
+A clean monotone curve rather than a step, and a known answer the pipeline should reproduce. Note
+that vector norm does not predict detection — Treasures has the largest norm (6688) and detects
+at 0.000 — so R5 tests extraction, not concept quality.
+
+### 6.3 Where the qualifying region should be, and why
+
+The paper's §5.1 is the single most useful result for this pipeline:
+
+> **Detection rate peaks in mid-layers, while forced identification rate increases toward late
+> layers.** The correlation between detection and identification becomes positive only when
+> injecting in mid-to-late layers. *"This distinction suggests that detection and identification
+> involve mostly separate mechanisms."*
+
+M2's constraint is on **D2, forced identification** — so that finding predicts the qualifying
+region (`D2 ≤ 0.20` with `E5 ≥ 4`) sits at **early-to-mid layers, not late ones**. A naive "go
+deeper for more effect" search would walk straight into the region where forced ID is highest.
+Testing that prediction across the full depth is what Phase 1 is for, and confirming it would be
+a result in its own right.
+
+The counterweight, from the same paper: identification conditioned on detection **rises with**
+detection rate — 46.9% for low-detection concepts, 66.1% for concepts above 90%. So the concepts
+with the most detection to lose are also the ones where forced ID is hardest to suppress. Garlic
+is the hardest case on purpose.
+
+> ### What "better than the defaults" can and cannot mean
+>
+> The 0.933 for Origami and the 0.08 at α=2 are **D1, spontaneous self-report**, and M2 deleted
+> D1: it confounds *"the concept never reached a reportable state"* with *"the model chose not to
+> say so."* M2's constraint is **D2**, which is stricter. At L37 α=2 Origami has D1 = 0.08 but
+> **D2 = 0.96**, so the cell v1 called an operating point **would not qualify under M2**.
+>
+> That is the point of the full-depth scan. v1 sampled six layers; M2 measures every layer at two
+> doses and then bisects. Whether a cell exists with E5 ≥ 4, D2 ≤ 0.20 and S4 ≥ 0.70 is an open
+> empirical question, and the run is what answers it.
+>
+> **If no cell qualifies, that is a result, not a failure.** The frontier is still reported, the
+> §9.3 escalation ladder distinguishes "no operating point exists at these constraints" from "the
+> vector is dead", and `operating_point.json` records the reason.
+
+```bash
+python -m m2.run --concepts Garlic                   # published 100% detection - the headline
+python -m m2.run --concepts Garlic,Origami           # headline + your own ground truth
+python -m m2.run --concepts Garlic,Chocolate,Trees   # all three published high-detection concepts
+```
+
+---
+

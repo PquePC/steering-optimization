@@ -14,8 +14,9 @@ Split out of the parent research repo (`Emergent-Introspection`) on 2026-08-11, 
 scientific framing, the ethics register and the literature review. **This repo is public**, which
 raises the stakes on every rule below rather than relaxing any of them.
 
-Start at `m2/QUICKSTART.md` to run it, `M2 — Specification.md` for what each measure means, and
-`m2/TODO.md` for what is currently broken or undecided.
+Start at `README.md` for orientation and the measure codes, `docs/RUNBOOK.md` to run it,
+`docs/SPECIFICATION.md` for what each measure means, and `docs/TODO.md` for what is currently
+broken or undecided. Working conventions for agents are in `AGENTS.md`.
 
 ## Sensitive artifacts
 
@@ -64,12 +65,17 @@ first.
 
 ## Repo orientation
 
+**Full orientation table, including the measure codes, is in `README.md`.** The short version:
+
 | Question | File |
 |---|---|
-| How do I run it, from a fresh pod | `m2/QUICKSTART.md` |
-| What does each measure mean, and why | `M2 — Specification.md` |
-| Module boundaries, file formats, the defences and the bugs behind them | `m2/CONTRACT.md` |
-| What is broken, undecided, or worth doing next | `m2/TODO.md` |
-| What went wrong before, and how it was found | `DEBUG LOG.md` |
-| Where this is going after M2 | `M3 — Proposal.md` |
+| What is this, and where is everything | `README.md` |
+| How do I run it, from a fresh pod | `docs/RUNBOOK.md` |
+| What does each measure mean, and why | `docs/SPECIFICATION.md` |
+| Module boundaries, file formats, the defences and the bugs behind them | `docs/CONTRACT.md` |
+| What is broken, undecided, or worth doing next | `docs/TODO.md` |
+| What went wrong before, and how it was found | `docs/DEBUG-LOG.md` |
+| Where this is going after M2 | `docs/M3-PROPOSAL.md` |
+| Conventions for agents working here | `AGENTS.md` |
+| The coding agent's current task queue | `docs/handoff/` |
 | The science, ethics register and literature | parent repo `Emergent-Introspection` |
