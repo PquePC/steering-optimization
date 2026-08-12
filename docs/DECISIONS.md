@@ -218,6 +218,36 @@ load-bearing property without borrowing another concept's data.
 
 **Result:** `97fb032`, task 03. Offline suite: 84 passed, 2 environment-dependent skips.
 
+## 2026-08-12 — Gate 1 now certifies the live judge configuration on current-run anchors
+**By:** PquePC (decision), Sol (execution)
+**Kind:** task complete
+
+Gate 1 no longer borrows the lost Pillows and Silk cells. From the current Phase 1 surface it
+selects a HIGH candidate that clears `E6_FLOOR` while every D3 trial remains below
+`D3_RATE_THRESH`, and a LOW candidate with exactly zero E6 reach but a nonzero D3 rate. The LOW
+cell must also have greater D3 probability and a better rank than HIGH, so the token-accessibility
+ordering is genuinely reversed rather than merely described. If the run supplies no such pair,
+the gate skips instead of inventing an anchor.
+
+The gate generates the standard twelve steered/unsteered pairs at each anchor and writes one
+deterministically shuffled, role-blind `gate1_hand_labels.jsonl`. Only `hand_label` is blank and
+only the operator may fill it. A sidecar retains the hidden anchor mapping, the measured E6/D3
+probabilities and ranks, and a key made only from the judge model plus a SHA-256 digest of the E5
+prompt. Consequently the same operator labels are reused across concepts, while any judge-model
+or prompt change is refused explicitly and the old labels are preserved.
+
+The pass criterion remains the settled content of the gate: mean E5(HIGH) minus mean E5(LOW) must
+be at least 3.0. Spearman correlation with all 24 hand labels is reported but never gates. The
+offline suite includes the required counterexample where LOW outranks HIGH, a configuration-change
+refusal, and a check that the operator packet is mixed and carries no anchor-role field.
+
+**Why:** the gate asks whether E5 reads semantic influence or merely literal token accessibility.
+A current-run cross-proxy reversal makes that question portable across models and concepts; a
+content-addressed judge key makes the irreducible human work reusable without letting stale labels
+certify a changed instrument.
+
+**Result:** `cf13fdf`, task 04. Offline suite: 88 passed, 2 environment-dependent skips.
+
 ## 2026-08-12 — Tasks 02 and 17 landed; gate 4's anchor settled and its criterion corrected
 **By:** Sol (implementation and proposal), PquePC (decision), Opus (review)
 **Kind:** task complete + decision
