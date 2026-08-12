@@ -15,16 +15,16 @@
 #
 # FIRST TIME (repo not cloned yet) - run ONE of these in a terminal, then use sync.sh after:
 #   HTTPS+token:
-#     GH=YOUR_TOKEN; git clone https://x-access-token:$GH@github.com/PquePC/Emergent-Introspection.git \
-#       /workspace/Emergent-Introspection \
-#       && git -C /workspace/Emergent-Introspection remote set-url origin \
-#            https://github.com/PquePC/Emergent-Introspection.git \
+#     GH=YOUR_TOKEN; git clone https://x-access-token:$GH@github.com/PquePC/steering-optimization.git \
+#       /workspace/steering-optimization \
+#       && git -C /workspace/steering-optimization remote set-url origin \
+#            https://github.com/PquePC/steering-optimization.git \
 #       && printf '%s' "$GH" > /workspace/.gh_token && chmod 600 /workspace/.gh_token
 #   SSH (needs an SSH key on the pod):
-#     git clone git@github.com:PquePC/Emergent-Introspection.git /workspace/Emergent-Introspection
+#     git clone git@github.com:PquePC/steering-optimization.git /workspace/steering-optimization
 #
 # THEN, before each run / after any code change:
-#   bash "/workspace/Emergent-Introspection/Steering Optimization/sync.sh"
+#   bash "/workspace/steering-optimization/sync.sh"
 #   ...and in Jupyter: File -> Reload Notebook from Disk (or re-open it), then re-run.
 # ---------------------------------------------------------------------------------------
 set -u
@@ -75,7 +75,7 @@ else
   echo "[sync] new commits:"
   git -C "$REPO_DIR" --no-pager log --oneline "${before}..${after}" 2>/dev/null | sed 's/^/    /'
 fi
-NB="$REPO_DIR/Steering Optimization/measurement_lab.ipynb"
+NB="$REPO_DIR/measurement_lab.ipynb"
 echo ""
 echo "[sync] notebook: $NB"
 echo "[sync] NEXT: in Jupyter -> File -> Reload Notebook from Disk (or re-open), then re-run"

@@ -63,9 +63,8 @@ restart the pod later with the data intact.
 
 ```bash
 GH=YOUR_GITHUB_TOKEN
-git clone https://x-access-token:$GH@github.com/PquePC/Emergent-Introspection.git /workspace/Emergent-Introspection
-git -C /workspace/Emergent-Introspection remote set-url origin https://github.com/PquePC/Emergent-Introspection.git
-git -C /workspace/Emergent-Introspection checkout M2
+git clone https://x-access-token:$GH@github.com/PquePC/steering-optimization.git /workspace/steering-optimization
+git -C /workspace/steering-optimization remote set-url origin https://github.com/PquePC/steering-optimization.git
 printf '%s' "$GH" > /workspace/.gh_token && chmod 600 /workspace/.gh_token
 ```
 
@@ -92,7 +91,7 @@ an external service noticing that pings *stopped* covers it.
 ### 3.3 Install
 
 ```bash
-cd "/workspace/Emergent-Introspection/Steering Optimization"
+cd "/workspace/steering-optimization"
 git clone --depth 1 https://github.com/safety-research/introspection-mechanisms /workspace/introspection-mechanisms
 pip install -q -r /workspace/introspection-mechanisms/requirements.txt
 pip install -q nest_asyncio datasets pytest
@@ -115,7 +114,7 @@ passes most checks designed to catch a weak effect.
 
 ```bash
 export RUNPOD_API_KEY=YOUR_KEY
-nohup bash "/workspace/Emergent-Introspection/Steering Optimization/pod_watchdog.sh" > /workspace/watchdog.log 2>&1 &
+nohup bash "/workspace/steering-optimization/pod_watchdog.sh" > /workspace/watchdog.log 2>&1 &
 ```
 
 Stops the pod after ~20 min of ≤5% GPU **while VRAM ≥ 10 GB**. The VRAM condition is what keeps

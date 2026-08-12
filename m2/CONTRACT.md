@@ -13,7 +13,7 @@ reproduce. §9 below lists the ones with a named defence.
 ## 1. Layout
 
 ```
-Steering Optimization/
+steering-optimization/            # repo root
   m2/
     __init__.py        exports the public surface, nothing else
     config.py          constants, CONFIG, config hash, run dirs

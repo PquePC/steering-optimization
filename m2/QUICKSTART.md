@@ -14,7 +14,7 @@ Skip to this. Migrating pods is routine — the network volume survives, the con
 
 ```bash
 export HF_HOME=/workspace/hf
-cd "/workspace/Emergent-Introspection/Steering Optimization"
+cd "/workspace/steering-optimization"
 python -m m2.setup --repair
 ```
 
@@ -22,7 +22,7 @@ That reinstalls what the container took, pulls any code updates, tells you what 
 already measured, and names anything only you can fix. Then re-export your credentials
 (§5) and go to §8.
 
-If `/workspace/Emergent-Introspection` is missing, the volume did not follow — start at §1.
+If `/workspace/steering-optimization` is missing, the volume did not follow — start at §1.
 
 ---
 
@@ -65,13 +65,12 @@ itself on container disk** and does not survive a migration. If you memorise one
 ## 3. Get the code
 
 GitHub token with read access to this repo (github.com → Settings → Developer settings →
-Personal access tokens → Fine-grained, read-only on `Emergent-Introspection`).
+Personal access tokens → Fine-grained, read-only on `steering-optimization`).
 
 ```bash
 GH=YOUR_GITHUB_TOKEN
-git clone https://x-access-token:$GH@github.com/PquePC/Emergent-Introspection.git /workspace/Emergent-Introspection
-git -C /workspace/Emergent-Introspection remote set-url origin https://github.com/PquePC/Emergent-Introspection.git
-git -C /workspace/Emergent-Introspection checkout M2
+git clone https://x-access-token:$GH@github.com/PquePC/steering-optimization.git /workspace/steering-optimization
+git -C /workspace/steering-optimization remote set-url origin https://github.com/PquePC/steering-optimization.git
 unset GH
 ```
 
@@ -82,7 +81,7 @@ The `remote set-url` afterwards keeps the token out of `.git/config`.
 ## 4. Set everything up
 
 ```bash
-cd "/workspace/Emergent-Introspection/Steering Optimization"
+cd "/workspace/steering-optimization"
 python -m m2.setup --repair
 ```
 
@@ -158,7 +157,7 @@ downloads it. You want to see:
 
 ```
 READY. Next:
-  cd "/workspace/Emergent-Introspection/Steering Optimization"
+  cd "/workspace/steering-optimization"
   python -m m2.run --concepts Garlic --preflight
 ```
 
@@ -213,13 +212,13 @@ outside it):
 
 ```bash
 export RUNPOD_API_KEY=rpa_...
-nohup bash "/workspace/Emergent-Introspection/Steering Optimization/pod_watchdog.sh" > /workspace/watchdog.log 2>&1 &
+nohup bash "/workspace/steering-optimization/pod_watchdog.sh" > /workspace/watchdog.log 2>&1 &
 ```
 
 Then, back in the first:
 
 ```bash
-cd "/workspace/Emergent-Introspection/Steering Optimization"
+cd "/workspace/steering-optimization"
 nohup python -m m2.run --concepts Garlic --no-stop-pod > /workspace/m2_garlic.out 2>&1 &
 tail -f /workspace/m2_garlic.out
 ```
@@ -345,12 +344,12 @@ export HF_HOME=/workspace/hf
 
 # 3. code
 GH=YOUR_GITHUB_TOKEN
-git clone https://x-access-token:$GH@github.com/PquePC/Emergent-Introspection.git /workspace/Emergent-Introspection
-git -C /workspace/Emergent-Introspection remote set-url origin https://github.com/PquePC/Emergent-Introspection.git
-git -C /workspace/Emergent-Introspection checkout M2 && unset GH
+git clone https://x-access-token:$GH@github.com/PquePC/steering-optimization.git /workspace/steering-optimization
+git -C /workspace/steering-optimization remote set-url origin https://github.com/PquePC/steering-optimization.git
+unset GH
 
 # 4. set up / check everything
-cd "/workspace/Emergent-Introspection/Steering Optimization"
+cd "/workspace/steering-optimization"
 python -m m2.setup --repair
 
 # 5. credentials  (leading spaces)
@@ -364,7 +363,7 @@ python -m m2.setup
 python -m m2.run --concepts Garlic --preflight
 
 # 8. watchdog, SECOND terminal
-nohup bash "/workspace/Emergent-Introspection/Steering Optimization/pod_watchdog.sh" > /workspace/watchdog.log 2>&1 &
+nohup bash "/workspace/steering-optimization/pod_watchdog.sh" > /workspace/watchdog.log 2>&1 &
 
 # 9. run
 nohup python -m m2.run --concepts Garlic --no-stop-pod > /workspace/m2_garlic.out 2>&1 &

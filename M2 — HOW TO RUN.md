@@ -38,17 +38,17 @@ whose cells silently collapsed to one physical line and did nothing while report
 First time, in a pod terminal:
 
 ```bash
-GH=YOUR_TOKEN; git clone https://x-access-token:$GH@github.com/PquePC/Emergent-Introspection.git /workspace/Emergent-Introspection && git -C /workspace/Emergent-Introspection remote set-url origin https://github.com/PquePC/Emergent-Introspection.git && printf '%s' "$GH" > /workspace/.gh_token && chmod 600 /workspace/.gh_token
+GH=YOUR_TOKEN; git clone https://x-access-token:$GH@github.com/PquePC/steering-optimization.git /workspace/steering-optimization && git -C /workspace/steering-optimization remote set-url origin https://github.com/PquePC/steering-optimization.git && printf '%s' "$GH" > /workspace/.gh_token && chmod 600 /workspace/.gh_token
 ```
 
 Before every run, and after any code change:
 
 ```bash
-bash "/workspace/Emergent-Introspection/Steering Optimization/sync.sh"
+bash "/workspace/steering-optimization/sync.sh"
 ```
 
 Then in Jupyter: **File → Reload Notebook from Disk**. Open
-`/workspace/Emergent-Introspection/Steering Optimization/m2_pipeline.ipynb`.
+`/workspace/steering-optimization/m2_pipeline.ipynb`.
 
 Unlike v1, a code change is now a `.py` edit that `sync.sh` pulls and the kernel re-imports —
 the notebook itself rarely changes, and its cell outputs are no longer part of the source.
@@ -56,7 +56,7 @@ the notebook itself rarely changes, and its cell outputs are no longer part of t
 Run the offline tests once after any edit. They need nothing but pytest:
 
 ```bash
-python -m pytest "Steering Optimization/m2/tests/test_offline.py" -q
+python -m pytest m2/tests/test_offline.py -q
 ```
 
 ---
@@ -110,7 +110,7 @@ setup, for a single exploratory concept, and for `m2.steer` afterwards.
 ### 4a. The CLI — recommended for unattended runs
 
 ```bash
-cd "/workspace/Emergent-Introspection/Steering Optimization"
+cd "/workspace/steering-optimization"
 export HF_TOKEN=... OPENROUTER_API_KEY=... TELEGRAM_BOT_TOKEN=... TELEGRAM_CHAT_ID=... HEALTHCHECK_URL=... RUNPOD_API_KEY=...
 nohup python -m m2.run --concepts Irony,Silk,Pillows > /workspace/m2.out 2>&1 &
 tail -f /workspace/m2.out

@@ -37,8 +37,11 @@ from pathlib import Path
 from typing import Any, Callable, Sequence
 
 WORKSPACE = Path(os.environ.get("M2_WORKSPACE", "/workspace"))
-REPO_DIR = WORKSPACE / "Emergent-Introspection"
-PROJECT_DIR = REPO_DIR / "Steering Optimization"
+REPO_DIR = WORKSPACE / "steering-optimization"
+# The repo root IS the project root, since the 2026-08-11 split out of Emergent-Introspection.
+# There is no longer a nested "Steering Optimization" directory, and no space in any pod path.
+PROJECT_DIR = REPO_DIR
+MAIN_BRANCH = "main"
 HARNESS_URL = "https://github.com/safety-research/introspection-mechanisms"
 HARNESS_DIRS = (
     Path(os.environ["M2_HARNESS_DIR"]) if os.environ.get("M2_HARNESS_DIR") else None,
@@ -205,7 +208,7 @@ def check_repo(rep: Report) -> None:
     if not (REPO_DIR / ".git").is_dir():
         rep.add("project repo", BLOCKED, f"{REPO_DIR} is not a git clone",
                 hint="git clone https://x-access-token:$GH@github.com/PquePC/"
-                     "Emergent-Introspection.git " + str(REPO_DIR))
+                     "steering-optimization.git " + str(REPO_DIR))
         return
     _, branch = _sh(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=REPO_DIR)
     _, head = _sh(["git", "log", "--oneline", "-1"], cwd=REPO_DIR)
@@ -215,16 +218,20 @@ def check_repo(rep: Report) -> None:
         _, behind = _sh(["git", "rev-list", "--count", "HEAD..@{u}"], cwd=REPO_DIR)
     behind_n = int(behind) if behind.isdigit() else 0
 
-    if branch != "M2":
-        rep.add("project repo", FIX, f"on branch {branch!r}, expected 'M2'",
-                repair=lambda: _sh(["git", "checkout", "M2"], cwd=REPO_DIR)[1] or "checked out M2",
-                hint="git -C %s checkout M2" % REPO_DIR)
+    # `main` since the 2026-08-11 split: this repo's whole history IS the M2 work, so there is
+    # no longer an M2 branch to be on and checking for one would report a healthy clone broken.
+    if branch != MAIN_BRANCH:
+        rep.add("project repo", FIX, f"on branch {branch!r}, expected {MAIN_BRANCH!r}",
+                repair=lambda: _sh(["git", "checkout", MAIN_BRANCH], cwd=REPO_DIR)[1]
+                or f"checked out {MAIN_BRANCH}",
+                hint=f"git -C {REPO_DIR} checkout {MAIN_BRANCH}")
     elif behind_n:
-        rep.add("project repo", FIX, f"M2, {behind_n} commit(s) behind origin | {head}",
+        rep.add("project repo", FIX,
+                f"{MAIN_BRANCH}, {behind_n} commit(s) behind origin | {head}",
                 repair=lambda: _sh(["git", "pull", "--ff-only"], cwd=REPO_DIR)[1] or "pulled",
                 hint="git -C %s pull" % REPO_DIR)
     else:
-        rep.add("project repo", OK, f"M2, up to date | {head}")
+        rep.add("project repo", OK, f"{MAIN_BRANCH}, up to date | {head}")
 
 
 def check_harness(rep: Report) -> None:

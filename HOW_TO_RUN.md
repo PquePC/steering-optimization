@@ -14,23 +14,23 @@ Instead of deleting and re-uploading the notebook, clone the repo once and use `
 **First time** (in a pod terminal) — HTTPS + a GitHub token (fine-grained, read-only on this
 repo is enough):
 ```bash
-GH=YOUR_TOKEN; git clone https://x-access-token:$GH@github.com/PquePC/Emergent-Introspection.git \
-  /workspace/Emergent-Introspection \
-  && git -C /workspace/Emergent-Introspection remote set-url origin \
-       https://github.com/PquePC/Emergent-Introspection.git \
+GH=YOUR_TOKEN; git clone https://x-access-token:$GH@github.com/PquePC/steering-optimization.git \
+  /workspace/steering-optimization \
+  && git -C /workspace/steering-optimization remote set-url origin \
+       https://github.com/PquePC/steering-optimization.git \
   && printf '%s' "$GH" > /workspace/.gh_token && chmod 600 /workspace/.gh_token
 ```
-(or, if the pod has an SSH key: `git clone git@github.com:PquePC/Emergent-Introspection.git /workspace/Emergent-Introspection`)
+(or, if the pod has an SSH key: `git clone git@github.com:PquePC/steering-optimization.git /workspace/steering-optimization`)
 
 **Before each run / after any code change:**
 ```bash
-bash "/workspace/Emergent-Introspection/Steering Optimization/sync.sh"
+bash "/workspace/steering-optimization/sync.sh"
 ```
 It force-matches GitHub (`fetch` + `reset --hard`, discarding the disposable cell outputs the
 notebook writes into itself), fixes line endings / +x on the scripts, and prints what changed.
 Then in Jupyter: **File → Reload Notebook from Disk** (or re-open it) and re-run. The token
 lives only in `/workspace/.gh_token`, never in git config. Open the notebook from
-`/workspace/Emergent-Introspection/Steering Optimization/measurement_lab.ipynb`.
+`/workspace/steering-optimization/measurement_lab.ipynb`.
 
 The notebook's Setup 2 still clones `introspection-mechanisms` and pip-installs deps on its
 own (idempotently), so `sync.sh` only has to update this repo.

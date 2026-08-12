@@ -4,7 +4,7 @@
 
 **Foundational source:** Macar, Yang, Wang, Wallich, Ameisen & Lindsey, *Mechanisms of Introspective Awareness* (arXiv:2603.21396)
 **Source code:** `github.com/safety-research/introspection-mechanisms`
-**Working folder:** `Z:\Projects\TAIS Projects\Emergent Introspection\Steering Optimization\` — all project documentation, the upstream clone, and the notebook live here.
+**Working folder:** `Z:\Projects\TAIS Projects\steering-optimization\` — all project documentation, the upstream clone, and the notebook live here.
 **Implementation:** `Pipeline v1 Implementation Plan.md` (M1 build spec) and `pipeline_v1.ipynb` (runnable notebook).
 **Runtime:** Jupyter notebook on a RunPod pod, **1× A100 80GB or H100 80GB**. The 80GB SKU is required — a 40GB A100 cannot hold Gemma3-27B in bf16 (~54GB of weights).
 

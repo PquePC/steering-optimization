@@ -1,7 +1,7 @@
 # Pipeline v1 — Implementation Plan
 
 **Scope:** Milestone M1 of *Project A Final Draft*. Nothing beyond M1 is built here.
-**Working folder:** `Z:\Projects\TAIS Projects\Emergent Introspection\Steering Optimization\`
+**Working folder:** `Z:\Projects\TAIS Projects\steering-optimization\`
 **Upstream:** `introspection-mechanisms/` (fresh clone of `github.com/safety-research/introspection-mechanisms`)
 **Runtime:** Jupyter notebook on a RunPod pod.
 

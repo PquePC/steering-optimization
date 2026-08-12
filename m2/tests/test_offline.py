@@ -1,6 +1,6 @@
 """Offline invariants for the m2 pipeline.
 
-Run:  pytest "Steering Optimization/m2/tests/test_offline.py" -q
+Run:  pytest m2/tests/test_offline.py -q
 
 These are not coverage tests. Each one pins a specific way the v1 measurement lab produced a
 plausible wrong number, or a specific sentence of the specification that the code could satisfy

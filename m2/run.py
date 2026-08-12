@@ -4,7 +4,7 @@
 
 Unattended, on a pod:
 
-    cd "/workspace/Emergent-Introspection/Steering Optimization"
+    cd "/workspace/steering-optimization"
     nohup python -m m2.run --concepts Irony,Silk,Pillows > /workspace/m2.out 2>&1 &
     tail -f /workspace/m2.out
 
@@ -36,7 +36,7 @@ import traceback
 from pathlib import Path
 from typing import Any, Sequence
 
-# Running as `python -m m2.run` from the "Steering Optimization" directory already puts that
+# Running as `python -m m2.run` from the repository root already puts that
 # directory on sys.path. Running the file by path does not, so make it work either way -
 # bug 15's lesson: sys.path is per-process and a caller who does the reasonable thing should
 # not have to know that.

@@ -84,7 +84,7 @@ def ensure_repo_path(verbose: bool = False) -> tuple[Path, list[str]]:
     work_dir = os.environ.get("WORK_DIR")
     if work_dir:
         candidates.append(Path(work_dir) / "introspection-mechanisms")
-    here = Path(__file__).resolve().parent            # .../Steering Optimization/m2
+    here = Path(__file__).resolve().parent            # .../steering-optimization/m2
     candidates += [
         Path("/workspace/introspection-mechanisms"),          # quickstart / setup_pod.sh
         Path("/workspace/steering-opt/introspection-mechanisms"),   # v1 WORK_DIR default

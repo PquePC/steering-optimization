@@ -2,7 +2,7 @@
 # =====================================================================================
 # M2 - one-shot pod setup. Idempotent: safe to re-run after a pod restart.
 #
-#   bash "/workspace/Emergent-Introspection/Steering Optimization/m2/setup_pod.sh"
+#   bash "/workspace/steering-optimization/m2/setup_pod.sh"
 #
 # Clones the upstream harness, installs dependencies, and runs the offline tests. Does not
 # touch credentials and does not load the model - see QUICKSTART.md steps 4 and 5.
@@ -14,13 +14,13 @@
 # =====================================================================================
 set -euo pipefail
 
-REPO_DIR="${REPO_DIR:-/workspace/Emergent-Introspection}"
+REPO_DIR="${REPO_DIR:-/workspace/steering-optimization}"
 HARNESS_DIR="${HARNESS_DIR:-/workspace/introspection-mechanisms}"
 # The upstream harness. Taken from the v1 notebook's Setup 2 and from the working clone's
 # own remote - NOT guessed from the author's username, which is a different account and
 # gives a GitHub auth prompt rather than an honest 404.
 HARNESS_URL="https://github.com/safety-research/introspection-mechanisms"
-PROJECT_DIR="$REPO_DIR/Steering Optimization"
+PROJECT_DIR="$REPO_DIR"   # the repo root IS the project root since the split
 
 say() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 die() { printf '\n\033[31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
@@ -35,11 +35,11 @@ say "M2 pod setup"
 [ -d "$REPO_DIR" ] || die "$REPO_DIR not found. Clone this repository first:
 
   GH=YOUR_GITHUB_TOKEN
-  git clone https://x-access-token:\$GH@github.com/PquePC/Emergent-Introspection.git $REPO_DIR
-  git -C $REPO_DIR checkout M2"
+  git clone https://x-access-token:\$GH@github.com/PquePC/steering-optimization.git $REPO_DIR
+"
 
-[ -d "$PROJECT_DIR/m2" ] || die "$PROJECT_DIR/m2 not found. Are you on the M2 branch?
-  git -C $REPO_DIR checkout M2"
+[ -d "$PROJECT_DIR/m2" ] || die "$PROJECT_DIR/m2 not found. Is the clone complete?
+"
 
 # ---- 1. HF cache on the volume ------------------------------------------------------
 # The single most expensive mistake available here: the default cache is on container disk,

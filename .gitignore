@@ -1,0 +1,50 @@
+# The parent repo's .gitignore lived at ITS root, so none of it came with the split. These
+# rules are not housekeeping: without them a `git add -A` on a pod commits concept vectors and
+# raw generations into a PUBLIC repo. See CLAUDE.md hard rule 3.
+
+# Private working documents — local only, never pushed
+private/
+
+# Private, author-specific Claude instructions (auto-loaded locally, never shipped)
+CLAUDE.local.md
+
+# Upstream harness and third-party repos — cloned locally, each tracked in its own repo,
+# never vendored into ours
+introspection-mechanisms/
+external/
+
+# EXPERIMENT ARTIFACTS — the dual-use ones. Vectors are reusable attack artifacts and
+# generations are what a steered model actually said; both regenerate from a published config
+# in minutes, so regeneration is the backup and there is no reason to commit either.
+vectors/
+activations/
+results/
+outputs/
+checkpoints/
+cache/
+m2_runs/
+*.pt
+*.safetensors
+*.npy
+*.npz
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.ipynb_checkpoints/
+.pytest_cache/
+
+# Logs
+*.log
+wandb/
+
+# Secrets
+.env
+*.key
+
+# OS
+.DS_Store
+Thumbs.db
