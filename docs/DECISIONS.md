@@ -337,6 +337,25 @@ shakedown and still precede the real run.
 
 **Result:** `63cdc35`, task 05 complete; next action is the Garlic shakedown from task 11.
 
+## 2026-08-12 — Patch only documented open defects with settled fixes
+**By:** PquePC (scope), Sol (execution)
+**Kind:** scope decision + partial task completion
+
+The operator limited this session to open bugs whose solutions were already stated in the
+documentation. That authorised Task 09 items 1 and 2 and excluded feature work, diagnostic-only
+work, proposal-first work and static sweeps: Tasks 06, 08, 10, 13 and 15 were not touched.
+
+Task 09 items 1 and 2 landed in `928e8eb`: RunPod free space is now computed from the network
+volume's allocated size rather than its shared backing pool, with a test that forces the guard to
+block; and `m2.run` now detects an archive without a loose resume folder and prints the exact
+extract-and-preserve command before model loading.
+
+Task 09 is not marked DONE. Item 3 explicitly requires measured CONFIRM and CONTROLS timings from
+a complete run, and the documentation still records both as never reached. Replacing those priors
+now would turn one unmeasured guess into another.
+
+**Result:** `928e8eb`, Task 09 items 1-2 complete; 99 tests passed, 2 environment-dependent skips.
+
 ## 2026-08-12 — Shakedown run: CAL complete, all gates passed
 **By:** PquePC (ran it), Opus (read it)
 **Kind:** phase complete

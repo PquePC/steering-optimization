@@ -1098,3 +1098,54 @@ exception or an obviously impossible number.
 
 **Follow-up.** The new `config_hash` from task 01 forces the next run into a fresh folder, so CAL
 will re-measure `cap_base`, the denominator of every `s3`. Task 14 remains deferred.
+
+### 2026-08-12 — RunPod free space and archive-only resume guards made actionable
+
+#### Task 09 item 1 — the free-space guard read the storage pool, not the allocation
+
+**Symptom.** `m2.setup` reported 500814 GB free on a 150 GB RunPod network volume. The
+under-20-GB check therefore could not fail, even after a duplicated 102 GB model cache left only
+about 48 GB of the purchased allocation available.
+
+**Root cause.** `shutil.disk_usage("/workspace")` reads `statvfs` for the distributed filesystem
+behind a RunPod network volume. That filesystem reports the shared backing pool; the pod's own
+allocation is control-plane metadata, not a mount property.
+
+**Why nothing caught it.** The only test exercised an ordinary local filesystem, where
+`shutil.disk_usage` is correct. No counterexample supplied a small allocation beside a huge
+backing-pool free count, so the guard read as evidence without ever demonstrating that it could
+block.
+
+**Fix.** `m2.setup` now uses RunPod's provided `RUNPOD_VOLUME_ID` and pod-scoped
+`RUNPOD_API_KEY` to read the allocation from the network-volume API, subtracts allocated regular
+file blocks under `/workspace`, and refuses to fall back to the backing-pool count when allocation
+metadata is unavailable. Local non-RunPod filesystems retain the normal `disk_usage` path.
+
+**Test.** A synthetic 10 GB allocation with 9 GB used and a fake 500814 GB filesystem free count
+must report 1 GB free and `BLOCK`. Before the fix it reported the fake pool and passed.
+
+#### Task 09 item 2 — an archive silently prevented row-level resume
+
+**Symptom.** A completed concept archive with its loose folder wiped made the next `m2.run`
+silently skip that concept. The operator was told runs resume row by row, but no output explained
+that the archive itself is the skip marker or how to restore its rows.
+
+**Root cause.** The archive is deliberately both the retained copy and completion marker. Resume
+logic was documented at the row level, while the earlier archive-exists guard short-circuited the
+whole concept before any row reader ran.
+
+**Why nothing caught it.** Tests protected the archive-before-wipe order and the archive skip
+itself, but never constructed the specific state `archive exists && loose folder absent`.
+
+**Fix.** Before model loading, `m2.run` detects that state and prints an exact reversible command:
+extract the zip into the deterministic run folder, then rename the archive to `.zip.restored` so
+it remains preserved without continuing to act as the completion marker.
+
+**Test.** The offline suite creates an archive without its folder, requires the extraction and
+marker-rename command in stdout, and separately proves the check is wired into the real CLI path.
+
+**Result.** `928e8eb`. Offline suite: 99 passed, 2 environment-dependent skips.
+
+**Follow-up.** Task 09 remains open only for item 3. CONFIRM and CONTROLS priors cannot be changed
+until a complete run supplies measured seconds per single phase unit; guessing replacements would
+repeat the defect.
