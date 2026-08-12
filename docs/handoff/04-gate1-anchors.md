@@ -1,7 +1,6 @@
 # 04 — Gate 1 anchors from this run, and make it an instrument gate
 
-**Status:** DECIDED. Implement as written. Needs ~24 hand labels from the operator, once.
-**Blocking:** yes.
+**Status: BUILD NOW.** Implement as written. Blocking. Needs ~24 hand labels from the operator, **once per judge configuration** — not per concept.
 
 ## Goal
 

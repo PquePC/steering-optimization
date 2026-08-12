@@ -1,7 +1,6 @@
 # 08 — `--debug-bundle`: a full-fidelity export for audit
 
-**Status:** DECIDED, with a hard constraint on scope. Implement as written.
-**Blocking:** no.
+**Status: BUILD NOW.** Implement as written, including the structural refusal for non-benign concepts. Not blocking.
 
 ## Goal
 

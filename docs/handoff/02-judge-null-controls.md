@@ -1,8 +1,6 @@
 # 02 — A judge null control per judged measure
 
-**Status:** DECIDED in principle. The thresholds are a design call — propose them, do not invent
-them silently.
-**Blocking:** yes.
+**Status: BUILD NOW — PROPOSE FIRST.** The three thresholds and the abort-versus-degrade behaviour are design calls: propose them before writing code. Blocking.
 
 ## Goal
 

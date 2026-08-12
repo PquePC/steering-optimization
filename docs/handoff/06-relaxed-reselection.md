@@ -1,8 +1,6 @@
 # 06 — Relaxed-threshold re-selection
 
-**Status:** DECIDED. Implement as written.
-**Blocking:** no, but it should exist before the run finishes, because the situation it handles is
-discovered at the end.
+**Status: BUILD NOW.** Implement as written. Not blocking, but it should exist before the run finishes, because the situation it handles is discovered at the end.
 
 ## Goal
 

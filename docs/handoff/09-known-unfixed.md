@@ -1,7 +1,6 @@
 # 09 — Three known-unfixed defects
 
-**Status:** carried over from the first end-to-end run. All three are small.
-**Blocking:** no.
+**Status: BUILD NOW.** Three small carried-over defects. Not blocking; the third item is post-run by nature.
 
 ## 1. `m2.setup`'s free-space check can never fire
 

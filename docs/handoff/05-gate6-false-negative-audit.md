@@ -1,8 +1,6 @@
 # 05 — A tiered shortlist: escalation and false-negative audit
 
-**Status:** DECIDED in shape. The parameter *defaults* are settled; the parameter *names* and the
-tier-ordering refinement are yours to propose.
-**Blocking:** yes.
+**Status: BUILD NOW — PROPOSE FIRST.** The defaults are settled (tier size 3, ordered by `e6`); the parameter *names* and the tier-ordering refinement are yours to propose. Blocking.
 
 ## What Phase 2 does, and its one dangerous failure
 

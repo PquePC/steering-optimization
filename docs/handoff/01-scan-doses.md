@@ -1,7 +1,6 @@
 # 01 — Add a third scan dose
 
-**Status:** DECIDED. Implement as written.
-**Blocking:** yes — this must land before any measurement.
+**Status: BUILD NOW.** Implement as written. **Blocking — must land before any measurement**, because it changes `config_hash`.
 
 ## Goal
 

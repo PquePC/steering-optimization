@@ -1,6 +1,6 @@
 # 07 — The reference cell (DEFERRED)
 
-**Status:** DEFERRED by the operator, 2026-08-12. Do not build it for this run.
+**Status: DEFERRED — DO NOT BUILD.** Set aside by the operator on 2026-08-12. Kept for the reasoning, which survives the deferral.
 
 ## What was proposed
 

@@ -1,7 +1,6 @@
 # 13 — Prefix-token contamination in `e6` and `d3`
 
-**Status:** QUEUED. Diagnostic first, correction only if the diagnostic says it is needed.
-**Blocking:** no — but the diagnostic must run before the scan surface is trusted.
+**Status: DIAGNOSTIC ONLY.** Build and run step 1. **Do not build step 2** until the operator has read what step 1 reports.
 
 ## The problem
 

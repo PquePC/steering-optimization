@@ -1,6 +1,6 @@
 # 11 — The run
 
-**Status:** last. Everything above lands first.
+**Status: RUN.** Everything marked BUILD NOW lands first.
 
 ## Your role during the run
 

@@ -1,7 +1,6 @@
 # 03 — Gate 4 on this run's own damaged cell
 
-**Status:** DECIDED. Implement as written.
-**Blocking:** yes.
+**Status: BUILD NOW.** Implement as written. Blocking. One sub-decision to propose: how far above the bisected boundary the anchor sits.
 
 ## Goal
 

@@ -1,7 +1,6 @@
 # 12 — `s3` scores only uppercase option letters
 
-**Status:** DEFECT, found 2026-08-12 in review. Not yet fixed.
-**Blocking:** yes — it biases a sanity term in a dose-dependent direction.
+**Status: BUILD NOW.** A defect found in review on 2026-08-12, not an improvement. **Blocking** — it biases a sanity term in a dose-dependent direction.
 
 ## The defect
 

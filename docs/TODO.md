@@ -14,7 +14,11 @@ See [`SPECIFICATION.md`](SPECIFICATION.md) or the inventory in
 
 ## Decided 2026-08-12, not yet built
 
-Each of these has a step-by-step task document under [`handoff/`](handoff/).
+Each of these has a step-by-step task document under [`handoff/`](handoff/), and **each task
+document carries a status that says whether it may be built yet** — see
+[`handoff/README.md`](handoff/README.md) for the vocabulary. This table is work; the
+**Suggestions** section below is not, and nothing there gets built without being promoted to a task
+document first.
 
 | # | Decision | Task |
 |---|---|---|
@@ -28,6 +32,7 @@ Each of these has a step-by-step task document under [`handoff/`](handoff/).
 | 8 | A `--debug-bundle` flag that exports everything, including vectors, for benign concepts only | [08](handoff/08-debug-bundle.md) |
 | 9 | **Defect:** `s3` scores only uppercase option letters, so a degraded model answering `c` is counted wrong — a dose-dependent bias in a sanity term | [12](handoff/12-mmlu-letter-surface-forms.md) |
 | 10 | The `prefix_only` contamination in `e6` / `d3` gets a diagnostic before the scan surface is trusted, and a two-token lookahead only if the diagnostic warrants it | [13](handoff/13-prefix-token-contamination.md) |
+| 11 | R5's norm band is a property of Gemma3-27B and does not port. It is scoped to that model and skips elsewhere; what it was really testing — that extraction produced a working direction — is re-derived from the dimensionless `‖v‖/‖h‖` ratio and from behaviour (R14, the §9.3 ladder) | [15](handoff/15-r5-portability.md) |
 
 ---
 
@@ -72,7 +77,11 @@ written to `rig_status.json` in the schema `r4_rig_check` already reads. Roughly
 
 ---
 
-## Suggestions — not yet scheduled
+## Suggestions — NOT SCHEDULED, DO NOT BUILD
+
+Ideas kept so they are not lost. **None of these is authorisation to implement anything.** To build
+one, it gets promoted to a task document under [`handoff/`](handoff/) with a `BUILD NOW` status
+first.
 
 ### A. More scan doses
 Rejected alternatives to decision 1, kept because they are the natural next moves:

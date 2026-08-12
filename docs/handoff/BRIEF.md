@@ -99,10 +99,17 @@ but "does this run's validity depend on it, and can this run supply it".
 
 ## 6. Order of work
 
-Tasks [01](01-scan-doses.md) through [08](08-debug-bundle.md), then [09](09-known-unfixed.md) and
-[10](10-unexecuted-path-sweep.md), then the run in [11](11-the-run.md). Task 01 must land before
-any measurement — it changes `config_hash`, which changes the run folder, which orphans every row
-already measured.
+**Read [`README.md`](README.md)'s status vocabulary before starting anything.** Implement nothing
+whose status does not begin with `BUILD NOW`; several tasks in the folder are deliberately captured
+ideas rather than work, and building them early costs review time and muddies the run.
+
+Blocking, in order: [01](01-scan-doses.md) (must land before any measurement — it changes
+`config_hash`), then [12](12-mmlu-letter-surface-forms.md), [02](02-judge-null-controls.md),
+[03](03-gate4-reanchor.md), [04](04-gate1-anchors.md), [05](05-gate6-false-negative-audit.md),
+[10](10-unexecuted-path-sweep.md). Then the non-blocking build tasks
+[06](06-relaxed-reselection.md), [08](08-debug-bundle.md), [09](09-known-unfixed.md),
+[13](13-prefix-token-contamination.md) step 1, [15](15-r5-portability.md). Then the run,
+[11](11-the-run.md).
 
 ## 7. What to report
 
@@ -133,4 +140,5 @@ operator can stop a run that is measuring the wrong thing, but not after it fini
 | Date | Change |
 |---|---|
 | 2026-08-12 | Created. Scan doses decided; gates 1/4/6 rebuilt for self-sufficiency; R4 set aside; judge null controls, relaxed re-selection, reference cell and debug bundle added as tasks. |
+| 2026-08-12 | Status vocabulary added to [`README.md`](README.md): nothing is built unless its status begins with `BUILD NOW`. R5 scoped to Gemma3-27B and its real job re-derived portably (15). Judge bake-off on stored transcripts queued for after the run (16). |
 | 2026-08-12 | Reference cell (07) **deferred** — comparison against Macar is not this run's framing. Gate 6 (05) generalised into a **tiered shortlist**: tier 1 always runs as the audit, further tiers escalate only when no window is found, every knob parametrized with an exhaustive mode. Two new items from review: `s3` scores only uppercase option letters (12, a defect), and `prefix_only` token contamination in `e6`/`d3` needs a diagnostic (13). `s3` verification by generation queued as a future addition (14). |

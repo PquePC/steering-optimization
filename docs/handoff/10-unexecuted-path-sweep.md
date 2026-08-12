@@ -1,7 +1,6 @@
 # 10 — Sweep the four phases that have never executed
 
-**Status:** required before spending GPU time.
-**Blocking:** yes.
+**Status: BUILD NOW.** Required before any GPU time is spent. Blocking.
 
 ## The situation
 

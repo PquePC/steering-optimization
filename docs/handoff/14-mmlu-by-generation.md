@@ -1,6 +1,6 @@
 # 14 — Verify `s3` by single-token generation at the chosen cell
 
-**Status:** FUTURE ADDITION. Not for this run.
+**Status: FUTURE — DO NOT BUILD.** Recorded so the idea is not lost. Not for this run.
 
 ## The idea
 
