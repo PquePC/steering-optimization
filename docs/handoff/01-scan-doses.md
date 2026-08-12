@@ -1,6 +1,6 @@
 # 01 — Add a third scan dose
 
-**Status: BUILD NOW.** Implement as written. **Blocking — must land before any measurement**, because it changes `config_hash`.
+**Status: DONE — `8d0d230`.** The third scan dose and 147-unit opening ETA landed together.
 
 ## Goal
 

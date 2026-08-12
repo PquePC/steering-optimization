@@ -1,6 +1,6 @@
 # 12 — `s3` scores only uppercase option letters
 
-**Status: BUILD NOW.** A defect found in review on 2026-08-12, not an improvement. **Blocking** — it biases a sanity term in a dose-dependent direction.
+**Status: DONE — `8d0d230`.** Lowercase forms, readable collision guard, and tripping tests landed.
 
 ## The defect
 

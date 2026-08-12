@@ -95,3 +95,23 @@ bake-off on stored transcripts is queued for after the run.
 architecture fails it. Judges are about a quarter of run cost, so the question is not "cheapest"
 but "cheapest that is demonstrably as good", and that has to be measured.
 **Result:** `eb8c26e`, tasks 15 and 16.
+
+## 2026-08-12 — Third scan dose added
+**By:** PquePC (decision), Sol (execution)
+**Kind:** task complete
+
+`SCAN_DOSES` is now `(0.15, 0.30, 0.60)`, and the opening SCAN prior counts 147
+`(layer, dose)` units. At the measured 13 seconds per cell, the added 49-cell pass costs about
+637 seconds (10.6 minutes) per concept.
+
+**Result:** `8d0d230`, task 01.
+
+## 2026-08-12 — Lowercase MMLU option surfaces counted by `s3`
+**By:** Sol
+**Kind:** task complete
+
+`s3` now scores bare and space-prefixed uppercase and lowercase option letters using max, not sum,
+across forms. A synthetic lowercase-answer test and a readable collision-guard test both trip the
+previous defect; the next fresh CAL will re-measure `cap_base`.
+
+**Result:** `8d0d230`, task 12; post-mortem in `DEBUG-LOG.md`.
