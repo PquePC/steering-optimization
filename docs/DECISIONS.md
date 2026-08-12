@@ -192,3 +192,33 @@ certainty; conceptually, observing zero events narrows the plausible rate but do
 true rate is exactly zero.
 
 **Result:** `4b1e66a`, tasks 02 and 17. Offline suite: 80 passed, 2 environment-dependent skips.
+
+## 2026-08-12 — Tasks 02 and 17 landed; gate 4's anchor settled and its criterion corrected
+**By:** Sol (implementation and proposal), PquePC (decision), Opus (review)
+**Kind:** task complete + decision
+
+Tasks [02](handoff/02-judge-null-controls.md) and [17](handoff/17-wilson-intervals.md) are
+implemented (`4b1e66a`), 80 tests passing, no measurements run. Spot-checked on review: Wilson
+gives `0/25 → [0.000, 0.133]` and `25/25 → [0.867, 1.000]`, non-degenerate at both ends, and
+`D2_NULL_REFERENCE` appears nowhere in `gates.py`, so the `d2` null genuinely reports rather than
+gates.
+
+Task 03: Sol's anchor **location** is accepted — `hi`, the failing endpoint of the converged
+bisection interval. Its proposed **criterion** is rejected and replaced.
+
+**Why:** `_cheap_sane` is `s3 >= S4_MIN`, so `hi` is *defined* as a dose where `s3 < S4_MIN`, and
+`s4 = min(s1, s2, s3) ≤ s3`. A gate whose pass condition is `s4 < S4_MIN` at that anchor therefore
+holds by arithmetic on every model and every concept — a check that cannot fail, landing inside the
+gate whose job is to stop a false-positive result. Gate 4's real content is a property of the
+**aggregation rule**: v1's merged metric passed the destroyed Velocity cell at 0.779 because a mean
+can be dragged up by the terms that are fine, and a `min` cannot. So the criterion becomes: the
+three terms must **disagree** at the anchor, and the gate reports what a mean would have said
+beside what `min` said. `hi` is the ideal location for exactly that reason — being marginal, it is
+where `s3` has just crossed while `s1` and `s2` are most likely still fine.
+
+Also settled: if the winning layer never reaches a boundary, fall back to any other bisected
+candidate that did before skipping, because the aggregation rule is not layer-specific; skip rather
+than fail when none has one, and report "sanity held at every reachable dose across the shortlist"
+as a finding rather than an absence.
+
+**Result:** task [03](handoff/03-gate4-reanchor.md), *Decided*.
