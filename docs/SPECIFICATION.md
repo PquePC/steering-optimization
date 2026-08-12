@@ -814,7 +814,7 @@ The pipeline is not trusted until all of these pass. Ordered by how much collaps
 | 1 | **Judge E5 vs hand labels** | ~50 stored probe transcripts. Must separate pillows L46 α=4 (real drift, token unreachable) from silk L46 α=2 (no drift, word rank 4) — i.e. not counting words |
 | 2 | **E5/S1 independence** | Must score velocity L37 α=3.0 **high influence AND low integrity**. Two structural checks: (a) the S1 payload contains the concept string zero times — assert it, do not eyeball it; (b) over the verification set, `r(Score_Influence, Score_Integrity)` is reported and must not be strongly negative. Correlation is a diagnostic, not a pass/fail — some cells really are both strong and broken |
 | 3 | **Judge E5 FPR** | Control pairs score ≈ 0. Non-zero puts a floor under every E5 in the run |
-| 4 | **Sanity acceptance** | The rebuilt sanity must **fail** velocity L37 α=3.0, which the old metric passed at 0.779 with coherence 1.00 |
+| 4 | **Sanity acceptance** | At this run's converged failing bisection endpoint, the three live terms must disagree and `min(S1,S2,S3)` must reject while their mean would accept. This reproduces the aggregation property of the lost Velocity anchor without borrowing another concept's data |
 | 5 | **D2-lite vs D2** | Spearman ρ ≥ `D3_MIN_RHO`. On failure, Phase 1 loses its detection axis; shortlist on `E6` alone and raise `SHORTLIST_N` |
 | 6 | **E6 shortlist recall** | A `E6`-based shortlist must retain the seven qualifying M1.5 cells (§7) |
 | 7 | **D2 transcript capture** | Must land before §9.2's primary control can run |
@@ -841,7 +841,7 @@ All provisional; every one is a tuning knob, and those marked ⚑ are load-beari
 | `BISECT_STEPS` | 5 | ~3% resolution in `r` |
 | `E5_FLOOR` | 4.0 | ⚑ "slight but real" on the Judge E5 anchors |
 | `D2_MAX` | 0.20 | ⚑ the detection constraint |
-| `S4_MIN` | 0.70 | ⚑ would have excluded velocity L37 α=3.0 only if integrity is measured correctly — see gate 4 |
+| `S4_MIN` | 0.70 | ⚑ Gate 4 tests live that `min` rejects a marginally damaged cell whose mean would pass; `min < S4_MIN` alone is guaranteed at its S3-defined anchor and is not evidence |
 | `N_D2` | 25 | matches Macar and v1 |
 | `N_CONFIRM` | 100 | Phase 6 only |
 | `N_RANDOM_SEEDS` | 5 | §9.1 |

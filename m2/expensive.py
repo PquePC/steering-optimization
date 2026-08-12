@@ -8,6 +8,7 @@ whole scan: spec section 5 splits the pipeline into a cheap tier (forward passes
   generate_unsteered   the same, unsteered - NOT `mw.generate_batch`             (see below)
   measure_E5           spec 5.6 - Judge E5 against the cached unsteered reference A
   measure_S1           spec 5.7 - Judge S1 on the SAME responses, concept withheld
+  measure_sanity_anchor Gate 4 - live S1/S2/S3 without unrelated E5 or D2 calls
   measure_D2           spec 5.9 - N_D2 forced-ID generations, Judge D2, D4 distribution
   judge_fpr            E5 null on every open prompt, once per concept
   judge_s1_null        S1 null on unsteered/unsteered pairs, checked against objective S2
@@ -65,6 +66,7 @@ __all__ = [
     "generate_steered",
     "measure_E5",
     "measure_S1",
+    "measure_sanity_anchor",
     "measure_D2",
     "judge_fpr",
     "judge_s1_null",
@@ -951,7 +953,8 @@ def measure_E5(layer: int, alpha: float, *, prompt_set: Sequence[dict] | None = 
 
 
 def _write_cis(prompt_rows: Sequence[dict], responses: Sequence[str], *, layer: int,
-               alpha: float, r: float, phase: str, vec_fp: str) -> None:
+               alpha: float, r: float, phase: str, vec_fp: str,
+               measure: str = "E5") -> None:
     """Append every steered task-prompt generation to `cis_transcripts.jsonl`.
 
     Written immediately after generation and BEFORE any judge call, so a judge outage does
@@ -962,7 +965,7 @@ def _write_cis(prompt_rows: Sequence[dict], responses: Sequence[str], *, layer: 
     """
     for row, response in zip(prompt_rows, responses):
         _append_row(CIS_FILE, dict(
-            measure="E5", phase=phase, layer=layer, alpha=alpha, r=r,
+            measure=str(measure), phase=phase, layer=layer, alpha=alpha, r=r,
             prompt_id=str(row["id"]), kind=str(row["kind"]), prompt=str(row["text"]),
             response=str(response), vec_fingerprint=vec_fp,
         ))
@@ -1322,6 +1325,45 @@ def measure_D2(layer: int, alpha: float, n: int, *, phase: str | None = None,
                vec_fingerprint=vec_fp, responses=responses, trials=trials)
     out.update(_d2_null_fields())
     return out
+
+
+def measure_sanity_anchor(layer: int, r: float, *, phase: str = "GATE4") -> dict:
+    """Measure all three S4 terms live at one Gate 4 anchor.
+
+    This deliberately does not call :func:`verify_cell`: Gate 4 is testing the sanity
+    aggregation rule, so paying for Judge E5 and N_D2 forced-identification calls would add
+    unrelated measurements without strengthening the gate. The generated task responses are
+    nevertheless persisted through the ordinary CIS path before Judge S1 runs, preserving the
+    same audit and outage guarantees as a verified cell.
+    """
+    layer = int(layer)
+    r = float(r)
+    alpha = float(config.alpha_for(layer, r))
+    rows = list(prompt_assets.E5_PROMPTS)
+    task_prompts, starts, _ids = task_batch(rows)
+    vector, dose, vec_fp = _resolve_vector(layer, alpha, None, r)
+    responses = generate_steered(
+        task_prompts, layer, alpha,
+        int(_cfg("MAX_NEW_TOKENS")), float(_cfg("TEMPERATURE")),
+        start_positions=starts, vec=vector)
+    _write_cis(rows, responses, layer=layer, alpha=alpha, r=dose,
+               phase=str(phase), vec_fp=vec_fp, measure="GATE4_SANITY")
+
+    s1 = measure_S1(layer, alpha, responses, prompt_set=rows, phase=phase, r=r)
+    s2 = cheap.measure_S2(responses)
+    s3 = cheap.measure_S3(layer, alpha)
+    terms = {"s1": float(s1["s1"]), "s2": float(s2["s2"]), "s3": float(s3["s3"])}
+    return dict(
+        phase=str(phase), layer=layer, r=dose, alpha=alpha,
+        vec_fingerprint=vec_fp, terms=terms,
+        s1=terms["s1"], s1_se=s1["s1_se"], s1_n=s1["s1_n"],
+        s2=terms["s2"], s2_count=s2["s2_count"], s2_n=s2["s2_n"],
+        s2_ci_low=s2["s2_ci_low"], s2_ci_high=s2["s2_ci_high"],
+        s3=terms["s3"], s3_correct=s3["s3_correct"], s3_n=s3["s3_n"],
+        s3_acc=s3["s3_acc"], s3_acc_ci_low=s3["s3_acc_ci_low"],
+        s3_acc_ci_high=s3["s3_acc_ci_high"],
+        responses=responses,
+    )
 
 
 # =====================================================================================

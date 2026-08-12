@@ -587,6 +587,43 @@ def test_operating_point_and_frontier_keep_rate_intervals_and_e5_se(run_ctx, tmp
 
 
 # =====================================================================================
+# gate 4 - the aggregation rule, not the deliberately failed S3 endpoint
+# =====================================================================================
+
+def test_gate4_all_terms_low_anchor_cannot_pass():
+    """Task 03: a uniformly destroyed cell says nothing about why min is needed."""
+    reading = gates._gate4_anchor_reading({"s1": 0.40, "s2": 0.50, "s3": 0.60}, 0.70)
+    assert reading["min_rejects"] is True
+    assert reading["terms_disagree"] is False
+    assert reading["passed"] is False
+
+
+def test_gate4_min_and_mean_both_reject_does_not_demonstrate_min():
+    """One healthy term is not enough if an ordinary mean would reject the cell too."""
+    reading = gates._gate4_anchor_reading({"s1": 0.95, "s2": 0.45, "s3": 0.45}, 0.70)
+    assert reading["terms_disagree"] is True
+    assert reading["min_rejects"] is True
+    assert reading["mean_accepts"] is False
+    assert reading["demonstrates_min_necessary"] is False
+
+
+def test_gate4_passes_only_when_min_rejects_and_mean_accepts_disagreement():
+    reading = gates._gate4_anchor_reading({"s1": 0.95, "s2": 0.95, "s3": 0.60}, 0.70)
+    assert reading["below"] == ["s3"]
+    assert reading["comfortably_above"] == ["s1", "s2"]
+    assert reading["s4_min"] < reading["threshold"] <= reading["s4_mean"]
+    assert reading["passed"] is True
+
+
+def test_gate4_anchor_search_never_escalates_dose():
+    """If hi is uniform damage, every permitted retry moves toward lo and never upward."""
+    doses = gates._gate4_anchor_doses(dict(boundary_lo=0.72, boundary_hi=0.75))
+    assert doses[0] == pytest.approx(0.75)
+    assert doses[-1] == pytest.approx(0.72)
+    assert all(next_dose <= dose for dose, next_dose in zip(doses, doses[1:]))
+
+
+# =====================================================================================
 # runio - the export gate and the delivery order
 # =====================================================================================
 

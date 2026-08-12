@@ -1251,6 +1251,8 @@ def phase3_bisect(candidates: Sequence[dict], *,
             # highest reachable dose that was measured sane; there is no boundary to refine.
             chosen = lo_sane
             step = max(chosen * DOSE_STEP_FRAC, BISECT_MIN_R)
+            boundary_lo = None
+            boundary_hi = None
             boundary = "not reached: sanity held at every reachable dose"
         else:
             lo, hi = lo_sane, hi_insane
@@ -1275,6 +1277,8 @@ def phase3_bisect(candidates: Sequence[dict], *,
                     hi = mid
             chosen = lo
             step = hi - lo
+            boundary_lo = lo
+            boundary_hi = hi
             boundary = f"sane up to r={lo:.4f}, first failure at r={hi:.4f}"
 
         chosen = max(float(chosen), BISECT_MIN_R)
@@ -1289,6 +1293,9 @@ def phase3_bisect(candidates: Sequence[dict], *,
         row = dict(
             phase=PHASE3, layer=layer, r=chosen, r_below=r_below, r_above=r_above,
             step=step, bracket_lo=lo_sane, bracket_hi=hi_insane,
+            # The converged endpoints, distinct from the initial bracket above. Gate 4's
+            # run-local anchor is boundary_hi: the nearest dose known to fail cheap S3.
+            boundary_lo=boundary_lo, boundary_hi=boundary_hi,
             r_clears_floor=r_clears_floor, has_window=has_window, boundary=boundary,
             e6_floor=floor, s4_min=s4_min, bisect_steps=steps,
             n_evaluations=len(history), history=history,

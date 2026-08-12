@@ -197,6 +197,7 @@ M2's own judges — bug 17 lived in that patch, and the M2 prompts are ours, not
 def generate_steered(prompts, layer, alpha, max_new_tokens, temperature) -> list[str]
 def measure_E5(layer, alpha) -> dict       # e5, e5_min, e5_se + writes judge_e5.jsonl, cis_transcripts
 def measure_S1(layer, alpha, responses) -> dict   # s1 + writes judge_s1.jsonl
+def measure_sanity_anchor(layer, r) -> dict # Gate 4 live S1+S2+S3; no unrelated E5/D2 calls
 def measure_D2(layer, alpha, n) -> dict    # d2, d2_se, n, d4 dist + writes D2_transcripts, judge_d2
 def judge_fpr() -> float                   # §5.8 control pairs, once per concept
 def verify_cell(layer, r) -> dict          # one verified.jsonl row: E5+S1+S2+S3+S4+D2+D4

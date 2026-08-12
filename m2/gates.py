@@ -838,37 +838,92 @@ def gate3_judge_e5_fpr(*, allow_judge_calls: bool = True) -> dict:
 
 
 # =====================================================================================
-# GATE 4 -- the rebuilt sanity must reject velocity L37 alpha=3.0
+# GATE 4 -- the min aggregation must reject a marginal live cell a mean accepts
 # =====================================================================================
 
-def gate4_sanity_acceptance(*, allow_judge_calls: bool = True) -> dict:
-    """Spec 10 gate 4. `S4 = min(S1, S2, S3)` must FAIL the cell the old metric passed.
+def _gate4_anchor_reading(terms: dict[str, float], floor: float) -> dict:
+    """Pure verdict for one live Gate 4 anchor.
 
-    Velocity L37 alpha=3.0 read 0.779 with coherence 1.00 under v1's merged score while the
-    model was lobotomised -- and D2 fell 0.44 -> 0.00 across that step, which is exactly the
-    covert-looking result that is really damage. If the rebuilt sanity cannot reject it,
-    S4_MIN protects nothing.
-
-    **What is checkable from a stored transcript, and what is not.** S2 is pure text and can
-    be recomputed exactly. S1 needs Judge S1 over the stored responses, which is one judge
-    call per response and is done when judge calls are allowed. S3 needs the live model at
-    that cell and cannot be recovered from a transcript at all.
-
-    That asymmetry is handled in the only sound direction: `min` over a SUBSET of the terms
-    is an UPPER BOUND on the true S4, so a subset that already falls below `S4_MIN` proves
-    the full S4 does too and the gate passes. A subset that stays above `S4_MIN` proves
-    nothing -- the missing S3 could still drag it under -- so the gate FAILS with that said
-    explicitly rather than reporting a pass it has not earned.
+    `min < floor` is not evidence at the bisection's failing endpoint; it follows from S3 by
+    construction. Evidence is a disagreement where the mean hides one failed term. The
+    comfort line is one third of the remaining 0-1 headroom above S4_MIN, making the phrase
+    "comfortably above" explicit and config-relative rather than a hidden absolute knob.
     """
-    name = "gate 4 sanity rejects the lobotomised cell"
+    named = {str(k).lower(): float(v) for k, v in terms.items()}
+    if set(named) != {"s1", "s2", "s3"}:
+        raise ValueError(f"Gate 4 needs exactly S1, S2 and S3, got {sorted(named)}")
+    if not all(math.isfinite(v) for v in named.values()):
+        raise ValueError(f"Gate 4 sanity terms must be finite, got {named}")
+    floor = float(floor)
+    comfort = floor + (1.0 - floor) / 3.0
+    minimum = min(named.values())
+    mean = sum(named.values()) / len(named)
+    below = sorted(k for k, v in named.items() if v < floor)
+    comfortably_above = sorted(k for k, v in named.items() if v >= comfort)
+    min_rejects = minimum < floor
+    terms_disagree = bool(below and comfortably_above)
+    mean_accepts = mean >= floor
+    passed = bool(min_rejects and terms_disagree and mean_accepts)
+    return dict(
+        terms=named, s4_min=minimum, s4_mean=mean, threshold=floor,
+        comfort_threshold=comfort, below=below, comfortably_above=comfortably_above,
+        min_rejects=min_rejects, terms_disagree=terms_disagree,
+        all_terms_low=bool(all(v < comfort for v in named.values())),
+        mean_accepts=mean_accepts, demonstrates_min_necessary=passed, passed=passed,
+    )
+
+
+def _gate4_anchor_doses(boundary: dict) -> list[float]:
+    """The fixed, monotonically downward Gate 4 dose sequence within final [lo, hi]."""
+    hi = boundary.get("boundary_hi")
+    lo = boundary.get("boundary_lo")
+    # Compatibility with rows written immediately before explicit final endpoints existed.
+    if hi is None and boundary.get("bracket_hi") is not None:
+        hi = boundary.get("r_above")
+    if lo is None and hi is not None:
+        lo = boundary.get("r")
+    if hi is None or lo is None:
+        return []
+    hi, lo = float(hi), float(lo)
+    if hi <= lo:
+        raise ValueError(f"Gate 4 boundary endpoints are not ordered: lo={lo}, hi={hi}")
+    doses = [hi, 0.5 * (hi + lo), lo]
+    out: list[float] = []
+    for dose in doses:
+        if not out or not math.isclose(dose, out[-1], rel_tol=0.0, abs_tol=1e-12):
+            out.append(dose)
+    if any(b > a for a, b in zip(out, out[1:])):
+        raise AssertionError(f"Gate 4 dose search escalates instead of stepping down: {out}")
+    return out
+
+
+def _gate4_boundary_rows() -> tuple[list[dict], int | None, int]:
+    """Bisected boundary rows, preferring the selected winner's layer when one exists."""
+    path = _run_file("bisect.jsonl")
+    all_rows = [] if path is None else _read_jsonl(path)
+    rows = [row for row in all_rows if _gate4_anchor_doses(row)]
+    winner_layer = None
+    verified = _run_file("verified.jsonl")
+    if verified is not None:
+        selection = _mod("phases").select_operating_point(_read_jsonl(verified))
+        winner = selection.get("winner") if selection.get("found") else None
+        if isinstance(winner, dict):
+            winner_layer = int(winner["layer"])
+    rows.sort(key=lambda row: (int(row["layer"]) != winner_layer
+                               if winner_layer is not None else False,
+                               int(row["layer"])))
+    return rows, winner_layer, len(all_rows)
+
+
+def _gate4_m15_fallback(name: str, *, allow_judge_calls: bool, finding: str) -> dict:
+    """Historical diagnostic only; missing live S3 means it can never pass Gate 4."""
     concept, layer, alpha = ANCHOR_BROKEN_CELL
     label = _cell_label(ANCHOR_BROKEN_CELL)
 
     responses, source = _m15_responses_for(concept, layer, alpha)
     if not responses:
-        reason = (f"no stored M1.5 responses for {label}. Wanted "
-                  f"{M15_D2_TRANSCRIPTS} or {M15_D1_TRANSCRIPTS} under an M1.5 run folder "
-                  f"for concept {concept!r}. " + _missing_artefact_reason(M15_D2_TRANSCRIPTS))
+        reason = (finding + "; no genuine M1.5 bundle is available for the dormant historical "
+                  "diagnostic. Gate 4 did not run and therefore neither passed nor failed")
         return dict(gate=name, passed=False, skipped=True, reason=reason,
                     ok=gate_skipped(name, reason))
 
@@ -894,23 +949,13 @@ def gate4_sanity_acceptance(*, allow_judge_calls: bool = True) -> dict:
     else:
         print("     S1 response integrity   : not measured (allow_judge_calls=False)")
 
-    print("     S3 verifiable-task      : not recoverable from a transcript - it needs the "
-          "live model at this cell")
-
-    s4_subset = min(terms.values())
-    floor = float(_cfg("S4_MIN"))
-    worst = min(terms, key=lambda k: terms[k])
-    print(f"     S4 over the available terms {sorted(terms)} = {s4_subset:.3f} "
-          f"(worst: {worst})   S4_MIN = {floor:g}")
-
-    ok = gate(name, s4_subset < floor,
-              f"S4 over {sorted(terms)} is {s4_subset:.3f} >= S4_MIN {floor:g}, so the terms "
-              f"available do not reject {label}. This is INCONCLUSIVE rather than a proof the "
-              "sanity is wrong - S3 is missing and could still drag it under - but the gate "
-              "cannot pass on terms that did not reject the cell. Measure S3 at this cell on "
-              "the live model, or supply Judge S1 calls, before trusting S4_MIN")
-    return dict(gate=name, passed=ok, skipped=False, cell=label, source=str(source),
-                terms=terms, s4_subset=s4_subset, s4_min=floor,
+    print("     S3 verifiable-task      : unavailable from stored text")
+    reason = (finding + f"; historical {label} recovered only {sorted(terms)} from {source}. "
+              "Without live S3 it cannot establish three-term disagreement or compare the "
+              "three-term min with the three-term mean, so it is diagnostic and not a pass")
+    gate_skipped(name, reason)
+    return dict(gate=name, passed=False, skipped=True, reason=reason,
+                cell=label, source=str(source), terms=terms,
                 n_responses=len(responses), s1_detail=s1_detail,
                 s2_count=s2_row["s2_count"], s2_n=s2_row["s2_n"],
                 s2_ci_low=s2_row["s2_ci_low"], s2_ci_high=s2_row["s2_ci_high"],
@@ -918,7 +963,90 @@ def gate4_sanity_acceptance(*, allow_judge_calls: bool = True) -> dict:
                 degenerate_frac=s2_row["degenerate_frac"],
                 degenerate_frac_ci_low=s2_row["degenerate_frac_ci_low"],
                 degenerate_frac_ci_high=s2_row["degenerate_frac_ci_high"],
-                s3_measured=False)
+                s3_measured=False,
+                limitation=("the specific historical claim that rebuilt sanity rejects the "
+                            "Velocity cell the old metric passed is not testable in full"))
+
+
+def gate4_sanity_acceptance(*, allow_judge_calls: bool = True) -> dict:
+    """A live three-term min must reject a marginal cell a mean would accept.
+
+    Phase 3's failing endpoint guarantees S3 < S4_MIN, so `min < S4_MIN` alone is a
+    tautology. The gate passes only when the terms disagree and the mean would have hidden the
+    failed term. It prefers the winner's boundary but may use another shortlisted layer because
+    the aggregation rule is not layer-specific.
+    """
+    name = "gate 4 min sanity aggregation is load-bearing"
+    boundaries, winner_layer, n_bisected = _gate4_boundary_rows()
+    if not boundaries:
+        finding = ("sanity held at every reachable dose across the shortlist"
+                   if n_bisected else
+                   "no completed bisection rows are available, so no live anchor exists")
+        return _gate4_m15_fallback(
+            name, allow_judge_calls=allow_judge_calls,
+            finding=finding)
+    if not allow_judge_calls:
+        reason = ("a live boundary exists, but allow_judge_calls=False prevents measuring S1; "
+                  "Gate 4 needs all of S1, S2 and S3 and did not run")
+        return dict(gate=name, passed=False, skipped=True, reason=reason,
+                    ok=gate_skipped(name, reason))
+
+    boundary = boundaries[0]
+    layer = int(boundary["layer"])
+    doses = _gate4_anchor_doses(boundary)
+    chosen_because = ("winning layer" if winner_layer is not None and layer == winner_layer
+                      else "fallback shortlisted layer with a converged sanity boundary")
+    floor = float(_cfg("S4_MIN"))
+    measurements: list[dict] = []
+    expensive = _mod("expensive")
+
+    for index, dose in enumerate(doses):
+        measured = expensive.measure_sanity_anchor(layer, dose, phase="GATE4")
+        reading = _gate4_anchor_reading(measured["terms"], floor)
+        record = dict(measured, reading=reading, attempt=index,
+                      direction=("anchor_hi" if index == 0 else "down_toward_boundary"))
+        record.pop("responses", None)  # already persisted in cis_transcripts.jsonl
+        measurements.append(record)
+        print(f"   L{layer} r={dose:.4f} ({record['direction']}): "
+              f"S1={reading['terms']['s1']:.3f}, S2={reading['terms']['s2']:.3f}, "
+              f"S3={reading['terms']['s3']:.3f}; min={reading['s4_min']:.3f}, "
+              f"mean={reading['s4_mean']:.3f}, floor={floor:g}, comfortable="
+              f"{reading['comfort_threshold']:.3f}")
+        if reading["passed"]:
+            ok = gate(name, True)
+            return dict(
+                gate=name, passed=ok, skipped=False, source="live_bisection_anchor",
+                layer=layer, anchor_r=dose, anchor_alpha=measured["alpha"],
+                chosen_because=chosen_because, boundary_lo=float(doses[-1]),
+                boundary_hi=float(doses[0]), boundary=boundary.get("boundary"),
+                measurements=measurements, reading=reading,
+                limitation=("the specific historical comparison against Velocity L37 alpha=3 "
+                            "is no longer tested; its min-versus-mean property is reproduced "
+                            "from this run's own live data"))
+        # Retry only a uniformly low anchor, and only by decreasing dose inside [lo, hi].
+        # A disagreeing anchor whose mean also rejects is an honest failure, not permission
+        # to search for a greener cell.
+        if reading["all_terms_low"] and index + 1 < len(doses):
+            continue
+        break
+
+    last = measurements[-1]["reading"]
+    if not last["terms_disagree"]:
+        why = "all three terms were low, so the anchor was uniformly damaged"
+    elif not last["mean_accepts"]:
+        why = "both min and mean rejected, so the run did not demonstrate that min was necessary"
+    else:
+        why = "the live anchor did not satisfy the settled min-versus-mean criterion"
+    ok = gate(name, False, why)
+    return dict(
+        gate=name, passed=ok, skipped=False, source="live_bisection_anchor",
+        layer=layer, anchor_r=measurements[-1]["r"],
+        anchor_alpha=measurements[-1]["alpha"], chosen_because=chosen_because,
+        boundary_lo=float(doses[-1]), boundary_hi=float(doses[0]),
+        boundary=boundary.get("boundary"), measurements=measurements, reading=last,
+        reason=why,
+        limitation=("the specific historical comparison against Velocity L37 alpha=3 is no "
+                    "longer tested; its aggregation property was tested live"))
 
 
 def _m15_responses_for(concept: str, layer: int, alpha: float) -> tuple[list[str], str]:
@@ -2133,7 +2261,8 @@ def run_acceptance_gates(*, allow_judge_calls: bool = True,
     re-running by hand with different arguments.
 
     `allow_judge_calls` defaults True: these gates are a deliberate action and the judge
-    half of them costs roughly 50 (gate 1) + 2 (gate 3) + 25 (gate 4) + 12 (gate 8) +
+    half of them costs roughly 50 (gate 1) + 2 (gate 3) + 12 per live anchor, at most 36
+    (gate 4) + 12 (gate 8) +
     25 or 50 (gate 11) calls, which at `gpt-4.1-mini` rates is cents. Setting it False
     gives a structural pass -- gate 2(a), 5, 6, 7, 9 and the record-reading half of the
     rest -- with no network at all.
