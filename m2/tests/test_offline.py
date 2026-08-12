@@ -587,6 +587,73 @@ def test_operating_point_and_frontier_keep_rate_intervals_and_e5_se(run_ctx, tmp
 
 
 # =====================================================================================
+# gate 1 - live objective anchors and a role-blind operator packet
+# =====================================================================================
+
+def _gate1_scan_row(layer, r, *, reach, d3, d3_rate, d3_rank):
+    return dict(
+        phase="SCAN", layer=layer, r=r, alpha=r * 2, vec_fingerprint=f"fp-{layer}-{r}",
+        reachable=True, reach=reach, reach_n=12,
+        e6_mass_median=max(reach / 10, 1e-8), e6_rank_med=max(1, 100 - reach * 100),
+        d3=d3, d3_rate=d3_rate, d3_rate_n=5, d3_rank_med=d3_rank,
+    )
+
+
+def test_gate1_selects_a_probability_and_rank_reversal_from_this_scan(run_ctx):
+    run_ctx(concept="Garlic")
+    rows = [
+        _gate1_scan_row(31, 0.30, reach=0.75, d3=0.002, d3_rate=0.0, d3_rank=91),
+        _gate1_scan_row(32, 0.30, reach=0.00, d3=0.42, d3_rate=0.8, d3_rank=2),
+        _gate1_scan_row(33, 0.30, reach=0.00, d3=0.01, d3_rate=0.2, d3_rank=30),
+    ]
+    chosen = gates._gate1_select_anchors(rows)
+    assert chosen["high"]["layer"] == 31 and chosen["low"]["layer"] == 32
+    assert chosen["high"]["reach"] >= config.CONFIG["E6_FLOOR"]
+    assert chosen["high"]["d3_rate"] == 0
+    assert chosen["low"]["reach"] == 0 and chosen["low"]["d3_rate"] > 0
+    assert chosen["low"]["d3"] > chosen["high"]["d3"]
+    assert chosen["low"]["d3_rank_med"] < chosen["high"]["d3_rank_med"]
+
+
+def test_gate1_reversed_judge_scores_fail_the_separation():
+    """Task 04 acceptance: a word-counter ranks LOW over HIGH and must trip the gate."""
+    reading = gates._gate1_separation([1, 2, 1], [8, 9, 8])
+    assert reading["margin"] < 0
+    assert reading["passed"] is False
+
+
+def test_gate1_packet_is_shuffled_and_never_discloses_anchor_role():
+    base = dict(concept="Garlic", r=0.3, alpha=0.6, vec_fingerprint="fp",
+                reach=0.5, reach_n=12, e6_mass_median=0.02, e6_rank_med=8,
+                d3=0.001, d3_rate=0.0, d3_rate_n=5, d3_rank_med=80,
+                rationale="test")
+    anchors = dict(high=dict(base, role="HIGH", layer=31),
+                   low=dict(base, role="LOW", layer=32))
+    pairs = [dict(prompt_id=f"p{i}", prompt=f"prompt {i}",
+                  response_unsteered=f"A{i}", response_steered=f"B{i}")
+             for i in range(12)]
+    config_key = dict(key="judge-key", judge_model="judge/model",
+                      judge_prompt_version="sha256:prompt")
+    rows = gates._gate1_build_label_rows(
+        anchors, {"high": {"pairs": pairs}, "low": {"pairs": pairs}}, config_key)
+    assert len(rows) == 24 and all(row["hand_label"] is None for row in rows)
+    assert all("role" not in key.lower() for row in rows for key in row)
+    layers = [row["layer"] for row in rows]
+    assert sum(a != b for a, b in zip(layers, layers[1:])) >= 4
+
+
+def test_gate1_refuses_labels_from_a_changed_judge_configuration():
+    old = dict(key="old", judge_model="judge/v1", judge_prompt_version="sha256:old")
+    new = dict(key="new", judge_model="judge/v2", judge_prompt_version="sha256:new")
+    metadata = {"judge_configuration": old}
+    rows = [dict(judge_config_key="old", judge_model="judge/v1",
+                 judge_prompt_version="sha256:old")]
+    refusal = gates._gate1_config_refusal(metadata, rows, new)
+    assert refusal is not None
+    assert "stored" in refusal and "current" in refusal
+
+
+# =====================================================================================
 # gate 4 - the aggregation rule, not the deliberately failed S3 endpoint
 # =====================================================================================
 

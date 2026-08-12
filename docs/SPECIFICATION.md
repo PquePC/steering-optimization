@@ -811,7 +811,7 @@ The pipeline is not trusted until all of these pass. Ordered by how much collaps
 
 | # | gate | criterion |
 |---|---|---|
-| 1 | **Judge E5 vs hand labels** | ~50 stored probe transcripts. Must separate pillows L46 α=4 (real drift, token unreachable) from silk L46 α=2 (no drift, word rank 4) — i.e. not counting words |
+| 1 | **Judge E5 vs hand labels** | On this run's scan, select an E6-high/D3-unreachable cell and an E6-zero/D3-high-ranked cell, generate 12 paired responses at each, and obtain shuffled role-blind operator labels. Judge E5 must separate HIGH from LOW by ≥ 3.0. Labels are reusable only for the exact judge model + E5 prompt digest; rank correlation is diagnostic only |
 | 2 | **E5/S1 independence** | Must score velocity L37 α=3.0 **high influence AND low integrity**. Two structural checks: (a) the S1 payload contains the concept string zero times — assert it, do not eyeball it; (b) over the verification set, `r(Score_Influence, Score_Integrity)` is reported and must not be strongly negative. Correlation is a diagnostic, not a pass/fail — some cells really are both strong and broken |
 | 3 | **Judge E5 FPR** | Control pairs score ≈ 0. Non-zero puts a floor under every E5 in the run |
 | 4 | **Sanity acceptance** | At this run's converged failing bisection endpoint, the three live terms must disagree and `min(S1,S2,S3)` must reject while their mean would accept. This reproduces the aggregation property of the lost Velocity anchor without borrowing another concept's data |

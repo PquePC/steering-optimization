@@ -64,7 +64,8 @@ _EXPORTS: dict[str, tuple[str, ...]] = {
         "call_judge", "judge_many", "parse_e5", "parse_s1", "parse_d2",
     ),
     "expensive": (
-        "generate_steered", "measure_E5", "measure_S1", "measure_sanity_anchor", "measure_D2",
+        "generate_steered", "generate_task_responses", "measure_E5", "measure_S1",
+        "measure_sanity_anchor", "measure_D2",
         "judge_fpr", "verify_cell",
     ),
     "phases": (

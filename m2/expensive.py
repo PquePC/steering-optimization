@@ -6,6 +6,7 @@ whole scan: spec section 5 splits the pipeline into a cheap tier (forward passes
 
   generate_steered     one batched steered generation, per-row start positions   (bug 25b)
   generate_unsteered   the same, unsteered - NOT `mw.generate_batch`             (see below)
+  generate_task_responses persist paired task responses without invoking a judge
   measure_E5           spec 5.6 - Judge E5 against the cached unsteered reference A
   measure_S1           spec 5.7 - Judge S1 on the SAME responses, concept withheld
   measure_sanity_anchor Gate 4 - live S1/S2/S3 without unrelated E5 or D2 calls
@@ -64,6 +65,7 @@ from . import vectors
 __all__ = [
     # CONTRACT section 3 surface
     "generate_steered",
+    "generate_task_responses",
     "measure_E5",
     "measure_S1",
     "measure_sanity_anchor",
@@ -969,6 +971,31 @@ def _write_cis(prompt_rows: Sequence[dict], responses: Sequence[str], *, layer: 
             prompt_id=str(row["id"]), kind=str(row["kind"]), prompt=str(row["text"]),
             response=str(response), vec_fingerprint=vec_fp,
         ))
+
+
+def generate_task_responses(layer: int, r: float, *, phase: str,
+                            measure: str) -> dict:
+    """Generate and persist the standard paired task-prompt responses without judging them.
+
+    Gate 1 uses this to build an operator-labelling packet. Keeping generation separate from
+    Judge E5 is load-bearing there: the operator must label first, and a gate that silently
+    fills those labels with a model would be the instrument grading its own work.
+    """
+    layer, r = int(layer), float(r)
+    alpha = float(config.alpha_for(layer, r))
+    rows = list(prompt_assets.E5_PROMPTS)
+    rendered, starts, ids = task_batch(rows)
+    vector, dose, vec_fp = _resolve_vector(layer, alpha, None, r)
+    responses = generate_steered(
+        rendered, layer, alpha,
+        int(_cfg("MAX_NEW_TOKENS")), float(_cfg("TEMPERATURE")),
+        start_positions=starts, vec=vector)
+    _write_cis(rows, responses, layer=layer, alpha=alpha, r=dose,
+               phase=str(phase), vec_fp=vec_fp, measure=str(measure))
+    pairs = [dict(prompt_id=pid, prompt=str(row["text"]), kind=str(row["kind"]),
+                  response_unsteered=reference_A(pid), response_steered=str(response))
+             for row, pid, response in zip(rows, ids, responses)]
+    return dict(layer=layer, r=dose, alpha=alpha, vec_fingerprint=vec_fp, pairs=pairs)
 
 
 # =====================================================================================
