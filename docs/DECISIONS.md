@@ -139,3 +139,35 @@ misscoring — and only the transcripts tell them apart.
 
 **Result:** task [02](handoff/02-judge-null-controls.md), *Decided values*. All four change
 `config_hash`, so they land together with the `SCAN_DOSES` change before any measurement.
+
+## 2026-08-12 — `d2` null is reported, not gated; intervals go Wilson everywhere; debug needs a capture half
+**By:** PquePC
+**Kind:** decision
+
+Three changes on top of the judge-null decision above.
+
+**The `d2` null stops being a gate.** It is measured, reported beside every `d2` as the unsteered
+baseline, and its transcripts persisted for post-run review. Selection still uses raw `d2` against
+`D2_MAX`.
+
+**Every reported rate carries a Wilson interval**, on every concept — replacing the binomial SE for
+proportions. `e5` keeps mean ± SE, being a mean rather than a proportion.
+
+**The debug bundle gains a capture half** and becomes blocking for the first Garlic and Origami
+runs, which the operator intends to audit end to end.
+
+**Why:** a null control may gate only if it can distinguish an instrument fault from real model
+behaviour **at runtime**. The `d2` null cannot — a nonzero reading is either the judge misscoring or
+the model confabulating, the latter is expected behaviour already observed here, and only a human
+reading transcripts can tell them apart. The same rule *tightened* the `s1` null rather than
+loosening it: `s2` resolves the identical ambiguity mechanically and for free, so the `s1` gate now
+fires on the disagreement (`s1` low while `s2` says the text is fine) rather than on `s1` alone.
+On intervals, `sqrt(p(1−p)/n)` is exactly zero at p = 0 and p = 1, and the v1 sweep put 29 of 30
+cells on exactly those endpoints — `d2 = 0.000 ± 0.000` claims perfect certainty from 25 trials.
+On the bundle: **nothing in `m2/` writes to `debug/`** — the directory, the deny-list entry and the
+archive carve-out are vestigial from v1 — so flipping the export filter ships one extra thing and
+every intermediate is computed and discarded. An export flag can only ship what was written.
+
+**Result:** `1974000`; tasks [02](handoff/02-judge-null-controls.md),
+[08](handoff/08-debug-bundle.md), [17](handoff/17-wilson-intervals.md). Task 09 item 1 (the
+free-space guard) becomes a prerequisite for enabling full capture.
