@@ -58,17 +58,53 @@ rationale that did not match the code.
 
 ---
 
+## Logging — this is not optional bookkeeping
+
+Everyone here works from what the last person wrote down. Three obligations, every session:
+
+**1. Log every decision in [`docs/DECISIONS.md`](docs/DECISIONS.md).** Append-only, newest at the
+bottom, format at the top of the file. A decision is: a threshold chosen, a design question
+answered, a proposal accepted or rejected, a scope change — **including decisions the operator makes
+in conversation with you.** Those are the ones most likely to be lost, because they never passed
+through a file. Name whoever actually made the call, not who typed it.
+
+**2. Mark a task done in its own task document.** When a task under
+[`docs/handoff/`](docs/handoff/) is complete, change its status line to `DONE` with the commit hash,
+and add a `task complete` entry to `DECISIONS.md`. The status line is the current state; the log is
+the history. **Do not duplicate status into a second file** — two places claiming to hold the
+current status is how a stale one gets believed.
+
+**3. Log a completed run phase** in `DECISIONS.md` as it happens: which phase, elapsed against its
+prior, the headline numbers by code, anything that looked wrong.
+
+Also keep appending to [`docs/TODO.md`](docs/TODO.md) (open items) and
+[`docs/DEBUG-LOG.md`](docs/DEBUG-LOG.md) (defects, in its format — *why nothing caught it* is the
+field that matters). See [`docs/handoff/README.md`](docs/handoff/README.md).
+
 ## Git
 
 - **Pull before every work session and before every commit.** Two agents work in this tree.
+- **Push when work is complete and tests are green.** Do not leave finished work sitting in local
+  commits — the other agents cannot see it, and the operator cannot review it. If you are unsure
+  whether something is ready, push it to a branch and say so rather than sitting on it.
 - **Small, tightly scoped, named commits.** They are reviewed, and a defect that returns must be
   traceable to the change that was supposed to stop it.
 - **Never force-push. Never rewrite history.**
 - **Commit messages carry science only** — what changed and why it was wrong before. No funding,
   budget, mentor or novelty framing. Match the existing style: a plain statement of what the change
   does, e.g. *"Stop the shortlist widening onto layers with no concept mass"*.
+- **End every commit message with an attribution trailer**, on its own line, as the last line:
+
+  ```
+  Made-by: Sol
+  ```
+
+  `Opus`, `Sol` or `PquePC` — whoever actually did the work. Git's author field records the
+  machine that committed; this records the agent that wrote it, which is what someone reading the
+  history a month from now needs to know. Opus additionally carries its
+  `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>` line.
 - If you find a file mid-change by someone else, do not resolve it by reverting their work — say
   what you found and ask.
 - **Documentation is owned by the orchestrating agent.** Do not restructure, merge, rename, move or
-  delete a markdown file. Appending to `docs/TODO.md` and `docs/DEBUG-LOG.md` is expected; see
-  [`docs/handoff/README.md`](docs/handoff/README.md) for what you owe them.
+  delete a markdown file. Appending to `docs/DECISIONS.md`, `docs/TODO.md` and `docs/DEBUG-LOG.md`
+  is expected and required; restructuring them is not yours.

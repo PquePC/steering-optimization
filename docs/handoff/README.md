@@ -49,6 +49,13 @@ reason** — that is a useful contribution. Building it is not.
 The tree is owned by the orchestrating agent — **do not restructure, merge, rename, move or delete
 any markdown file.** What you should keep writing:
 
+- **[`../DECISIONS.md`](../DECISIONS.md)** — **the one that matters most.** Every decision, every
+  completed task, every completed run phase. This is how the orchestrator and the operator find out
+  what happened while they were not in the session. A decision the operator makes in conversation
+  with you is the kind most likely to be lost, because it never passed through a file — write those
+  down first.
+- **Your task's own status line** — set it to `DONE` with the commit hash when the task is
+  complete. That line is the single source of truth for state; `DECISIONS.md` is the history.
 - **[`../TODO.md`](../TODO.md)** — append open items as you find them; move items you fix into the
   register with the commit hash. Append, do not reorganise.
 - **[`../DEBUG-LOG.md`](../DEBUG-LOG.md)** — every new defect, in the existing format: symptom,

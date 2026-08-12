@@ -113,6 +113,11 @@ Blocking, in order: [01](01-scan-doses.md) (must land before any measurement —
 
 ## 7. What to report
 
+**Write it down as well as saying it.** Everything below goes to the operator in conversation
+*and* into [`../DECISIONS.md`](../DECISIONS.md), because the orchestrating agent is not in your
+session and that file is the only channel to it. A decision the operator makes while talking to you
+is the kind most easily lost — log those first.
+
 **During the run** — a short status after each phase: which phase, elapsed against prior, the
 numbers by code, anything that looked wrong. Flag surprises immediately, not at the end; the
 operator can stop a run that is measuring the wrong thing, but not after it finishes.
