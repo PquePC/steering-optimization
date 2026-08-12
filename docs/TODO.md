@@ -76,6 +76,46 @@ Available if a reviewer asks for an end-to-end calibration against the published
 concepts at L37 / α=4, aggregate detection with both the pooled and the between-concept interval,
 written to `rig_status.json` in the schema `r4_rig_check` already reads. Roughly one GPU-hour.
 
+### 6. `r = 0.60` is unreachable across L14-L30, so the third dose only half-covers the mid band
+Measured at CAL on 2026-08-12: **17 of 147 cells are unreachable at `ALPHA_CEIL = 16.0`, and all
+17 are L14-L30 in the `r = 0.60` column.** Nothing is unreachable at 0.15 or 0.30.
+
+The mechanism is in the dose map: `alpha = r * ||h_L|| / ||v_L||`, and that ratio peaks in exactly
+that band - at L28, `||v|| = 968` against `||h|| = 49905`, a ratio of 51, so `r = 0.6` would need
+`alpha ~ 31`, nearly double the ceiling.
+
+**Consequence for decision 1.** The third dose was added because L20-L52 read `e6` reach 0.00 at
+both old doses and "inert versus under-dosed" was undecidable there. It delivers that for
+**L31-L52** - which is the band Macar's section 5.1 predicts for the qualifying window on a
+62-layer model - but **L14-L30 still has only 0.15 and 0.30** and remains undecidable.
+
+Decide: accept and state it as a scope limitation, or address it. Note that raising `ALPHA_CEIL`
+is **not** a free option - it is the v1 damage anchor, and a cell measured above it is off the
+manifold the sanity terms were calibrated on. Note also that the four-dose suggestion below is
+more constrained than it looks: `r = 1.20` would be unreachable across a far wider band.
+
+### 7. `S1_NULL_MIN` passed by 0.01 on its first measurement
+Garlic CAL read **`s1` null 0.91 +/- 0.04 SE** against a floor of **0.90**. The threshold was
+derived from the S1 rubric with no measurement behind it, and it came within one point of the
+second decimal of aborting the run.
+
+It passed correctly, and the `s2` cross-check worked as designed - `s2 = 1.00` confirms the text is
+objectively fine, so a low `s1` there would have been a judge fault rather than the model. But the
+margin is not comfortable. **After a second concept has measured it, re-derive the floor from the
+two observations** rather than from the rubric alone. Until then the standing rule holds: a failing
+null means investigate the judge, never loosen the threshold.
+
+### 8. The model cache is stored twice, and the guard that would warn about it cannot fire
+`m2.setup` reported **102 GB at `/workspace/hf/hub`** against an expected ~54 GB. Almost certainly
+symlink deduplication failing on the network volume: HuggingFace stores each file once in `blobs/`
+and symlinks it from `snapshots/`, and a filesystem without symlink support falls back to copying,
+giving exactly 2x.
+
+Harmless for a run. It leaves roughly **48 GB of headroom on a 150 GB volume**, which matters for
+task 08's full capture - and the "under 20 GB free" guard is the one that **can never fire**
+(task 09 item 1). That guard is already a stated prerequisite for enabling capture; this is the
+concrete reason.
+
 ---
 
 ## Suggestions — NOT SCHEDULED, DO NOT BUILD
@@ -153,6 +193,41 @@ E5/D2 in Phase 4 is the first genuine test of the pipeline's premise.
 The early layers tolerate enormous doses because nothing is happening in them.
 
 ---
+
+## Science observations from the 2026-08-12 shakedown (CAL)
+
+Config `2cb66674a108`, A100-80GB, 49 layers in scope (L13-L61), reference L37. CAL 90s.
+
+**Every instrument check passed.** R5 at L37 gave a vector norm of **4054**, within 1 sigma of
+Macar's mean and identical to the first run. R14 passed on both injection paths (start_pos and
+all-positions both 3.49e+01 at L37 alpha=3.655).
+
+**`d3_base = 0.0000` again**, rank median **1343** - the concept's best token sits 1343 places deep
+in the unsteered distribution. Independently corroborated by a standalone probe over the 12 E5
+prompts, which measured total unsteered mass of **6.15e-17** across all six concept token ids
+against an `E6_THRESH` of 0.01: fifteen orders of magnitude of headroom. **Contamination cannot
+manufacture a signal from nothing.**
+
+**`cap_base` = 42/57 (0.737, 95% Wilson [0.610, 0.834]), unchanged by the lowercase fix.** Expected
+and not a sign the fix was inert: unsteered, the model capitalises properly. The fix acts at high
+dose, where output degrades, so the place to look for its effect is the sanity terms at the top of
+the dose ladder.
+
+**The ratio `||h_L|| / ||v_L||` peaks in the L14-L30 band**, which is what makes `r = 0.60`
+unreachable there under `ALPHA_CEIL = 16`. This is the same confound the `r` normalisation exists
+to remove, now visible as a *reachability* constraint rather than a comparability one: the layers
+that resist dosing are the ones where the concept vector is small relative to the residual stream.
+
+**The concept token set for Garlic is four-sixths prefixes.** `concept_first_token_ids` keeps all
+six surface forms and drops none, but only `' garlic'` (29508) and `' Garlic'` (127422) are whole
+words; `'gar'` (5359), `'Gar'` (39967), `'GAR'` (85402) and `' GAR'` (75987) are prefix-only. In
+the unsteered distribution `'Gar'` carries 99.9% of the (vanishing) mass - structurally consistent
+with the contamination mechanism, since capitalised `Gar` opens *Gary, Garcia, Garden, Garrett*,
+but at 6e-17 the absolute level is nil. See task 13; the decisive measurement is the same
+breakdown at a **steered** cell, which needs vectors and therefore runs after this sweep.
+
+**The ETA works.** It read `1h09m21s` at 1m30s elapsed with every pending phase contributing units.
+On the first Garlic run the same board read `0m00s` from start to finish.
 
 ## Measured timings (A100-80GB, Gemma3-27B, 49 layers in scope)
 

@@ -336,3 +336,30 @@ Gemma3-27B. Tasks 06 and 13 step 2 wait for the shakedown. Tasks 08 and 09 item 
 shakedown and still precede the real run.
 
 **Result:** `63cdc35`, task 05 complete; next action is the Garlic shakedown from task 11.
+
+## 2026-08-12 — Shakedown run: CAL complete, all gates passed
+**By:** PquePC (ran it), Opus (read it)
+**Kind:** phase complete
+
+Garlic, config `2cb66674a108`, A100-80GB. **CAL done in 90 s.** First execution of the judge null
+controls, the third scan dose and the corrected ETA.
+
+Headline numbers by code: R5 pass (L37 `||v||` 4054, within 1σ). R14 pass on both injection paths.
+`d3_base` **0.0000**, rank median 1343. `cap_base` **42/57** (0.737, [0.610, 0.834]) — unchanged by
+the lowercase fix, which is expected since unsteered output is properly capitalised. `e5` null
+**0.00** over 7 pairs (ceiling 0.50). `s1` null **0.91 ± 0.04** (floor 0.90) with `s2` = 1.00.
+`d2` null **0.00 [0.00, 0.13]** n=25, report only. ETA read 1h09m at 1m30s elapsed — the fix works;
+the same board read `0m00s` for the whole of the first run.
+
+**Three things logged rather than acted on**, all now in [`TODO.md`](TODO.md) open items 6–8 and in
+the relevant task documents:
+
+1. **`r = 0.60` is unreachable across L14–L30** — 17 of 147 cells, because `||h||/||v||` peaks
+   there. The third dose delivers its purpose for L31–L52 and not for L14–L30.
+2. **`S1_NULL_MIN` passed by 0.01** on its first measurement. The floor was derived from the rubric
+   with no data behind it; re-derive after a second concept measures it.
+3. **The model cache is stored twice** (102 GB against ~54 GB expected, symlink dedup failing on
+   the volume), leaving ~48 GB headroom — which makes task 09 item 1's dead free-space guard a real
+   prerequisite for task 08's capture rather than a tidy-up.
+
+**Result:** run in flight; SCAN running at time of writing.

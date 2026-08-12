@@ -78,3 +78,45 @@ validation.
 - Concepts with only `prefix_only` variants are flagged in the run record.
 - The unsteered floor per `prefix_only` token is reported.
 - The Garlic and Origami hand review is written up.
+
+---
+
+## Step 1, partially answered by hand, 2026-08-12
+
+Run before the shakedown, outside the pipeline.
+
+**The kept/dropped table for Garlic.** All six surface forms are kept, none dropped. Four of the
+six are prefix-only:
+
+| Form | id | Decodes to | Whole word |
+|---|---|---|---|
+| `'garlic'` | 5359 | `'gar'` | no |
+| `' garlic'` | 29508 | `' garlic'` | **yes** |
+| `'Garlic'` | 39967 | `'Gar'` | no |
+| `' Garlic'` | 127422 | `' Garlic'` | **yes** |
+| `'GARLIC'` | 85402 | `'GAR'` | no |
+| `' GARLIC'` | 75987 | `' GAR'` | no |
+
+**The unsteered floor.** Total mean next-token mass over the 12 E5 prompts: **6.15e-17**, against
+an `E6_THRESH` of 0.01. Fifteen orders of magnitude of headroom. `'Gar'` carries 99.9% of it,
+`'gar'` 0.1%, everything else effectively nothing.
+
+**What this settles:** there is no standing pool of borrowed mass, so **contamination cannot
+manufacture a signal from nothing** - a dead layer stays dead and the `D3_SIGNAL_MIN` guard has
+nothing to fight. Independently corroborates `d3_base = 0.0000`.
+
+**What it does not settle:** which token carries the mass *under steering*. Going from 1e-17 to
+1e-2 is fifteen orders of magnitude, and the unsteered ordering reflects each token's baseline
+frequency in ordinary English rather than anything about garlic. `'Gar'` dominating is structurally
+consistent with the contamination mechanism - capitalised `Gar` opens *Gary, Garcia, Garden,
+Garrett* - but says nothing about the steered case.
+
+**The decisive measurement** is the same per-id breakdown at a **steered** cell, which needs
+vectors and therefore runs after a sweep. `extract_all_layers` reloads from
+`run_dir/vectors/<concept>.pt` when the extraction identity matches, so it costs a model load and a
+handful of forward passes. If the whole-word share is high at the measured cells, this task closes.
+If the mass stays on `'gar'`, the likely fix is narrower than the two-token lookahead in step 2:
+**these measures score the position immediately after a prompt, where the concept is
+space-preceded** - the forced-ID prompt ends `"...The thought is about"`, whose next token is
+`' garlic'`, not `'gar'`. Restricting the id set to the space-prefixed forms would then be small
+and well motivated.

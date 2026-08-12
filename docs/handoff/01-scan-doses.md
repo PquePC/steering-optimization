@@ -53,3 +53,19 @@ Append to [`../TODO.md`](../TODO.md) under Suggestions the two rejected options,
 already there: four doses `(0.15, 0.30, 0.60, 1.20)`, and per-layer doses scanned at a fraction of
 each layer's own bisected boundary. The second is the scientifically strongest and inverts the
 phase order, which makes it an M3 item rather than an M2 one.
+
+---
+
+## Measured outcome, 2026-08-12 CAL
+
+The third dose landed, and it half-delivers. **17 of 147 cells are unreachable at
+`ALPHA_CEIL = 16.0`, and all 17 are L14-L30 in the `r = 0.60` column** - nothing is unreachable at
+0.15 or 0.30.
+
+`alpha = r * ||h_L|| / ||v_L||`, and that ratio peaks in exactly that band (L28: `||v|| = 968`
+against `||h|| = 49905`, so `r = 0.6` needs `alpha ~ 31`). So the undecidable-band problem this
+task existed to solve is resolved for **L31-L52**, which is where Macar section 5.1 predicts the
+qualifying window on a 62-layer model, and **not** for L14-L30.
+
+Open item 6 in [`../TODO.md`](../TODO.md) carries the decision: accept as a scope limitation, or
+address it. Raising `ALPHA_CEIL` is not a free option - it is the v1 damage anchor.

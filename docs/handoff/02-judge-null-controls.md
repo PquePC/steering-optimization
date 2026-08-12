@@ -175,3 +175,26 @@ degree of freedom sitting on an acceptance gate.
 - A failing `e5` or `s1` null stops the run at Phase 0, with a message naming which judge and which
   measure.
 - The `d2` baseline is reported beside every `d2` in the run record and in the end-of-run report.
+
+---
+
+## First measurements, 2026-08-12 Garlic CAL
+
+| Null | Reading | Threshold | Verdict |
+|---|---|---|---|
+| `e5` (judge FPR) | **0.00** over 7 unsteered pairs, prompt pass rate 1.00 [0.65, 1.00] | ceiling 0.50 | pass, wide margin |
+| `s1` | **0.91 +/- 0.04 SE**, prompt pass rate 0.75 [0.47, 0.91], `s2 = 1.00` [0.76, 1.00] | floor 0.90 | **pass by 0.01** |
+| `d2` | **0.00 [0.00, 0.13]**, n=25 | reference 0.04, report only | no confabulation |
+
+Two things to carry forward.
+
+**The `e5` tightening cost nothing.** Raising `N_FPR_PAIRS` to 7 and dropping the ceiling from 1.0
+to `E5_TIE_BAND` was free on this concept, exactly as predicted from the first run's 0.00.
+
+**`S1_NULL_MIN` is nearly binding and has no measurement behind it.** 0.91 against a floor of 0.90
+is one point in the second decimal. The floor was derived from the S1 rubric alone. The `s2`
+cross-check did its job - `s2 = 1.00` confirms the text is objectively fine, so a low `s1` there
+would have been a judge fault - but the margin is uncomfortable. **After a second concept measures
+it, re-derive the floor from observations rather than from the rubric.** Open item 7 in
+[`../TODO.md`](../TODO.md). Until then the standing rule holds: a failing null means investigate
+the judge, never loosen the threshold.

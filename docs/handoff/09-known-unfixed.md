@@ -44,3 +44,16 @@ against what actually increments the counter.
 - The free-space guard has a test that makes it fail.
 - Starting a run for an already-archived concept prints a message naming the restore command.
 - Both priors are replaced with measured numbers after the first complete run, with units stated.
+
+---
+
+## The free-space guard now has a concrete reason, 2026-08-12
+
+`m2.setup` reported **102 GB at `/workspace/hf/hub`** against an expected ~54 GB - almost certainly
+symlink deduplication failing on the network volume, so `blobs/` and `snapshots/` each hold a full
+copy.
+
+That leaves roughly **48 GB of headroom on a 150 GB volume**. Item 1 above stops being a
+theoretical tidy-up: it is the prerequisite for task [08](08-debug-bundle.md)'s full capture, and
+the volume is already half consumed by a duplicate model cache. Fix the guard to read the
+allocation before capture is enabled, and consider reporting the cache size beside it.
