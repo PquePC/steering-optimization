@@ -1,91 +1,122 @@
-# 05 — Replace gate 6 with a self-contained false-negative audit
+# 05 — A tiered shortlist: escalation and false-negative audit
 
-**Status:** PROPOSED. **Do not implement until the operator signs off** — this changes what gate 6
-means, not just how it is computed.
-**Blocking:** the sign-off is; the code is not.
+**Status:** DECIDED in shape. The parameter *defaults* are settled; the parameter *names* and the
+tier-ordering refinement are yours to propose.
+**Blocking:** yes.
 
-## What gate 6 is for
+## What Phase 2 does, and its one dangerous failure
 
-Phase 2 takes the full scan surface — every layer, at every scan dose, with `e6` and `d3` on each —
-and picks a shortlist of maybe eight to twelve layers. **Only shortlisted layers are ever measured
-expensively.** Everything Phase 2 rejects is never seen again by the pipeline; if the answer was in
-a rejected layer, the run cannot find it and will report "no operating point exists" with complete
-confidence.
+Phase 2 looks at the whole scan surface — every layer in scope, cheap measures on each — and picks
+a shortlist of roughly eight to twelve layers. **Only shortlisted layers are ever measured
+expensively.** Everything it rejects is never seen again.
 
-So Phase 2 has one failure mode that matters far more than the other:
+That makes its two error types wildly asymmetric:
 
-- a **false positive** — shortlisting a layer that turns out to be useless — costs one verification
-  cell, maybe a minute of GPU and a few judge calls;
-- a **false negative** — dropping the layer that held the answer — loses the result silently, and
-  nothing downstream can detect it.
-
-Gate 6 exists to check for the second. It is **recall, not ranking**: the question is not "did the
-shortlist put the best layer first" but "did the shortlist contain the answer at all".
+- a **false positive** — shortlisting a useless layer — costs one verification cell;
+- a **false negative** — dropping the layer that held the answer — **loses the result silently.**
+  The run reports "no operating point exists at these constraints" with complete confidence, and
+  nothing downstream can tell the difference between that and the truth.
 
 This is not hypothetical. In v1, four of the seven qualifying cells sat at **L31** while
 effectiveness peaked at **L46**. A shortlist that hill-climbs on effectiveness walks away from all
-four. That is precisely why Phase 2 is deliberately not a top-K, and why it widens on the residual —
-and gate 6 is the only thing that checks the widening actually works.
+four. That is why Phase 2 is deliberately not a top-K and why it widens on the residual — and gate
+6 was supposed to be the check that the widening works.
 
-## Why the current version cannot be repaired
+**The old gate 6 cannot do that job.** It tests recall against seven hard-coded v1 cells on
+karma / silk / irony, so it skips for every other concept. No file fixes it: you cannot test whether
+a shortlist dropped the answer for a concept whose answer nobody knows — which is the situation for
+Garlic, for Origami, and for every model this tool will ever be pointed at.
 
-It tests recall against `M15_QUALIFYING_CELLS`, a hard-coded list of seven cells from v1 — four on
-karma, one on silk, two on irony. For any other concept the gate skips with *"this concept has no
-qualifying M1.5 cell"*.
+## The design
 
-No missing file causes this and no file fixes it. **You cannot test whether a shortlist dropped the
-answer for a concept whose answer nobody knows** — and that is the situation for Garlic, for
-Origami, and for every model and concept this tool is meant to serve in future. The check is
-unportable in principle, not by accident.
+Phase 2 stops emitting a flat shortlist and emits an **ordered sequence of tiers**.
 
-## The proposal
+| Tier | Contents |
+|---|---|
+| **0** | the current shortlist — local maxima, stratified depth coverage, residual widening |
+| **1, 2, 3 …** | the layers Phase 2 rejected, ordered by `e6` descending, in blocks of `TIER_SIZE` |
 
-Test the property directly, using the run itself.
+Phase 4 then works through them:
 
-**After Phase 2, take `k` of the layers the shortlist rejected — stratified across depth so they
-are not all from one region — carry them into Phase 4 verification alongside the shortlist, and
-require that none of them qualifies.**
+1. **Verify tier 0.**
+2. **Always verify tier 1 as well**, whether or not tier 0 found a window.
+3. **If no qualifying cell has been found, escalate** to tier 2, then 3, up to the configured limit
+   or until the in-scope layers are exhausted.
+4. **A qualifying cell from any tier competes for selection under the normal rule** — `argmax(e5)`
+   over qualifying cells. It is not a second-class result.
 
-If none qualifies, the shortlist's rejections were sound as far as the sample can tell. If one
-*does* qualify, the shortlist has a demonstrated false negative: `E6_FLOOR` is too high, or the
-residual route is not widening far enough, and that must be fixed before the run's "no operating
-point" or "this is the operating point" means anything.
+## Why tier 1 always runs, even on success
 
-What this buys:
+This is the point most likely to get lost in implementation, so it is worth being explicit: tier 1
+is doing **two different jobs** that happen to need the same machinery.
 
-- **Portable.** Works on any model, any concept, with no external constants.
-- **Direct.** It tests the actual property — "the shortlist does not drop qualifying cells" —
-  rather than a proxy for it.
-- **Honest about its own power.** A sample of `k` cannot prove there is no false negative anywhere;
-  it can only fail to find one. That is a real limitation and must be stated in the report, with
-  `k` and the sampling rule, rather than presented as a clean pass.
+- As **escalation**, it only needs to run when tier 0 found nothing.
+- As the **false-negative audit**, it must run *especially* when tier 0 succeeded — because the
+  question it answers is "did the shortlist drop something better or something equally valid?", and
+  that question is only interesting when the shortlist produced an answer you were about to
+  believe.
 
-What it costs: `k` extra VERIFY cells per concept. At `k = 3` that is three more cells' worth of
-generation and judge calls.
+If tier 1 only ran on failure, then every successful run would ship with **zero evidence** that the
+shortlist did not drop a better cell. So tier 1 is always paid: `TIER_SIZE` extra VERIFY cells per
+concept, three by default.
 
-## The two numbers to agree
+And it pays for itself in more than assurance. If a tier-1 cell qualifies with **higher `e5`** than
+tier 0's winner, that is not merely a gate failure — **it is a better answer, and the pipeline
+should take it.** The audit can improve the result, not just grade it.
 
-1. **`k`.** Suggested start: **3**. Higher `k` gives more power to detect a false negative and
-   costs proportionally.
-2. **The stratification.** Suggested: one rejected layer from each of the shallow, middle and deep
-   thirds of the layers in scope, chosen from the rejected set by highest `e6` — i.e. deliberately
-   sampling the **near misses**, the rejections most likely to have been wrong, rather than
-   sampling uniformly. A uniform sample mostly draws dead layers and would pass trivially.
+## The gate
 
-That second point matters and is worth the operator's attention: **sampling the near misses makes
-the audit adversarial rather than reassuring.** A gate that mostly draws obviously-dead layers is
-another check that cannot fail.
+Gate 6 becomes: **no cell outside tier 0 qualifies at an `e5` at or above tier 0's winner.**
 
-## If the operator prefers to keep the old check as well
+- If a tier-1+ cell qualifies but scores lower, that is a shortlist imprecision worth reporting and
+  not a failure.
+- If one qualifies *above* the winner, tier 0 demonstrably dropped the answer: the gate fails,
+  `E6_FLOOR` or the residual route needs widening, and the winner is taken from the outer tier with
+  that noted.
+- Report the audit's **power** honestly — `k` cells sampled out of how many rejected. A sample of
+  three cannot prove there is no false negative anywhere; it can only fail to find one. That
+  sentence belongs in the results, not just in the code.
 
-The legacy version can be run once as a **regression test of the selection algorithm** rather than
-as an acceptance gate on a result. Karma carries four of the seven cells across three depths and
-needs only Phases 0–2 — roughly thirty minutes. That tests the code, not the run, and should be
-labelled as such. **Currently out of scope; do not run Karma unless asked.**
+## Ordering, and why `e6` descending
 
-## Acceptance, once approved
+Ordering by `e6` samples the **near misses** — the rejections most likely to have been wrong, since
+`E6_FLOOR` is the main rejection criterion. That makes the audit adversarial.
 
-- A test that trips it: inject a synthetic rejected-layer verification row that qualifies, and
-  confirm the gate **fails**.
-- The gate reports which layers were sampled, why each was chosen, their `e5`/`d2`/`s4`, and `k`.
-- The report states the audit's power honestly — `k` sampled out of how many rejected.
+The alternative, uniform sampling across rejected layers, mostly draws obviously-dead layers and
+would pass trivially. **That would be another check that cannot fail**, which is the defect family
+this repository exists to avoid.
+
+**Refinement to propose:** a layer rejected *despite* a good residual is also a strong near-miss
+candidate, and the residual route is the one Phase 2 added specifically to catch cells that
+under-detect for their influence. Consider interleaving the two orderings — top `e6` and top
+residual among the rejected — rather than `e6` alone. Make the argument and let the operator choose.
+
+## Everything is parametrized
+
+The defaults below are for this project. Someone running this to find the genuinely best steering
+point for their own work must be able to run as deep as they are willing to pay for, up to every
+cell in scope. **No number here may be hard-coded**, and each goes in `CONFIG` with its rationale
+beside it as usual.
+
+| Knob | Default | What it controls |
+|---|---|---|
+| tier size | **3** | cells per tier beyond tier 0 |
+| audit tiers | **1** | tiers always verified, regardless of whether a window was found |
+| escalation limit | **3** | further tiers tried when no window has been found. `None` = until in-scope layers are exhausted |
+| tier ordering | **`e6` descending** | how rejected layers are ranked into tiers |
+| exhaustive mode | **off** | verify every in-scope cell, ignoring tiers entirely |
+
+Exhaustive mode is the one that makes this tool useful to someone else: *"run everything, ranked
+best-candidate-first, and stop when I say"*. It should be a single flag on `m2.run`, and it should
+print its own cost estimate before starting, because it is the expensive path by construction.
+
+## Acceptance
+
+- A test that trips the gate: inject a synthetic tier-1 verification row that qualifies above tier
+  0's winner, and confirm gate 6 **fails** and the winner changes.
+- A test that tier 1 runs when tier 0 has already found a qualifying cell. This is the behaviour
+  most likely to be optimised away by someone reading the code later.
+- Escalation stops at the configured limit and says so, rather than silently exhausting.
+- Every knob above is read from `CONFIG`, and `--set` reaches all of them.
+- Exhaustive mode prints an estimated cell count and cost before it starts.
+- The run record carries, per tier: which layers, why each was ordered where, and their verdicts.

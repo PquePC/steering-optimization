@@ -22,10 +22,12 @@ Each of these has a step-by-step task document under [`handoff/`](handoff/).
 | 2 | A judge null control per judged measure (`e5`, `s1`, `d2`), each gating its own phase before that phase spends judge calls | [02](handoff/02-judge-null-controls.md) |
 | 3 | Gate 4 re-anchors on a cell above **this run's own** bisected sanity boundary, measuring all three sanity terms live | [03](handoff/03-gate4-reanchor.md) |
 | 4 | Gate 1 selects its anchors from this run's own scan surface, and becomes an instrument gate keyed on judge configuration rather than a per-concept gate | [04](handoff/04-gate1-anchors.md) |
-| 5 | Gate 6 is replaced by a self-contained false-negative audit — verify `k` rejected layers, require none qualifies | [05](handoff/05-gate6-false-negative-audit.md) |
+| 5 | Phase 2 emits **tiers** rather than a flat shortlist. Tier 1 always runs (the false-negative audit); further tiers run only when no window has been found. Every knob parametrized, including an exhaustive mode | [05](handoff/05-gate6-false-negative-audit.md) |
 | 6 | A relaxed-threshold re-selection pass, so a run that finds no cell at `D2_MAX = 0.20` can be re-read at 0.30 **without re-measuring anything** | [06](handoff/06-relaxed-reselection.md) |
-| 7 | The reference cell (Macar's L37 / α=4) is measured in every run, so the comparison to a published rate is made against our own instrument | [07](handoff/07-reference-cell.md) |
+| 7 | ~~Reference cell~~ — **deferred 2026-08-12**, direct comparison against Macar is not this run's framing | [07](handoff/07-reference-cell.md) |
 | 8 | A `--debug-bundle` flag that exports everything, including vectors, for benign concepts only | [08](handoff/08-debug-bundle.md) |
+| 9 | **Defect:** `s3` scores only uppercase option letters, so a degraded model answering `c` is counted wrong — a dose-dependent bias in a sanity term | [12](handoff/12-mmlu-letter-surface-forms.md) |
+| 10 | The `prefix_only` contamination in `e6` / `d3` gets a diagnostic before the scan surface is trusted, and a two-token lookahead only if the diagnostic warrants it | [13](handoff/13-prefix-token-contamination.md) |
 
 ---
 
@@ -82,6 +84,14 @@ Rejected alternatives to decision 1, kept because they are the natural next move
   layer at a fraction of *its own* boundary. Scientifically the strongest: it makes the scan
   comparable across depth in a way a single global `r` cannot be. Inverts the phase order, so it
   is a structural change and the right thing to build for M3.
+
+### A2. Verify `s3` by single-token generation at the chosen cell
+`s3` reads `p(A..D)` and takes the argmax **over those four**, so it cannot distinguish *"the model
+confidently answers C"* from *"the model wants to emit something else entirely and C is merely the
+highest of the four letters"* — which is what a degraded model does, at exactly the doses where
+sanity is the binding constraint. A single generated token at the operating point exposes it
+directly. Most of the value is free: report whether the **overall** argmax was an option letter at
+all, which is already in the tensor. Task [14](handoff/14-mmlu-by-generation.md).
 
 ### B. Report what the shortlist did not measure
 Phase 2 now stops below `SHORTLIST_N` rather than padding, and says so. It should also record

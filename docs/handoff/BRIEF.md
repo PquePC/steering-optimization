@@ -69,10 +69,13 @@ A Garlic result reliable enough to publish. Done means:
    words**. A skipped gate is not a passed gate, and a SKIPPED count is not a disclosure.
 5. Results reported with intervals, not point estimates.
 
-**The headline this is aiming at:** Garlic is published at 100% forced identification at Macar's
-reference configuration on this model. If this pipeline finds a cell that holds `e5` and `s4` while
-driving `d2` far below that, the comparison is the result. Task [07](07-reference-cell.md) is what
-makes that comparison legitimate rather than cross-instrument.
+**The headline this is aiming at:** a cell where the concept demonstrably influences generated
+output, the model is demonstrably intact, and `d2` is low — on a concept chosen because it is the
+hardest case available. Garlic is published at 100% forced identification at Macar's reference
+configuration, which is why it was picked; but the result stands on its own measurements, and
+**direct numerical comparison against the published rate is deferred**
+([07](07-reference-cell.md)). What protects `d2`'s meaning is gate 11's agreement check against the
+upstream judge, not a reproduced aggregate.
 
 ## 5. The design principle behind three of the tasks
 
@@ -130,3 +133,4 @@ operator can stop a run that is measuring the wrong thing, but not after it fini
 | Date | Change |
 |---|---|
 | 2026-08-12 | Created. Scan doses decided; gates 1/4/6 rebuilt for self-sufficiency; R4 set aside; judge null controls, relaxed re-selection, reference cell and debug bundle added as tasks. |
+| 2026-08-12 | Reference cell (07) **deferred** — comparison against Macar is not this run's framing. Gate 6 (05) generalised into a **tiered shortlist**: tier 1 always runs as the audit, further tiers escalate only when no window is found, every knob parametrized with an exhaustive mode. Two new items from review: `s3` scores only uppercase option letters (12, a defect), and `prefix_only` token contamination in `e6`/`d3` needs a diagnostic (13). `s3` verification by generation queued as a future addition (14). |

@@ -9,13 +9,16 @@ Each has its own acceptance criteria. Nothing here overrides [`../../CLAUDE.md`]
 | [02](02-judge-null-controls.md) | A judge null control per judged measure | Catch a bad judge or a bad prompt before a phase spends its calls, not after | yes |
 | [03](03-gate4-reanchor.md) | Gate 4 on this run's own damaged cell | `s4` is the only thing separating "covert" from "lobotomised" | yes |
 | [04](04-gate1-anchors.md) | Gate 1 anchors from this run; make it an instrument gate | `e5` must read influence, not count words | yes |
-| [05](05-gate6-false-negative-audit.md) | Replace gate 6 with a false-negative audit | The only evidence the shortlist does not drop the answer | **needs sign-off first** |
+| [05](05-gate6-false-negative-audit.md) | Tiered shortlist: escalation **and** false-negative audit | The only evidence the shortlist does not drop the answer — and it can improve the answer | yes |
 | [06](06-relaxed-reselection.md) | Relaxed-threshold re-selection | Re-read a finished run at a wider `D2_MAX` without re-measuring | no |
-| [07](07-reference-cell.md) | Measure the reference cell every run | Makes the comparison against a published rate same-instrument | yes |
+| [07](07-reference-cell.md) | ~~Reference cell~~ | **DEFERRED** — direct comparison against Macar is not this run's framing | no |
 | [08](08-debug-bundle.md) | `--debug-bundle` export | Lets the operator hand a full run to the orchestrator for audit | no |
 | [09](09-known-unfixed.md) | Three known-unfixed defects | Carried over from the first run | no |
 | [10](10-unexecuted-path-sweep.md) | Sweep the four never-executed phases | Half the pipeline has never run a line | yes |
 | [11](11-the-run.md) | The run itself | | last |
+| [12](12-mmlu-letter-surface-forms.md) | `s3` scores only uppercase option letters | A degraded model answering `c` is scored wrong — a dose-dependent bias in a sanity term | **yes — it is a defect** |
+| [13](13-prefix-token-contamination.md) | Prefix-token contamination in `e6` / `d3` | If `Garlic` tokenizes to `gar`, the scan surface is also counting *garden* | diagnostic before the scan is trusted |
+| [14](14-mmlu-by-generation.md) | Verify `s3` by generation | **FUTURE** — `s3` cannot tell "answers C" from "wants to emit noise, C is highest among letters" | no |
 
 ## What you owe the documentation
 
