@@ -703,7 +703,12 @@ def run_concept(name: str, *, notifier: Any = None, wipe: bool = True, deliver: 
                     f"{cfg['JUDGE_FPR_MAX']}. Every E5 in this run has a floor under it.",
                     severity="warn")
         else:
-            _notify(notifier, board, "Phase 0 judge-FPR gate passed", f"judge_fpr {fpr:.2f}")
+            nulls = cal.get("judge_nulls", {}) if isinstance(cal, dict) else {}
+            s1_null = (nulls.get("s1", {}) or {}).get("s1_null")
+            d2_null = (nulls.get("d2", {}) or {}).get("d2_null")
+            _notify(notifier, board, "Phase 0 judge-null gates passed",
+                    f"E5 null {fpr:.2f}; S1 null {s1_null}; "
+                    f"D2 unsteered baseline {d2_null} (report only)")
 
     if not ok_cal:
         # Every dose in the run is `r * ||h_L|| / ||v_L||`, and both norms come from Phase 0.

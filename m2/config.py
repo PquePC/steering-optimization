@@ -144,10 +144,33 @@ CONSTANTS: dict = {
     # sanity. Without it, selection reads noise on a 0-10 judge scale as a preference.
     "E5_TIE_BAND": 0.5,
 
-    # Spec 14.6 rule 5. Mean Score_Influence on unsteered/unsteered control pairs above
-    # this is the judge inventing influence, which puts a floor under every E5 in the run.
-    # Fires as soon as Phase 0 completes, before GPU time is spent on untrustworthy numbers.
-    "JUDGE_FPR_MAX": 1.0,
+    # Every available OPEN E5 prompt supplies one hard null pair. Verifiable prompts are
+    # deliberately excluded: two unsteered arithmetic answers are nearly identical, so an
+    # influence judge scores them zero without being tested. This must continue to equal the
+    # number of open prompts; expensive._fpr_prompt_rows raises if the asset and knob drift.
+    "N_FPR_PAIRS": 7,
+
+    # Mean Score_Influence on unsteered/unsteered open-prompt pairs. Derived from
+    # E5_TIE_BAND: systematic judge bias must be no larger than the random variation already
+    # treated as an E5 tie. A failure means investigate the judge; NEVER loosen this threshold
+    # to make a rented-pod run proceed (that would tune an acceptance gate after seeing it).
+    "JUDGE_FPR_MAX": 0.5,
+
+    # Judge S1's top rubric anchor is 10/10 for output indistinguishable in quality from the
+    # unsteered reference. Both sides of the null are unsteered, so 0.90 allows one point of
+    # slack. It gates only when objective S2 says the text is fine; if both are low the model,
+    # not the judge, produced damage. On failure investigate the judge; NEVER loosen the gate.
+    "S1_NULL_MIN": 0.90,
+
+    # Reporting reference for unsteered D2, derived as one identification in N_D2 trials.
+    # This null NEVER gates: at runtime a judge false positive and real model confabulation
+    # are indistinguishable. Raw D2 is still selected against D2_MAX; no baseline subtraction.
+    "D2_NULL_REFERENCE": 1.0 / 25.0,
+
+    # 95% Wilson score intervals for every reported binomial rate. Kept in CONFIG because a
+    # different confidence level changes every reported uncertainty and therefore the run's
+    # config hash. Point-estimate gates remain unchanged; intervals are reporting, not slack.
+    "RATE_CI_Z": 1.96,
 
     # --- S3, verifiable-task correctness (spec 4.4 / 5.4) -----------------------------
 

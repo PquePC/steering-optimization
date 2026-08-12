@@ -817,7 +817,10 @@ def gate3_judge_e5_fpr(*, allow_judge_calls: bool = True) -> dict:
     n = detail["fpr_n"]
     print(f"   control pairs: {n}   judge_fpr {fpr:.2f}"
           + (f" +/- {float(se):.2f} SE" if se is not None else "")
-          + f"   ceiling {ceiling:g}")
+          + f"; prompt pass rate {detail['within_ceiling_rate']:.2f} (95% Wilson "
+            f"[{detail['within_ceiling_rate_ci_low']:.2f}, "
+            f"{detail['within_ceiling_rate_ci_high']:.2f}], "
+            f"n={detail['within_ceiling_rate_n']})   ceiling {ceiling:g}")
     for pair in detail["pairs"]:
         print(f"     {pair['id']:<20} Score_Influence {float(pair['score_influence']):.1f} "
               f"(shift {pair['shift']})")
@@ -826,7 +829,12 @@ def gate3_judge_e5_fpr(*, allow_judge_calls: bool = True) -> dict:
               "sits on that floor, so an E5 near E5_FLOOR cannot be distinguished from the "
               "judge expecting to find influence (spec 14.6 rule 5)")
     return dict(gate=name, passed=ok, skipped=False, fpr=fpr, fpr_se=se, n=n,
-                ceiling=ceiling, judge_errors=detail["judge_errors"])
+                ceiling=ceiling, judge_errors=detail["judge_errors"],
+                within_ceiling_count=detail["within_ceiling_count"],
+                within_ceiling_rate=detail["within_ceiling_rate"],
+                within_ceiling_rate_ci_low=detail["within_ceiling_rate_ci_low"],
+                within_ceiling_rate_ci_high=detail["within_ceiling_rate_ci_high"],
+                within_ceiling_rate_n=detail["within_ceiling_rate_n"])
 
 
 # =====================================================================================
@@ -869,7 +877,9 @@ def gate4_sanity_acceptance(*, allow_judge_calls: bool = True) -> dict:
     terms: dict[str, float] = {"S2": float(s2_row["s2"])}
     print(f"   {label}: {len(responses)} stored responses from {source}")
     print(f"     S2 objective degeneracy : {terms['S2']:.3f} "
-          f"({s2_row['degenerate_frac']:.0%} degenerate, rules {s2_row['s2_reasons']})")
+          f"(95% Wilson [{s2_row['s2_ci_low']:.3f}, {s2_row['s2_ci_high']:.3f}], "
+          f"n={s2_row['s2_n']}; {s2_row['degenerate_frac']:.0%} degenerate, "
+          f"rules {s2_row['s2_reasons']})")
 
     s1_detail: dict | None = None
     if allow_judge_calls:
@@ -902,6 +912,12 @@ def gate4_sanity_acceptance(*, allow_judge_calls: bool = True) -> dict:
     return dict(gate=name, passed=ok, skipped=False, cell=label, source=str(source),
                 terms=terms, s4_subset=s4_subset, s4_min=floor,
                 n_responses=len(responses), s1_detail=s1_detail,
+                s2_count=s2_row["s2_count"], s2_n=s2_row["s2_n"],
+                s2_ci_low=s2_row["s2_ci_low"], s2_ci_high=s2_row["s2_ci_high"],
+                degenerate_count=s2_row["degenerate_count"],
+                degenerate_frac=s2_row["degenerate_frac"],
+                degenerate_frac_ci_low=s2_row["degenerate_frac_ci_low"],
+                degenerate_frac_ci_high=s2_row["degenerate_frac_ci_high"],
                 s3_measured=False)
 
 
@@ -1097,7 +1113,9 @@ def gate6_e6_shortlist_recall(*, scan_rows: Sequence[dict] | None = None) -> dic
     print(f"   shortlist: {len(shortlisted)} layers {shortlisted}")
     print(f"   qualifying M1.5 cells for {concept}: "
           + ", ".join(f"L{L} alpha={a:g}" for _c, L, a in wanted))
-    print(f"   retained {len(retained)}/{len(wanted)}"
+    recall_ci = _mod("cheap").wilson_interval(len(retained), len(wanted))
+    print(f"   retained {len(retained)}/{len(wanted)} (95% Wilson "
+          f"[{recall_ci[0]:.3f}, {recall_ci[1]:.3f}])"
           + (f"   LOST: " + ", ".join(f"L{L} alpha={a:g}" for L, a in lost) if lost else ""))
     ok = gate(name, not lost,
               f"the shortlist misses {len(lost)} of {len(wanted)} qualifying M1.5 cells "
@@ -1107,7 +1125,9 @@ def gate6_e6_shortlist_recall(*, scan_rows: Sequence[dict] | None = None) -> dic
     return dict(gate=name, passed=ok, skipped=False, concept=concept,
                 shortlisted=shortlisted, wanted=wanted,
                 retained=retained, lost=lost,
-                recall=(len(retained) / len(wanted)) if wanted else None)
+                recall=(len(retained) / len(wanted)) if wanted else None,
+                recall_ci_low=recall_ci[0], recall_ci_high=recall_ci[1],
+                recall_n=len(wanted))
 
 
 # =====================================================================================
@@ -1484,8 +1504,14 @@ def gate11_judge_d2_vs_repo_judge(*, allow_judge_calls: bool = True,
     repo_only = sum(1 for a, b in pairs if b and not a)
     both_no = sum(1 for a, b in pairs if not a and not b)
     agreement = agree / n_pairs
-    m2_rate = sum(1 for a, _b in pairs if a) / n_pairs
-    repo_rate = sum(1 for _a, b in pairs if b) / n_pairs
+    m2_yes = sum(1 for a, _b in pairs if a)
+    repo_yes = sum(1 for _a, b in pairs if b)
+    m2_rate = m2_yes / n_pairs
+    repo_rate = repo_yes / n_pairs
+    cheap = _mod("cheap")
+    agreement_ci = cheap.wilson_interval(agree, n_pairs)
+    m2_ci = cheap.wilson_interval(m2_yes, n_pairs)
+    repo_ci = cheap.wilson_interval(repo_yes, n_pairs)
     delta = m2_rate - repo_rate
     kappa = _cohen_kappa(pairs)
     max_delta = float(_cfg("D2_MAX")) / 2.0
@@ -1493,8 +1519,10 @@ def gate11_judge_d2_vs_repo_judge(*, allow_judge_calls: bool = True,
     print(f"   {n_pairs} transcripts scored by both judges (source: {source})")
     print(f"     both yes {both_yes:>4}   M2 only {m2_only:>4}   "
           f"repo only {repo_only:>4}   both no {both_no:>4}")
-    print(f"     agreement {agreement:.3f}   Cohen kappa {_fmt(kappa, 3)}")
-    print(f"     D2(M2) {m2_rate:.3f}   D2(repo) {repo_rate:.3f}   "
+    print(f"     agreement {agreement:.3f} (95% Wilson [{agreement_ci[0]:.3f}, "
+          f"{agreement_ci[1]:.3f}], n={n_pairs})   Cohen kappa {_fmt(kappa, 3)}")
+    print(f"     D2(M2) {m2_rate:.3f} [{m2_ci[0]:.3f}, {m2_ci[1]:.3f}]   "
+          f"D2(repo) {repo_rate:.3f} [{repo_ci[0]:.3f}, {repo_ci[1]:.3f}]   "
           f"delta {delta:+.3f}   (ceiling +/-{max_delta:.3f} = D2_MAX/2)")
 
     ok = gate(name,
@@ -1505,7 +1533,14 @@ def gate11_judge_d2_vs_repo_judge(*, allow_judge_calls: bool = True,
               "every M1.5 comparison is wrong by that amount, and a cell can cross D2_MAX "
               "because the prompt changed rather than because the model did")
     return dict(gate=name, passed=ok, skipped=False, source=source, n=n_pairs,
-                agreement=agreement, kappa=kappa, m2_rate=m2_rate, repo_rate=repo_rate,
+                agreement=agreement, agreement_count=agree,
+                agreement_ci_low=agreement_ci[0], agreement_ci_high=agreement_ci[1],
+                agreement_n=n_pairs, kappa=kappa,
+                m2_rate=m2_rate, m2_rate_count=m2_yes,
+                m2_rate_ci_low=m2_ci[0], m2_rate_ci_high=m2_ci[1], m2_rate_n=n_pairs,
+                repo_rate=repo_rate, repo_rate_count=repo_yes,
+                repo_rate_ci_low=repo_ci[0], repo_rate_ci_high=repo_ci[1],
+                repo_rate_n=n_pairs,
                 delta=delta, max_delta=max_delta,
                 table=dict(both_yes=both_yes, m2_only=m2_only, repo_only=repo_only,
                            both_no=both_no))
@@ -1915,18 +1950,29 @@ def r15_degeneracy_backstop() -> dict:
     name_d = "R15 degeneracy detector fires on collapsed output"
     collapsed = bool(cheap.degenerate(_R15_COLLAPSED))
     healthy = bool(cheap.degenerate(_R15_HEALTHY))
-    s2_all_bad = float(cheap.measure_S2([_R15_COLLAPSED] * 5)["s2"])
-    s2_all_good = float(cheap.measure_S2([_R15_HEALTHY] * 5)["s2"])
+    bad_row = cheap.measure_S2([_R15_COLLAPSED] * 5)
+    good_row = cheap.measure_S2([_R15_HEALTHY] * 5)
+    s2_all_bad = float(bad_row["s2"])
+    s2_all_good = float(good_row["s2"])
     print(f"   bug 27's text ('## ## ...'): degenerate={collapsed}, S2 over 5 copies "
-          f"= {s2_all_bad:.2f}")
+          f"= {s2_all_bad:.2f} [{bad_row['s2_ci_low']:.2f}, {bad_row['s2_ci_high']:.2f}], "
+          f"n={bad_row['s2_n']}")
     print(f"   an ordinary sentence        : degenerate={healthy}, S2 over 5 copies "
-          f"= {s2_all_good:.2f}")
+          f"= {s2_all_good:.2f} [{good_row['s2_ci_low']:.2f}, "
+          f"{good_row['s2_ci_high']:.2f}], n={good_row['s2_n']}")
     ok_d = gate(name_d,
                 collapsed and not healthy and s2_all_bad == 0.0 and s2_all_good == 1.0,
                 f"detector says collapsed={collapsed} healthy={healthy}, S2 {s2_all_bad:.2f} "
                 f"/ {s2_all_good:.2f}. Bug 27's cell would pass sanity again")
     out["detector"] = dict(passed=ok_d, collapsed=collapsed, healthy=healthy,
-                           s2_collapsed=s2_all_bad, s2_healthy=s2_all_good)
+                           s2_collapsed=s2_all_bad,
+                           s2_collapsed_ci_low=bad_row["s2_ci_low"],
+                           s2_collapsed_ci_high=bad_row["s2_ci_high"],
+                           s2_collapsed_n=bad_row["s2_n"],
+                           s2_healthy=s2_all_good,
+                           s2_healthy_ci_low=good_row["s2_ci_low"],
+                           s2_healthy_ci_high=good_row["s2_ci_high"],
+                           s2_healthy_n=good_row["s2_n"])
 
     name_w = "R15 S4 folds S2 in with min()"
     path = _run_file("verified.jsonl")

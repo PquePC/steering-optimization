@@ -9,7 +9,9 @@ whole scan: spec section 5 splits the pipeline into a cheap tier (forward passes
   measure_E5           spec 5.6 - Judge E5 against the cached unsteered reference A
   measure_S1           spec 5.7 - Judge S1 on the SAME responses, concept withheld
   measure_D2           spec 5.9 - N_D2 forced-ID generations, Judge D2, D4 distribution
-  judge_fpr            spec 5.8 - two E5 calls on unsteered/unsteered pairs, once per concept
+  judge_fpr            E5 null on every open prompt, once per concept
+  judge_s1_null        S1 null on unsteered/unsteered pairs, checked against objective S2
+  judge_d2_null        unsteered forced-ID baseline, reported and never selected away
   verify_cell          one verified.jsonl row: generate once, fan out to E5, S1 and B
 
 Three structural points, each of which is a bug that already happened once:
@@ -65,6 +67,9 @@ __all__ = [
     "measure_S1",
     "measure_D2",
     "judge_fpr",
+    "judge_s1_null",
+    "judge_d2_null",
+    "judge_nulls",
     "verify_cell",
     # additions, documented in the module docstring and in each function
     "generate_unsteered",
@@ -81,6 +86,7 @@ __all__ = [
     "CIS_FILE", "D2_FILE",
     "FAILURE_MODES", "DAMAGE_MODES", "RETRIEVAL_MODES",
     "GEN_BATCH_MAX",
+    "BASE_FPR_KEY", "BASE_S1_NULL_KEY", "BASE_D2_NULL_KEY",
 ]
 
 
@@ -126,15 +132,13 @@ RETRIEVAL_MODES: tuple[str, ...] = ("wrong_concept", "vague")
 DAMAGE_MODES: tuple[str, ...] = ("degenerate", "saturated", "empty")
 FAILURE_MODES: tuple[str, ...] = ("n/a",) + RETRIEVAL_MODES + DAMAGE_MODES + ("unrecognised",)
 
-# Spec 5.8: "Two extra Judge E5 calls where BOTH A and B are unsteered samples of the same
-# prompt", and Phase 0 is costed at exactly 2 judge calls.
-N_FPR_PAIRS: int = 2
-
 # Where the Phase 0 unsteered completions live on RUN.base. Spec 5.1 step 4: three unsteered
 # completions per E5 prompt; sample 1 is the paired reference A used by every E5 and S1 call,
 # samples 2-3 supply the control pairs of 5.8.
 BASE_UNSTEERED_KEY: str = "unsteered"
 BASE_FPR_KEY: str = "judge_fpr"
+BASE_S1_NULL_KEY: str = "judge_s1_null"
+BASE_D2_NULL_KEY: str = "judge_d2_null"
 
 # The two sentinels that stand in for the model-authored text in the S1 blindness frame.
 # Chosen to contain no English word that could be a concept, so the frame check can never
@@ -225,6 +229,17 @@ def _concept() -> str:
 def _cfg(key: str) -> Any:
     """One CONFIG value, hard-indexed. A missing knob must raise, never default."""
     return _run().config[key]
+
+
+def _d2_null_fields() -> dict:
+    """The report-only unsteered baseline copied beside every real D2 reading."""
+    detail = (_run().base or {}).get(BASE_D2_NULL_KEY)
+    if detail is None:
+        return dict(d2_null=None, d2_null_ci_low=None, d2_null_ci_high=None,
+                    d2_null_n=None, d2_null_reference=float(_cfg("D2_NULL_REFERENCE")))
+    return {key: detail[key] for key in
+            ("d2_null", "d2_null_ci_low", "d2_null_ci_high", "d2_null_n",
+             "d2_null_reference")}
 
 
 def _now() -> str:
@@ -999,7 +1014,8 @@ def _score_s1(units: Sequence[dict], results: Sequence[dict], ctx: dict) -> dict
     for unit, result in zip(units, results):
         parsed, raw, failure = _parse_or_fail(result, JUDGE_S1_ID, judges.parse_s1)
         row = dict(
-            measure="S1", judge_id=JUDGE_S1_ID, phase=ctx["phase"], layer=ctx["layer"],
+            measure=ctx.get("measure", "S1"), judge_id=JUDGE_S1_ID,
+            phase=ctx["phase"], layer=ctx["layer"],
             r=ctx["r"], alpha=ctx["alpha"], vec_fingerprint=ctx["vec_fingerprint"],
             prompt_id=unit["unit_id"], cache_key=list(unit["cache_key"]),
             task_prompt=unit["task_prompt"],
@@ -1127,9 +1143,20 @@ def _d4_distribution(modes: Sequence[str]) -> dict:
     dist = {mode: (counts[mode] / n if n else 0.0) for mode in FAILURE_MODES if mode != "n/a"}
     damage = sum(dist[mode] for mode in DAMAGE_MODES)
     retrieval = sum(dist[mode] for mode in RETRIEVAL_MODES)
+    mode_ci = ({mode: dict(zip(("low", "high"), cheap.wilson_interval(counts[mode], n)), n=n)
+                for mode in FAILURE_MODES if mode != "n/a"} if n else {})
+    damage_count = sum(counts[mode] for mode in DAMAGE_MODES)
+    retrieval_count = sum(counts[mode] for mode in RETRIEVAL_MODES)
+    damage_ci = cheap.wilson_interval(damage_count, n) if n else (None, None)
+    retrieval_ci = cheap.wilson_interval(retrieval_count, n) if n else (None, None)
     dominant = max(dist, key=lambda m: dist[m]) if n else None
     return dict(d4=dist, d4_counts=counts, d4_n=n, d4_dominant=dominant,
-                d4_damage_frac=damage, d4_retrieval_frac=retrieval,
+                d4_ci=mode_ci,
+                d4_damage_frac=damage, d4_damage_count=damage_count,
+                d4_damage_frac_ci_low=damage_ci[0], d4_damage_frac_ci_high=damage_ci[1],
+                d4_retrieval_frac=retrieval, d4_retrieval_count=retrieval_count,
+                d4_retrieval_frac_ci_low=retrieval_ci[0],
+                d4_retrieval_frac_ci_high=retrieval_ci[1],
                 # The reading of the table in spec 9.2, computed once here so controls.py and
                 # the batch driver's FATAL_CONSECUTIVE_D4S rule cannot disagree about it.
                 d4_reading=("damage" if n and damage > retrieval else
@@ -1154,15 +1181,16 @@ def _score_d2(units: Sequence[dict], results: Sequence[dict], ctx: dict) -> dict
     try:
         for unit, result in zip(units, results):
             parsed, raw, failure = _parse_or_fail(result, JUDGE_D2_ID, judges.parse_d2)
+            measure = ctx.get("measure", "D2")
             judge_row = dict(
-                measure="D2", judge_id=JUDGE_D2_ID, phase=ctx["phase"], layer=ctx["layer"],
+                measure=measure, judge_id=JUDGE_D2_ID, phase=ctx["phase"], layer=ctx["layer"],
                 r=ctx["r"], alpha=ctx["alpha"], vec_fingerprint=ctx["vec_fingerprint"],
                 trial=unit["trial"], cache_key=list(unit["cache_key"]),
                 response=unit["response"], payload=unit["payload"], raw=raw,
                 judge_error=failure,
             )
             transcript = dict(
-                measure="D2", phase=ctx["phase"], layer=ctx["layer"], r=ctx["r"],
+                measure=measure, phase=ctx["phase"], layer=ctx["layer"], r=ctx["r"],
                 alpha=ctx["alpha"], vec_fingerprint=ctx["vec_fingerprint"],
                 trial=unit["trial"], response=unit["response"],
                 identified=None, failure_mode=None, justification=None,
@@ -1217,8 +1245,10 @@ def _score_d2(units: Sequence[dict], results: Sequence[dict], ctx: dict) -> dict
     # and "the model did not name the concept" are different facts, and only the second is
     # evidence of covertness.
     d2_se = math.sqrt(d2 * (1.0 - d2) / scored)
+    d2_ci_low, d2_ci_high = cheap.wilson_interval(identified, scored)
 
-    out = dict(d2=d2, d2_se=d2_se, n_d2=scored, n=scored, d2_identified=identified,
+    out = dict(d2=d2, d2_se=d2_se, d2_ci_low=d2_ci_low, d2_ci_high=d2_ci_high,
+               n_d2=scored, n=scored, d2_identified=identified,
                d2_judge_errors=len(errors), d2_judge_error_detail=errors,
                d2_n_generated=len(units))
     out.update(_d4_distribution(modes))
@@ -1290,6 +1320,7 @@ def measure_D2(layer: int, alpha: float, n: int, *, phase: str | None = None,
     out = _score_d2(units, results, ctx)
     out.update(layer=int(layer), alpha=float(alpha), r=dose, phase=phase_label,
                vec_fingerprint=vec_fp, responses=responses, trials=trials)
+    out.update(_d2_null_fields())
     return out
 
 
@@ -1298,23 +1329,24 @@ def measure_D2(layer: int, alpha: float, n: int, *, phase: str | None = None,
 # =====================================================================================
 
 def _fpr_prompt_rows() -> list[dict]:
-    """The prompts used for the control pairs: the first `N_FPR_PAIRS` OPEN prompts.
+    """Every open E5 prompt, with CONFIG pinning the expected count.
 
     Open rather than verifiable, deliberately. Two unsteered samples of "What is 17 x 23?"
     are near-identical, so a judge scores them 0 without being tested at all; two unsteered
     samples of "Tell me a short story" differ substantially, which is exactly the condition
     under which a judge that expects to find influence invents some. The control is only worth
-    its two calls if it is the harder case.
+    its calls if it is the harder case.
 
     Derived from E5_PROMPTS rather than hard-coded ids, so editing the prompt set cannot leave
     this pointing at a prompt that no longer exists.
     """
     rows = [row for row in prompt_assets.E5_PROMPTS if row["kind"] == "open"]
-    if len(rows) < N_FPR_PAIRS:
+    expected = int(_cfg("N_FPR_PAIRS"))
+    if len(rows) != expected:
         raise RuntimeError(
-            f"spec 5.8 needs {N_FPR_PAIRS} control pairs but E5_PROMPTS has {len(rows)} open "
-            "prompts")
-    return rows[:N_FPR_PAIRS]
+            f"N_FPR_PAIRS={expected} but E5_PROMPTS has {len(rows)} open prompts. The E5 null "
+            "must use ALL available open prompts: a stale count silently changes its noise floor")
+    return rows
 
 
 def judge_fpr() -> float:
@@ -1334,7 +1366,7 @@ def judge_fpr() -> float:
     its per-pair detail are cached on `RUN.base["judge_fpr"]`, so a second caller (gate 3, the
     status board, a resumed Phase 0) reads the number instead of re-spending the calls.
 
-    Writes its two calls to `judge_e5.jsonl` like any other E5 call - they are E5 calls, and
+    Writes its calls to `judge_e5.jsonl` like any other E5 call - they are E5 calls, and
     keeping them in the same file is what lets gate 3 be checked against the same rows E5 was
     computed from.
     """
@@ -1406,13 +1438,153 @@ def judge_fpr() -> float:
             "floor under E5 is not the same as a zero floor.")
 
     mean, se, n = model.mean_se(scores)
+    ceiling = float(_cfg("JUDGE_FPR_MAX"))
+    within = sum(1 for score in scores if score <= ceiling)
+    within_ci_low, within_ci_high = cheap.wilson_interval(within, n)
     run.base[BASE_FPR_KEY] = dict(fpr=mean, fpr_se=se, fpr_n=n, pairs=pairs,
                                   judge_errors=len(errors), judge_error_detail=errors,
-                                  ceiling=float(_cfg("JUDGE_FPR_MAX")))
+                                  ceiling=ceiling,
+                                  # The primary null reading is a MEAN judge score and keeps
+                                  # mean +/- SE. This companion is the actual binomial rate:
+                                  # how many prompt-level scores cleared the ceiling.
+                                  within_ceiling_count=within,
+                                  within_ceiling_rate=within / n,
+                                  within_ceiling_rate_ci_low=within_ci_low,
+                                  within_ceiling_rate_ci_high=within_ci_high,
+                                  within_ceiling_rate_n=n)
     print(f"judge FPR  : {mean:.2f} over {n} unsteered pairs"
           + (f" +/- {se:.2f} SE" if se is not None else "")
+          + f"; prompt pass rate {within / n:.2f} (95% Wilson "
+            f"[{within_ci_low:.2f}, {within_ci_high:.2f}], n={n})"
           + f"   (ceiling {float(_cfg('JUDGE_FPR_MAX')):g})")
     return float(mean)
+
+
+def judge_s1_null() -> dict:
+    """Judge S1 on unsteered B against unsteered A, cross-checked by objective S2.
+
+    S1 alone cannot tell a harsh judge from genuinely poor model output. S2 makes the null
+    gate admissible: low S1 while S2 says the same responses are mechanically healthy is an
+    instrument disagreement and fails; low readings on both are model behaviour and are
+    reported without aborting. The authored S1 frame remains concept-blind through
+    `_s1_units`, exactly like every real S1 call.
+    """
+    run = _run()
+    if BASE_S1_NULL_KEY in run.base:
+        return dict(run.base[BASE_S1_NULL_KEY])
+
+    rows = list(prompt_assets.E5_PROMPTS)
+    ids = [str(row["id"]) for row in rows]
+    texts = [str(row["text"]) for row in rows]
+    responses = []
+    for pid in ids:
+        samples = unsteered_samples(pid)
+        if len(samples) < 2:
+            raise RuntimeError(
+                f"S1 null for {pid!r} needs two unsteered samples, Phase 0 stored "
+                f"{len(samples)}")
+        responses.append(samples[1])
+
+    phase_label = "CAL_NULL_S1"
+    vec_fp = vectors.vec_fingerprint(None)
+    units = _s1_units(ids, texts, responses, concept=_concept(), phase=phase_label,
+                      layer=None, r=None, vec_fp=vec_fp)
+    results = _issue([_item(unit) for unit in units])
+    s1 = _score_s1(units, results,
+                   dict(phase=phase_label, layer=None, r=None, alpha=None,
+                        vec_fingerprint=vec_fp, measure="S1_NULL"))
+    s2 = cheap.measure_S2(responses)
+    minimum = float(_cfg("S1_NULL_MIN"))
+    s1_low = float(s1["s1"]) < minimum
+    s2_fine = float(s2["s2"]) >= minimum
+    judge_fault = bool(s1_low and s2_fine)
+
+    passing = sum(1 for row in s1["s1_per_prompt"]
+                  if float(row["score_integrity"]) / 10.0 >= minimum)
+    n = int(s1["s1_n"])
+    pass_ci_low, pass_ci_high = cheap.wilson_interval(passing, n)
+    detail = dict(
+        s1_null=float(s1["s1"]), s1_null_se=s1["s1_se"], s1_null_n=n,
+        s1_null_min=minimum, s1_null_pass_count=passing,
+        s1_null_pass_rate=passing / n,
+        s1_null_pass_rate_ci_low=pass_ci_low,
+        s1_null_pass_rate_ci_high=pass_ci_high,
+        s2=float(s2["s2"]), s2_n=int(s2["s2_n"]),
+        s2_ci_low=s2["s2_ci_low"], s2_ci_high=s2["s2_ci_high"],
+        s1_low=s1_low, s2_fine=s2_fine, judge_fault=judge_fault,
+        passed=not judge_fault,
+        reading=("judge_fault" if judge_fault else
+                 ("model_output_degenerate" if s1_low else "healthy")),
+        per_prompt=s1["s1_per_prompt"], s2_reasons=s2["s2_reasons"],
+        judge_errors=s1["s1_judge_errors"],
+    )
+    run.base[BASE_S1_NULL_KEY] = detail
+    print(f"S1 null    : {detail['s1_null']:.2f} +/- "
+          f"{float(detail['s1_null_se'] or 0.0):.2f} SE; "
+          f"prompt pass rate {detail['s1_null_pass_rate']:.2f} (95% Wilson "
+          f"[{detail['s1_null_pass_rate_ci_low']:.2f}, "
+          f"{detail['s1_null_pass_rate_ci_high']:.2f}], n={n}); "
+          f"S2={detail['s2']:.2f} [{detail['s2_ci_low']:.2f}, "
+          f"{detail['s2_ci_high']:.2f}], n={detail['s2_n']}; {detail['reading']}")
+    return dict(detail)
+
+
+def judge_d2_null() -> dict:
+    """Unsteered forced-ID baseline, with transcripts; report-only at every reading.
+
+    A nonzero null may be judge error or genuine model confabulation. The pipeline cannot
+    distinguish those live, so this function records the generations and Wilson interval,
+    flags values above one identification in N_D2, and NEVER returns a fatal verdict. Real
+    cell selection continues to compare raw D2 with D2_MAX; the baseline is not subtracted.
+    """
+    run = _run()
+    if BASE_D2_NULL_KEY in run.base:
+        return dict(run.base[BASE_D2_NULL_KEY])
+
+    n = int(_cfg("N_D2"))
+    trials = list(range(1, n + 1))
+    forced, start = prompt_assets.forced_prompts(trials)
+    if start is None:
+        raise RuntimeError("D2 null could not locate the forced-ID trial marker")
+    responses = generate_unsteered(
+        forced, int(_cfg("MAX_NEW_TOKENS")), float(_cfg("TEMPERATURE")),
+        start_positions=[int(start)] * n)
+    phase_label = "CAL_NULL_D2"
+    vec_fp = vectors.vec_fingerprint(None)
+    units = _d2_units(trials, responses, concept=_concept(), phase=phase_label,
+                      layer=None, r=None, vec_fp=vec_fp)
+    results = _issue([_item(unit) for unit in units])
+    out = _score_d2(units, results,
+                    dict(phase=phase_label, layer=None, r=None, alpha=None,
+                         vec_fingerprint=vec_fp, measure="D2_NULL"))
+    reference = float(_cfg("D2_NULL_REFERENCE"))
+    derived = 1.0 / n
+    if not math.isclose(reference, derived, rel_tol=0.0, abs_tol=1e-12):
+        raise RuntimeError(
+            f"D2_NULL_REFERENCE={reference} but 1/N_D2={derived}; the reporting line must "
+            "remain one identification in the actual null sample")
+    detail = dict(
+        d2_null=float(out["d2"]), d2_null_se=out["d2_se"],
+        d2_null_ci_low=out["d2_ci_low"], d2_null_ci_high=out["d2_ci_high"],
+        d2_null_n=int(out["n_d2"]), d2_null_identified=int(out["d2_identified"]),
+        d2_null_reference=reference, exceeds_reference=float(out["d2"]) > reference,
+        report_only=True, passed=None,
+        transcripts_file=D2_FILE, judge_errors=int(out["d2_judge_errors"]),
+        d4=out["d4"], d4_ci=out["d4_ci"],
+    )
+    run.base[BASE_D2_NULL_KEY] = detail
+    print(f"D2 null    : {detail['d2_null']:.2f} "
+          f"[{detail['d2_null_ci_low']:.2f}, {detail['d2_null_ci_high']:.2f}] "
+          f"n={detail['d2_null_n']} (reference {reference:.2f}; report only)")
+    return dict(detail)
+
+
+def judge_nulls() -> dict:
+    """Measure all three Phase 0 judge nulls before any judged science phase runs."""
+    judge_fpr()
+    fpr = dict(_run().base[BASE_FPR_KEY])
+    fpr["passed"] = float(fpr["fpr"]) <= float(_cfg("JUDGE_FPR_MAX"))
+    return dict(e5=fpr, s1=judge_s1_null(), d2=judge_d2_null())
 
 
 # =====================================================================================
@@ -1549,14 +1721,28 @@ def verify_cell(layer: int, r: float, *, phase: str | None = None,
         e5=e5["e5"], e5_min=e5["e5_min"], e5_se=e5["e5_se"], e5_n=e5["e5_n"],
         # sanity (spec 5.7, 5.5, 5.4 and section 7)
         s1=s1_v, s1_se=s1["s1_se"], s1_min=s1["s1_min"],
-        s2=s2_v, degenerate_frac=s2["degenerate_frac"],
-        s3=s3_v, s3_correct=s3["s3_correct"], s3_margin=s3["s3_margin"], s3_n=s3["s3_n"],
+        s2=s2_v, s2_ci_low=s2["s2_ci_low"], s2_ci_high=s2["s2_ci_high"],
+        s2_n=s2["s2_n"], degenerate_frac=s2["degenerate_frac"],
+        degenerate_frac_ci_low=s2["degenerate_frac_ci_low"],
+        degenerate_frac_ci_high=s2["degenerate_frac_ci_high"],
+        s3=s3_v, s3_correct=s3["s3_correct"], s3_margin=s3["s3_margin"],
+        s3_n=s3["s3_n"], s3_acc=s3["s3_acc"],
+        s3_acc_ci_low=s3["s3_acc_ci_low"], s3_acc_ci_high=s3["s3_acc_ci_high"],
         s4=s4, s4_term=("S1" if s4 == s1_v else ("S2" if s4 == s2_v else "S3")),
         # detection (spec 5.9)
-        d2=d2_v, d2_se=d2["d2_se"], n_d2=d2["n_d2"], d2_identified=d2["d2_identified"],
+        d2=d2_v, d2_se=d2["d2_se"], d2_ci_low=d2["d2_ci_low"],
+        d2_ci_high=d2["d2_ci_high"], n_d2=d2["n_d2"],
+        d2_identified=d2["d2_identified"],
         d4=d2["d4"], d4_counts=d2["d4_counts"], d4_n=d2["d4_n"],
+        d4_ci=d2["d4_ci"],
         d4_dominant=d2["d4_dominant"], d4_damage_frac=d2["d4_damage_frac"],
-        d4_retrieval_frac=d2["d4_retrieval_frac"], d4_reading=d2["d4_reading"],
+        d4_damage_count=d2["d4_damage_count"],
+        d4_damage_frac_ci_low=d2["d4_damage_frac_ci_low"],
+        d4_damage_frac_ci_high=d2["d4_damage_frac_ci_high"],
+        d4_retrieval_frac=d2["d4_retrieval_frac"],
+        d4_retrieval_count=d2["d4_retrieval_count"], d4_reading=d2["d4_reading"],
+        d4_retrieval_frac_ci_low=d2["d4_retrieval_frac_ci_low"],
+        d4_retrieval_frac_ci_high=d2["d4_retrieval_frac_ci_high"],
         # the section 7 verdicts
         usable=bool(usable), qualifies=qualifies,
         # what was excluded, so no denominator in this row is anonymous
@@ -1565,8 +1751,14 @@ def verify_cell(layer: int, r: float, *, phase: str | None = None,
         e5_per_prompt=e5["e5_per_prompt"], s1_per_prompt=s1["s1_per_prompt"],
         prompt_ids=ids,
     )
+    row.update(_d2_null_fields())
 
     print(f"verify     : L{layer} r={r:.3f} a={alpha:.2f}  "
-          f"E5={e5_v:.2f}  S4={s4:.2f} ({row['s4_term']})  D2={d2_v:.2f}  "
+          f"E5={e5_v:.2f} +/- {float(e5['e5_se'] or 0.0):.2f} SE  "
+          f"S4={s4:.2f} ({row['s4_term']})  "
+          f"D2={d2_v:.2f} [{d2['d2_ci_low']:.2f}, {d2['d2_ci_high']:.2f}] "
+          f"n={d2['n_d2']} (unsteered {row['d2_null']:.2f} "
+          f"[{row['d2_null_ci_low']:.2f}, {row['d2_null_ci_high']:.2f}], "
+          f"n={row['d2_null_n']})  "
           f"{'QUALIFIES' if qualifies else ('usable' if usable else 'unusable')}")
     return row

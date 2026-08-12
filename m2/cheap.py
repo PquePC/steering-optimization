@@ -60,6 +60,7 @@ __all__ = [
     "ALLOW_FILLER",
     "CAP_BASE_KEY",
     "S3_MARGIN_BASE_KEY",
+    "wilson_interval",
 ]
 
 
@@ -183,6 +184,35 @@ def _binom_se(p: float | None, n: int) -> float | None:
     return math.sqrt(max(p * (1.0 - p), 0.0) / n)
 
 
+def wilson_interval(successes: int, n: int, z: float | None = None) -> tuple[float, float]:
+    """Wilson score interval for one binomial count.
+
+    This is the pipeline's ONE rate-interval implementation. In particular, 0/n and n/n
+    retain honest non-zero width; the normal approximation's `p +/- SE` collapses to a point
+    exactly where this project's rates most often land. `n` is always the surviving scored
+    denominator (judge errors are excluded before this is called), never the planned sample.
+
+    Mean-valued measures do not use this helper: E5 and S1 remain mean +/- SE. Confusing a
+    bounded judge score with a Bernoulli count would manufacture an interval with no sampling
+    interpretation.
+    """
+    successes = int(successes)
+    n = int(n)
+    if n <= 0:
+        raise ValueError(f"Wilson interval needs n > 0, got {n}")
+    if successes < 0 or successes > n:
+        raise ValueError(f"Wilson interval needs 0 <= successes <= n, got {successes}/{n}")
+    z = float(_cfg()["RATE_CI_Z"] if z is None else z)
+    if not math.isfinite(z) or z <= 0:
+        raise ValueError(f"Wilson interval needs a finite positive z, got {z!r}")
+    p = successes / n
+    z2 = z * z
+    denom = 1.0 + z2 / n
+    centre = (p + z2 / (2.0 * n)) / denom
+    radius = z * math.sqrt((p * (1.0 - p) + z2 / (4.0 * n)) / n) / denom
+    return max(0.0, centre - radius), min(1.0, centre + radius)
+
+
 # =====================================================================================
 # 5.2  E6 - reachability rate
 # =====================================================================================
@@ -235,7 +265,9 @@ def measure_E6(layer: int, alpha: float) -> dict:
         raise RuntimeError("E5_PROMPTS is empty - E6 would be a rate over nothing")
     masses = [row["mass"] for row in per]
     ranks = [row["rank"] for row in per]
-    reach = sum(1 for row in per if row["reached"]) / n
+    reached = sum(1 for row in per if row["reached"])
+    reach = reached / n
+    reach_ci_low, reach_ci_high = wilson_interval(reached, n)
     mass_mean, mass_se, _ = model.mean_se(masses)
 
     return dict(
@@ -243,6 +275,9 @@ def measure_E6(layer: int, alpha: float) -> dict:
         # Defence 12: a rate needs its sample size and its spread. Binomial across the 12
         # prompts, which is the only variance a deterministic forward-pass measure has.
         reach_se=_binom_se(reach, n),
+        reach_ci_low=reach_ci_low,
+        reach_ci_high=reach_ci_high,
+        reach_n=n,
         e6_n=n,
         # Median, not mean: concept mass is heavy-tailed across prompts (one prompt at 0.6 with
         # eleven at 1e-4 is not "mean 0.05 reachable"), and the median is what the spec names.
@@ -392,6 +427,8 @@ def measure_D3(layer: int, alpha: float, verbose: bool = False) -> dict:
     bm, bse, _ = model.mean_se([row["base_mass"] for row in per])
     ranks = [row["rank"] for row in per]
 
+    d3_hits = sum(1 for row_ in per if row_["best"] > rate_thresh)
+    d3_rate_ci_low, d3_rate_ci_high = wilson_interval(d3_hits, len(per))
     row = dict(
         d3=m,
         d3_se=se,                       # defence 12: SE across trial numbers
@@ -405,7 +442,11 @@ def measure_D3(layer: int, alpha: float, verbose: bool = False) -> dict:
         d3_lift=(None if (m is None or bm is None) else m - bm),
         # A rate-shaped companion so D3 can be read on the same axis as D2, which is a fraction
         # of trials. The threshold is arbitrary and is tuned during gate 5 (spec 5.3).
-        d3_rate=sum(1 for row_ in per if row_["best"] > rate_thresh) / len(per),
+        d3_rate=d3_hits / len(per),
+        d3_rate_count=d3_hits,
+        d3_rate_n=len(per),
+        d3_rate_ci_low=d3_rate_ci_low,
+        d3_rate_ci_high=d3_rate_ci_high,
         d3_rate_thresh=rate_thresh,
         d3_rank_med=statistics.median(ranks),
         d3_rank_best=min(ranks),
@@ -423,7 +464,9 @@ def measure_D3(layer: int, alpha: float, verbose: bool = False) -> dict:
         print("")
         print(f"  D3 mass       : {m:.4f}" + (f" +/- {se:.4f}" if se else ""))
         print(f"  unsteered     : {bm:.4f}")
-        print(f"  rate (>{rate_thresh:g})  : {row['d3_rate']:.2f}")
+        print(f"  rate (>{rate_thresh:g})  : {row['d3_rate']:.2f} (95% Wilson "
+              f"[{row['d3_rate_ci_low']:.2f}, {row['d3_rate_ci_high']:.2f}], "
+              f"n={row['d3_rate_n']})")
         print(f"  rank median   : {row['d3_rank_med']}  (best {row['d3_rank_best']})")
     return row
 
@@ -698,9 +741,13 @@ def measure_S3_baseline() -> dict:
     ctx.base[CAP_BASE_KEY] = int(out["correct"])
     ctx.base[S3_MARGIN_BASE_KEY] = out["margin"]
     ctx.base["s3_n"] = int(out["n"])
-    return dict(cap_base=int(out["correct"]), s3_margin_base=out["margin"],
+    cap_base = int(out["correct"])
+    n = int(out["n"])
+    ci_low, ci_high = wilson_interval(cap_base, n)
+    return dict(cap_base=cap_base, s3_margin_base=out["margin"],
                 s3_margin_base_se=out["margin_se"], s3_n=int(out["n"]),
-                s3_acc_base=out["correct"] / out["n"] if out["n"] else None,
+                s3_acc_base=cap_base / n, s3_acc_base_ci_low=ci_low,
+                s3_acc_base_ci_high=ci_high, s3_acc_base_n=n,
                 s3_per_item=out["per_item"])
 
 
@@ -742,6 +789,8 @@ def measure_S3(layer: int, alpha: float) -> dict:
     cap_base = int(ctx.base[CAP_BASE_KEY])
     out = _s3_pass(int(layer), float(alpha), _vec_for(layer, alpha))
     correct = int(out["correct"])
+    n = int(out["n"])
+    acc_ci_low, acc_ci_high = wilson_interval(correct, n)
 
     row = dict(
         s3_correct=correct,
@@ -750,8 +799,11 @@ def measure_S3(layer: int, alpha: float) -> dict:
         s3=correct / max(cap_base, 1),
         s3_margin=out["margin"],
         s3_margin_se=out["margin_se"],          # defence 12: SE across the 57 items
-        s3_n=int(out["n"]),
-        s3_acc=correct / out["n"] if out["n"] else None,
+        s3_n=n,
+        s3_acc=correct / n,
+        s3_acc_ci_low=acc_ci_low,
+        s3_acc_ci_high=acc_ci_high,
+        s3_acc_n=n,
         s3_cap_base=cap_base,
         s3_per_item=out["per_item"],
     )
@@ -860,11 +912,22 @@ def measure_S2(responses: list[str]) -> dict:
 
     reasons = [degeneracy_reason(str(text)) for text in responses]
     bad = [r for r in reasons if r is not None]
-    frac = len(bad) / len(reasons)
+    n = len(reasons)
+    bad_n = len(bad)
+    good_n = n - bad_n
+    frac = bad_n / n
+    bad_ci_low, bad_ci_high = wilson_interval(bad_n, n)
+    good_ci_low, good_ci_high = wilson_interval(good_n, n)
     return dict(
         s2=1.0 - frac,
+        s2_count=good_n,
+        s2_ci_low=good_ci_low,
+        s2_ci_high=good_ci_high,
         degenerate_frac=frac,
-        s2_n=len(reasons),
+        degenerate_count=bad_n,
+        degenerate_frac_ci_low=bad_ci_low,
+        degenerate_frac_ci_high=bad_ci_high,
+        s2_n=n,
         # Which rule fired, counted by its fixed label. A cell that is 100% degenerate because
         # every response is empty is a different failure from one that is 100% degenerate
         # because every response loops, and the D4 reading of spec 9.2 turns on that
@@ -920,8 +983,10 @@ def scan_cell(layer: int, r: float, responses: list[str] | None = None) -> dict:
             # scan file without recomputing it, and so "unreachable" is a number and not a mood.
             alpha_needed=exc.alpha,
             alpha_ceil=exc.ceiling,
-            reach=None, reach_se=None, e6_mass_median=None, e6_rank_med=None,
-            d3=None, d3_se=None, d3_rate=None, d3_rank_med=None,
+            reach=None, reach_se=None, reach_ci_low=None, reach_ci_high=None, reach_n=None,
+            e6_mass_median=None, e6_rank_med=None,
+            d3=None, d3_se=None, d3_rate=None, d3_rate_ci_low=None,
+            d3_rate_ci_high=None, d3_rate_n=None, d3_rank_med=None,
             s2=None, s3=None, s3_margin=None, s3_correct=None, s3_n=None,
             secs=round(time.time() - t0, 3),
         ))
@@ -937,18 +1002,29 @@ def scan_cell(layer: int, r: float, responses: list[str] | None = None) -> dict:
         reachable=True,
         reach=e6["reach"],
         reach_se=e6["reach_se"],
+        reach_ci_low=e6["reach_ci_low"],
+        reach_ci_high=e6["reach_ci_high"],
+        reach_n=e6["reach_n"],
         e6_mass_median=e6["e6_mass_median"],
         e6_rank_med=e6["e6_rank_med"],
         d3=d3["d3"],
         d3_se=d3["d3_se"],
         d3_rate=d3["d3_rate"],
+        d3_rate_ci_low=d3["d3_rate_ci_low"],
+        d3_rate_ci_high=d3["d3_rate_ci_high"],
+        d3_rate_n=d3["d3_rate_n"],
         d3_rank_med=d3["d3_rank_med"],
         s2=None if s2 is None else s2["s2"],
         s2_n=None if s2 is None else s2["s2_n"],
+        s2_ci_low=None if s2 is None else s2["s2_ci_low"],
+        s2_ci_high=None if s2 is None else s2["s2_ci_high"],
         s3=s3["s3"],
         s3_margin=s3["s3_margin"],
         s3_correct=s3["s3_correct"],
         s3_n=s3["s3_n"],
+        s3_acc=s3["s3_acc"],
+        s3_acc_ci_low=s3["s3_acc_ci_low"],
+        s3_acc_ci_high=s3["s3_acc_ci_high"],
         # Per-unit timing feeds monitor.RunStatus's rate model, which costs each phase
         # separately because a scan cell (~2 s) and a verification cell (~50 s) are three orders
         # of magnitude apart and one blended rate would give a badly wrong ETA (spec 14.5).

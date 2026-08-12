@@ -486,9 +486,19 @@ def _install_unsteered(samples: dict[str, list[str]]) -> None:
     ctx.base[key] = store
 
 
+def _judge_null_failures(nulls: dict) -> list[str]:
+    """Fatal instrument-null names; D2 is deliberately absent because it is report-only."""
+    failures: list[str] = []
+    if not bool(nulls["e5"]["passed"]):
+        failures.append("E5 judge null")
+    if bool(nulls["s1"]["judge_fault"]):
+        failures.append("S1 judge null (S1/S2 disagreement)")
+    return failures
+
+
 def phase0_calibrate(*, layers: Sequence[int] | None = None, n_unsteered: int = 3,
                      run_liveness: bool = True) -> dict:
-    """Spec 5.1. Everything the rest of the pipeline compares against. **2 judge calls.**
+    """Spec 5.1. Everything the rest of the pipeline compares against, including judge nulls.
 
     In order, and the order is not arbitrary:
 
@@ -508,9 +518,9 @@ def phase0_calibrate(*, layers: Sequence[int] | None = None, n_unsteered: int = 
       8. `cap_base` - unsteered MMLU correctness on the pinned set;
       9. `p_base` - unsteered concept mass per E5 prompt;
      10. `d3_base` - unsteered forced-ID concept mass;
-     11. `judge_fpr` - the two spec 5.8 control-pair calls. **This is the entire judge cost of
-         Phase 0**, and it fires here rather than later so that gate 3 can reject an
-         influence-inventing judge before GPU time is spent on numbers that carry its floor.
+     11. all three judge nulls. E5 and S1 can abort because their live cross-checks isolate an
+         instrument fault; D2 is report-only because confabulation and judge error cannot be
+         separated without reading its persisted transcripts.
 
     Steps 9 and 10 are measured at the reference layer with alpha = 0. The layer is irrelevant
     to an unsteered pass - `cheap._vec_for` returns None at alpha 0 and `model.injected`
@@ -587,22 +597,28 @@ def phase0_calibrate(*, layers: Sequence[int] | None = None, n_unsteered: int = 
     # --- 8/9/10. the cheap baselines --------------------------------------------------
     s3_base = cheap.measure_S3_baseline()
     print(f"cap_base   : {s3_base['cap_base']}/{s3_base['s3_n']} MMLU correct unsteered "
-          f"(acc {s3_base['s3_acc_base']:.3f})")
+          f"(acc {s3_base['s3_acc_base']:.3f}, 95% Wilson "
+          f"[{s3_base['s3_acc_base_ci_low']:.3f}, {s3_base['s3_acc_base_ci_high']:.3f}])")
 
     e6_base = cheap.measure_E6(ref, 0.0)
     p_base = {row["prompt_id"]: row["mass"] for row in e6_base["e6_per_prompt"]}
     ctx.base[BASE_P_KEY] = p_base
     print(f"p_base     : median concept mass {e6_base['e6_mass_median']:.3e} over "
-          f"{e6_base['e6_n']} prompts (unsteered reach {e6_base['reach']:.2f})")
+          f"{e6_base['e6_n']} prompts (unsteered reach {e6_base['reach']:.2f}, 95% Wilson "
+          f"[{e6_base['reach_ci_low']:.2f}, {e6_base['reach_ci_high']:.2f}])")
 
     d3_base_row = cheap.measure_D3(ref, 0.0)
     ctx.base[BASE_D3_KEY] = d3_base_row["d3"]
     print(f"d3_base    : {d3_base_row['d3']:.4f}"
           + (f" +/- {d3_base_row['d3_se']:.4f}" if d3_base_row["d3_se"] is not None else "")
+          + f"   rate {d3_base_row['d3_rate']:.2f} (95% Wilson "
+            f"[{d3_base_row['d3_rate_ci_low']:.2f}, "
+            f"{d3_base_row['d3_rate_ci_high']:.2f}], n={d3_base_row['d3_rate_n']})"
           + f"   rank median {d3_base_row['d3_rank_med']}")
 
-    # --- 11. the judge false-positive floor (spec 5.8) --------------------------------
-    fpr = expensive.judge_fpr()
+    # --- 11. judge nulls --------------------------------------------------------------
+    nulls = expensive.judge_nulls()
+    fpr = float(nulls["e5"]["fpr"])
 
     # --- record -----------------------------------------------------------------------
     out = dict(
@@ -616,14 +632,37 @@ def phase0_calibrate(*, layers: Sequence[int] | None = None, n_unsteered: int = 
         n_unsteered_prompts=len(samples), n_unsteered_samples=int(n_unsteered),
         cap_base=s3_base["cap_base"], s3_margin_base=s3_base["s3_margin_base"],
         s3_acc_base=s3_base["s3_acc_base"], s3_n=s3_base["s3_n"],
+        s3_acc_base_ci_low=s3_base["s3_acc_base_ci_low"],
+        s3_acc_base_ci_high=s3_base["s3_acc_base_ci_high"],
         p_base=p_base, p_base_median=e6_base["e6_mass_median"],
         p_base_reach=e6_base["reach"],
+        p_base_reach_ci_low=e6_base["reach_ci_low"],
+        p_base_reach_ci_high=e6_base["reach_ci_high"],
+        p_base_reach_n=e6_base["reach_n"],
         d3_base=d3_base_row["d3"], d3_base_se=d3_base_row["d3_se"],
+        d3_base_rate=d3_base_row["d3_rate"],
+        d3_base_rate_count=d3_base_row["d3_rate_count"],
+        d3_base_rate_n=d3_base_row["d3_rate_n"],
+        d3_base_rate_ci_low=d3_base_row["d3_rate_ci_low"],
+        d3_base_rate_ci_high=d3_base_row["d3_rate_ci_high"],
         d3_base_rank_med=d3_base_row["d3_rank_med"],
-        judge_fpr=fpr, judge_fpr_max=float(cfg["JUDGE_FPR_MAX"]),
+        judge_fpr=fpr, judge_fpr_se=nulls["e5"]["fpr_se"],
+        judge_fpr_n=nulls["e5"]["fpr_n"], judge_fpr_max=float(cfg["JUDGE_FPR_MAX"]),
+        judge_nulls=nulls,
+        d2_null=nulls["d2"]["d2_null"],
+        d2_null_ci_low=nulls["d2"]["d2_null_ci_low"],
+        d2_null_ci_high=nulls["d2"]["d2_null_ci_high"],
+        d2_null_n=nulls["d2"]["d2_null_n"],
         secs=round(time.time() - t0, 1),
     )
     _append_row(BASELINES_FILE, dict(out, measure="baselines"))
+    failures = _judge_null_failures(nulls)
+    if failures:
+        print("JUDGE NULL GATE FAILED: " + ", ".join(failures))
+        raise RuntimeError(
+            "Phase 0 judge-null gate failed: " + ", ".join(failures) +
+            ". Investigate the judge configuration; never loosen a null threshold to make "
+            "the run proceed. All three readings were persisted in baselines.jsonl.")
     print(f"phase 0    : done in {out['secs']:.0f}s, {n_unreachable}/{len(dose_map)} cells "
           f"unreachable at ALPHA_CEIL (recorded, never clamped)")
     return out
@@ -684,6 +723,16 @@ def phase1_scan(*, layers: Sequence[int] | None = None,
         row = cheap.scan_cell(layer, r)
         _append_row(SCAN_FILE, row)
         rows.append(row)
+        if row["reachable"]:
+            print(f"   L{layer} r={r:.3f}: reach {row['reach']:.2f} "
+                  f"[{row['reach_ci_low']:.2f}, {row['reach_ci_high']:.2f}], "
+                  f"n={row['reach_n']}; D3-rate {row['d3_rate']:.2f} "
+                  f"[{row['d3_rate_ci_low']:.2f}, {row['d3_rate_ci_high']:.2f}], "
+                  f"n={row['d3_rate_n']}; S3-acc {row['s3_acc']:.2f} "
+                  f"[{row['s3_acc_ci_low']:.2f}, {row['s3_acc_ci_high']:.2f}], "
+                  f"n={row['s3_n']}")
+        else:
+            print(f"   L{layer} r={r:.3f}: unreachable")
         if on_cell is not None:
             on_cell(row)
         if i % 10 == 0 or i == len(todo):
@@ -1344,7 +1393,8 @@ def _verify_cells(cells: Sequence[dict], phase: str, *,
             row = dict(phase=phase, layer=layer, r=r, alpha=None, reachable=False,
                        alpha_needed=exc.alpha, alpha_ceil=exc.ceiling,
                        e5=None, e5_min=None, e5_se=None, s1=None, s2=None, s3=None,
-                       s4=None, d2=None, d2_se=None, n_d2=None, d4=None,
+                       s4=None, d2=None, d2_se=None, d2_ci_low=None, d2_ci_high=None,
+                       n_d2=None, d4=None,
                        usable=False, qualifies=False, resid=None, covertness_margin=None)
             _append_row(VERIFIED_FILE, row)
             out.append(row)
@@ -1359,8 +1409,13 @@ def _verify_cells(cells: Sequence[dict], phase: str, *,
         row = dict(
             row,
             reach=e6["reach"], reach_se=e6["reach_se"],
+            reach_ci_low=e6["reach_ci_low"], reach_ci_high=e6["reach_ci_high"],
+            reach_n=e6["reach_n"],
             e6_mass_median=e6["e6_mass_median"], e6_rank_med=e6["e6_rank_med"],
             d3=d3["d3"], d3_se=d3["d3_se"], d3_rate=d3["d3_rate"],
+            d3_rate_count=d3["d3_rate_count"], d3_rate_n=d3["d3_rate_n"],
+            d3_rate_ci_low=d3["d3_rate_ci_low"],
+            d3_rate_ci_high=d3["d3_rate_ci_high"],
             d3_rank_med=d3["d3_rank_med"],
             resid=resid, resid_fit=fit,
             # Filled by covertness_margin(rows); see the docstring. Present-and-null rather
@@ -1374,6 +1429,13 @@ def _verify_cells(cells: Sequence[dict], phase: str, *,
         )
         _append_row(VERIFIED_FILE, row)
         out.append(row)
+        print(f"   L{layer} r={r:.3f} rate intervals: reach {row['reach']:.2f} "
+              f"[{row['reach_ci_low']:.2f}, {row['reach_ci_high']:.2f}], n={row['reach_n']}; "
+              f"D3-rate {row['d3_rate']:.2f} [{row['d3_rate_ci_low']:.2f}, "
+              f"{row['d3_rate_ci_high']:.2f}], n={row['d3_rate_n']}; "
+              f"S2 {row['s2']:.2f} [{row['s2_ci_low']:.2f}, {row['s2_ci_high']:.2f}], "
+              f"n={row['s2_n']}; S3-acc {row['s3_acc']:.2f} "
+              f"[{row['s3_acc_ci_low']:.2f}, {row['s3_acc_ci_high']:.2f}], n={row['s3_n']}")
         if on_cell is not None:
             on_cell(row)
 
@@ -1513,15 +1575,22 @@ def phase6_confirm(winner: dict, *, n_confirm: int | None = None) -> dict:
     out = dict(
         row,
         phase=PHASE6, prompt_set="E5_HELDOUT", n_confirm=n, adaptive_stopping=False,
-        reach=e6["reach"], reach_se=e6["reach_se"], e6_mass_median=e6["e6_mass_median"],
+        reach=e6["reach"], reach_se=e6["reach_se"],
+        reach_ci_low=e6["reach_ci_low"], reach_ci_high=e6["reach_ci_high"],
+        reach_n=e6["reach_n"], e6_mass_median=e6["e6_mass_median"],
         d3=d3["d3"], d3_se=d3["d3_se"], d3_rate=d3["d3_rate"],
+        d3_rate_count=d3["d3_rate_count"], d3_rate_n=d3["d3_rate_n"],
+        d3_rate_ci_low=d3["d3_rate_ci_low"], d3_rate_ci_high=d3["d3_rate_ci_high"],
         reportable=True,
         secs=round(time.time() - t0, 1),
     )
     _append_row(CONFIRM_FILE, out)
     print(f"phase 6    : E5={out['e5']:.2f} +/- "
           f"{(out['e5_se'] if out['e5_se'] is not None else float('nan')):.2f}   "
-          f"S4={out['s4']:.2f}   D2={out['d2']:.3f} +/- {out['d2_se']:.3f} (n={out['n_d2']})   "
+          f"S4={out['s4']:.2f}   D2={out['d2']:.3f} "
+          f"(95% Wilson [{out['d2_ci_low']:.3f}, {out['d2_ci_high']:.3f}], "
+          f"n={out['n_d2']}; unsteered {out['d2_null']:.3f} "
+          f"[{out['d2_null_ci_low']:.3f}, {out['d2_null_ci_high']:.3f}])   "
           f"{'QUALIFIES' if out['qualifies'] else 'does not qualify'}")
     return out
 
@@ -1639,10 +1708,51 @@ def frontier(rows: Sequence[dict]) -> list[dict]:
             e5=e5, e5_se=row["e5_se"] if "e5_se" in row else None,
             e5_min=row["e5_min"] if "e5_min" in row else None,
             d2=d2, d2_se=row["d2_se"] if "d2_se" in row else None,
+            d2_ci_low=row["d2_ci_low"] if "d2_ci_low" in row else None,
+            d2_ci_high=row["d2_ci_high"] if "d2_ci_high" in row else None,
             n_d2=row["n_d2"] if "n_d2" in row else None,
+            d2_null=row["d2_null"] if "d2_null" in row else None,
+            d2_null_ci_low=(row["d2_null_ci_low"] if "d2_null_ci_low" in row else None),
+            d2_null_ci_high=(row["d2_null_ci_high"] if "d2_null_ci_high" in row else None),
+            d2_null_n=row["d2_null_n"] if "d2_null_n" in row else None,
+            reach=row["reach"] if "reach" in row else None,
+            reach_ci_low=row["reach_ci_low"] if "reach_ci_low" in row else None,
+            reach_ci_high=row["reach_ci_high"] if "reach_ci_high" in row else None,
+            reach_n=row["reach_n"] if "reach_n" in row else None,
+            d3_rate=row["d3_rate"] if "d3_rate" in row else None,
+            d3_rate_ci_low=row["d3_rate_ci_low"] if "d3_rate_ci_low" in row else None,
+            d3_rate_ci_high=row["d3_rate_ci_high"] if "d3_rate_ci_high" in row else None,
+            d3_rate_n=row["d3_rate_n"] if "d3_rate_n" in row else None,
             s4=s4, s1=row["s1"] if "s1" in row else None,
-            s2=row["s2"] if "s2" in row else None, s3=row["s3"] if "s3" in row else None,
+            s2=row["s2"] if "s2" in row else None,
+            s2_ci_low=row["s2_ci_low"] if "s2_ci_low" in row else None,
+            s2_ci_high=row["s2_ci_high"] if "s2_ci_high" in row else None,
+            s2_n=row["s2_n"] if "s2_n" in row else None,
+            degenerate_frac=(row["degenerate_frac"] if "degenerate_frac" in row else None),
+            degenerate_frac_ci_low=(row["degenerate_frac_ci_low"]
+                                    if "degenerate_frac_ci_low" in row else None),
+            degenerate_frac_ci_high=(row["degenerate_frac_ci_high"]
+                                     if "degenerate_frac_ci_high" in row else None),
+            s3=row["s3"] if "s3" in row else None,
+            s3_acc=row["s3_acc"] if "s3_acc" in row else None,
+            s3_acc_ci_low=row["s3_acc_ci_low"] if "s3_acc_ci_low" in row else None,
+            s3_acc_ci_high=row["s3_acc_ci_high"] if "s3_acc_ci_high" in row else None,
+            s3_n=row["s3_n"] if "s3_n" in row else None,
             s4_term=row["s4_term"] if "s4_term" in row else None,
+            d4=row["d4"] if "d4" in row else None,
+            d4_ci=row["d4_ci"] if "d4_ci" in row else None,
+            d4_n=row["d4_n"] if "d4_n" in row else None,
+            d4_damage_frac=(row["d4_damage_frac"] if "d4_damage_frac" in row else None),
+            d4_damage_frac_ci_low=(row["d4_damage_frac_ci_low"]
+                                   if "d4_damage_frac_ci_low" in row else None),
+            d4_damage_frac_ci_high=(row["d4_damage_frac_ci_high"]
+                                    if "d4_damage_frac_ci_high" in row else None),
+            d4_retrieval_frac=(row["d4_retrieval_frac"]
+                               if "d4_retrieval_frac" in row else None),
+            d4_retrieval_frac_ci_low=(row["d4_retrieval_frac_ci_low"]
+                                      if "d4_retrieval_frac_ci_low" in row else None),
+            d4_retrieval_frac_ci_high=(row["d4_retrieval_frac_ci_high"]
+                                       if "d4_retrieval_frac_ci_high" in row else None),
             d4_reading=row["d4_reading"] if "d4_reading" in row else None,
             resid=row["resid"] if "resid" in row else None,
             dominated=dominated,
@@ -1730,11 +1840,50 @@ def write_operating_point(selection: dict, rows: Sequence[dict], *,
             e5_min=winner["e5_min"] if "e5_min" in winner else None,
             s1=winner["s1"] if "s1" in winner else None,
             s2=winner["s2"] if "s2" in winner else None,
+            s2_ci_low=winner["s2_ci_low"] if "s2_ci_low" in winner else None,
+            s2_ci_high=winner["s2_ci_high"] if "s2_ci_high" in winner else None,
+            s2_n=winner["s2_n"] if "s2_n" in winner else None,
             s3=winner["s3"] if "s3" in winner else None,
+            s3_acc=winner["s3_acc"] if "s3_acc" in winner else None,
+            s3_acc_ci_low=(winner["s3_acc_ci_low"] if "s3_acc_ci_low" in winner else None),
+            s3_acc_ci_high=(winner["s3_acc_ci_high"]
+                            if "s3_acc_ci_high" in winner else None),
+            s3_n=winner["s3_n"] if "s3_n" in winner else None,
             s4=winner["s4"], d2=winner["d2"],
             d2_se=winner["d2_se"] if "d2_se" in winner else None,
+            d2_ci_low=winner["d2_ci_low"] if "d2_ci_low" in winner else None,
+            d2_ci_high=winner["d2_ci_high"] if "d2_ci_high" in winner else None,
             n_d2=winner["n_d2"] if "n_d2" in winner else None,
+            d2_null=winner["d2_null"] if "d2_null" in winner else None,
+            d2_null_ci_low=(winner["d2_null_ci_low"]
+                            if "d2_null_ci_low" in winner else None),
+            d2_null_ci_high=(winner["d2_null_ci_high"]
+                             if "d2_null_ci_high" in winner else None),
+            d2_null_n=winner["d2_null_n"] if "d2_null_n" in winner else None,
+            reach=winner["reach"] if "reach" in winner else None,
+            reach_ci_low=winner["reach_ci_low"] if "reach_ci_low" in winner else None,
+            reach_ci_high=winner["reach_ci_high"] if "reach_ci_high" in winner else None,
+            reach_n=winner["reach_n"] if "reach_n" in winner else None,
+            d3_rate=winner["d3_rate"] if "d3_rate" in winner else None,
+            d3_rate_ci_low=(winner["d3_rate_ci_low"] if "d3_rate_ci_low" in winner else None),
+            d3_rate_ci_high=(winner["d3_rate_ci_high"]
+                             if "d3_rate_ci_high" in winner else None),
+            d3_rate_n=winner["d3_rate_n"] if "d3_rate_n" in winner else None,
             d4=winner["d4"] if "d4" in winner else None,
+            d4_ci=winner["d4_ci"] if "d4_ci" in winner else None,
+            d4_n=winner["d4_n"] if "d4_n" in winner else None,
+            d4_damage_frac=(winner["d4_damage_frac"]
+                            if "d4_damage_frac" in winner else None),
+            d4_damage_frac_ci_low=(winner["d4_damage_frac_ci_low"]
+                                   if "d4_damage_frac_ci_low" in winner else None),
+            d4_damage_frac_ci_high=(winner["d4_damage_frac_ci_high"]
+                                    if "d4_damage_frac_ci_high" in winner else None),
+            d4_retrieval_frac=(winner["d4_retrieval_frac"]
+                               if "d4_retrieval_frac" in winner else None),
+            d4_retrieval_frac_ci_low=(winner["d4_retrieval_frac_ci_low"]
+                                      if "d4_retrieval_frac_ci_low" in winner else None),
+            d4_retrieval_frac_ci_high=(winner["d4_retrieval_frac_ci_high"]
+                                       if "d4_retrieval_frac_ci_high" in winner else None),
             note="screening numbers: they ranked cells and are NOT reportable (spec 8)")),
         confirmation=confirm,
         confirmation_note=("Phase 6 on held-out prompts at N_CONFIRM with no adaptive "

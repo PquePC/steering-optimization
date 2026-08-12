@@ -418,6 +418,74 @@ def test_degenerate_does_not_fire_on_ordinary_prose():
 def test_measure_s2_is_one_minus_the_degenerate_fraction():
     out = cheap.measure_S2(["## " * 60, "A perfectly ordinary sentence about cartography."])
     assert out["s2"] == pytest.approx(0.5)
+    assert out["s2_count"] == 1 and out["s2_n"] == 2
+    assert 0.0 < out["s2_ci_low"] < out["s2"] < out["s2_ci_high"] < 1.0
+
+
+def test_wilson_interval_does_not_collapse_at_zero_of_25():
+    """Task 17's motivating failure: binomial SE says 0 +/- 0 at this endpoint."""
+    low, high = cheap.wilson_interval(0, 25)
+    assert low == pytest.approx(0.0)
+    assert high > 0.10
+    assert high - low > 0.10
+
+
+@pytest.mark.parametrize("successes,n", [(1, 1), (25, 25)])
+def test_wilson_all_success_endpoints_remain_non_degenerate(successes, n):
+    low, high = cheap.wilson_interval(successes, n)
+    assert 0.0 <= low < high == pytest.approx(1.0)
+
+
+def test_e5_is_a_mean_with_se_and_never_a_wilson_rate():
+    """Task 17: a 0-10 judge score is a mean, not a Bernoulli success fraction."""
+    source = (Path(__file__).resolve().parent.parent / "expensive.py").read_text(encoding="utf-8")
+    body = source[source.index("def _score_e5("):source.index("def measure_E5(")]
+    assert "model.mean_se(scores)" in body
+    assert "wilson_interval" not in body
+    assert "e5_se" in body and "e5_ci_low" not in body
+
+
+def test_phase0_null_gate_trips_e5_and_s1_judge_faults():
+    bad_e5 = dict(e5=dict(passed=False), s1=dict(judge_fault=False),
+                  d2=dict(d2_null=0.0))
+    bad_s1 = dict(e5=dict(passed=True), s1=dict(judge_fault=True),
+                  d2=dict(d2_null=0.0))
+    assert phases._judge_null_failures(bad_e5) == ["E5 judge null"]
+    assert phases._judge_null_failures(bad_s1) == ["S1 judge null (S1/S2 disagreement)"]
+
+
+def test_s1_low_with_low_s2_is_model_behaviour_not_a_gate_failure():
+    nulls = dict(e5=dict(passed=True),
+                 s1=dict(s1_low=True, s2_fine=False, judge_fault=False),
+                 d2=dict(d2_null=0.0))
+    assert phases._judge_null_failures(nulls) == []
+
+
+@pytest.mark.parametrize("d2_null", [0.0, 0.04, 0.5, 1.0])
+def test_d2_null_never_stops_phase0(d2_null):
+    nulls = dict(e5=dict(passed=True), s1=dict(judge_fault=False),
+                 d2=dict(d2_null=d2_null, report_only=True))
+    assert phases._judge_null_failures(nulls) == []
+
+
+def test_d2_null_scoring_persists_every_transcript(monkeypatch):
+    exp = pytest.importorskip("m2.expensive", reason="imports torch at module scope")
+    landed = []
+    monkeypatch.setattr(exp, "_append_row", lambda name, row: landed.append((name, dict(row))))
+    monkeypatch.setattr(
+        exp, "_parse_or_fail",
+        lambda *_args: (dict(identified=True, failure_mode="n/a", justification="stub"),
+                        "stub", None),
+    )
+    units = [dict(trial=i, cache_key=("CAL_NULL_D2", i), response=f"response {i}",
+                  payload=f"payload {i}") for i in range(1, 4)]
+    out = exp._score_d2(units, [dict()] * 3,
+                        dict(phase="CAL_NULL_D2", layer=None, r=None, alpha=None,
+                             vec_fingerprint="none", measure="D2_NULL"))
+    transcripts = [row for name, row in landed if name == exp.D2_FILE]
+    assert out["d2"] == 1.0
+    assert len(transcripts) == len(units)
+    assert all(row["measure"] == "D2_NULL" for row in transcripts)
 
 
 # =====================================================================================
@@ -489,6 +557,33 @@ def test_unverified_rows_cannot_win():
     real = _cell(37, 0.15, e5=5.0, d2=0.10, s4=0.90)
     out = phases.select_operating_point([scan_only, real])
     assert out["winner"]["layer"] == 37 and out["n_considered"] == 1
+
+
+def test_operating_point_and_frontier_keep_rate_intervals_and_e5_se(run_ctx, tmp_path):
+    """Task 17: visible result surfaces carry endpoints/n without turning E5 into a rate."""
+    ctx = run_ctx(run_dir=tmp_path)
+    ctx.mw = SimpleNamespace()  # write_operating_point only needs the loaded-run invariant
+    row = _cell(37, 0.15, e5=7.0, d2=0.08, s4=0.90)
+    row.update(
+        phase="VERIFY", alpha=1.2, e5_se=0.35, e5_min=6.0,
+        d2_se=0.05, d2_ci_low=0.02, d2_ci_high=0.24, n_d2=25,
+        d2_null=0.04, d2_null_ci_low=0.01, d2_null_ci_high=0.20, d2_null_n=25,
+        s2_ci_low=0.76, s2_ci_high=1.0, s2_n=12,
+        s3_acc=0.80, s3_acc_ci_low=0.68, s3_acc_ci_high=0.88, s3_n=57,
+        s4_term="S1", d4={}, d4_reading="retrieval", resid=0.0,
+    )
+    selection = phases.select_operating_point([row])
+    path = phases.write_operating_point(selection, [row])
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    screening = payload["screening"]
+    front = payload["frontier"][0]
+    assert screening["d2_ci_low"] == 0.02 and screening["d2_ci_high"] == 0.24
+    assert screening["n_d2"] == 25
+    assert screening["d2_null_ci_low"] == 0.01 and screening["d2_null_n"] == 25
+    assert front["s2_ci_low"] == 0.76 and front["s2_n"] == 12
+    assert front["s3_acc_ci_high"] == 0.88 and front["s3_n"] == 57
+    assert screening["e5_se"] == 0.35
+    assert "e5_ci_low" not in screening and "e5_ci_low" not in front
 
 
 # =====================================================================================

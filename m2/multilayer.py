@@ -381,16 +381,34 @@ def measure_plan(concept: str, layers: Sequence[int], r_each: float, *,
         alphas=built["alphas"], split=split, placement=placement,
         total_r=float(total_r), r_each=float(r_each), vec_fingerprint=fp,
         e5=e5["e5"], e5_min=e5["e5_min"], e5_se=e5["e5_se"],
-        s1=s1["s1"], s2=s2["s2"], s3=s3["s3"], s3_margin=s3["s3_margin"], s4=s4,
+        s1=s1["s1"],
+        s2=s2["s2"], s2_count=s2["s2_count"], s2_n=s2["s2_n"],
+        s2_ci_low=s2["s2_ci_low"], s2_ci_high=s2["s2_ci_high"],
+        s3=s3["s3"], s3_acc=s3["s3_acc"], s3_n=s3["s3_n"],
+        s3_acc_ci_low=s3["s3_acc_ci_low"], s3_acc_ci_high=s3["s3_acc_ci_high"],
+        s3_margin=s3["s3_margin"], s4=s4,
         s4_term=("S1" if s4 == s1["s1"] else ("S2" if s4 == s2["s2"] else "S3")),
-        d2=d2["d2"], d2_se=d2["d2_se"], n_d2=d2["n_d2"],
-        d4=d2["d4"], d4_dominant=d2["d4_dominant"],
-        d4_damage_frac=d2["d4_damage_frac"], d4_reading=d2["d4_reading"],
+        d2=d2["d2"], d2_se=d2["d2_se"], d2_ci_low=d2["d2_ci_low"],
+        d2_ci_high=d2["d2_ci_high"], n_d2=d2["n_d2"],
+        d4=d2["d4"], d4_ci=d2["d4_ci"], d4_n=d2["d4_n"],
+        d4_dominant=d2["d4_dominant"],
+        d4_damage_frac=d2["d4_damage_frac"],
+        d4_damage_frac_ci_low=d2["d4_damage_frac_ci_low"],
+        d4_damage_frac_ci_high=d2["d4_damage_frac_ci_high"],
+        d4_retrieval_frac=d2["d4_retrieval_frac"],
+        d4_retrieval_frac_ci_low=d2["d4_retrieval_frac_ci_low"],
+        d4_retrieval_frac_ci_high=d2["d4_retrieval_frac_ci_high"],
+        d4_reading=d2["d4_reading"],
         usable=usable, qualifies=qualifies,
     )
+    # Task 02: every D2, including this auxiliary arm, is read beside the same unsteered
+    # baseline. Selection still uses the raw D2 above; this is context, never subtraction.
+    row.update(expensive._d2_null_fields())
     _append_row(MULTILAYER_FILE, row)
     print(f"multilayer : k={row['k']} {placement}/{split} L{built['layers']} "
-          f"r_each={r_each:.3f}  E5={row['e5']:.2f}  S4={s4:.2f}  D2={row['d2']:.2f}  "
+          f"r_each={r_each:.3f}  E5={row['e5']:.2f}  S4={s4:.2f}  "
+          f"D2={row['d2']:.2f} [{row['d2_ci_low']:.2f}, {row['d2_ci_high']:.2f}], "
+          f"n={row['n_d2']}  "
           f"{'QUALIFIES' if qualifies else ('usable' if usable else 'unusable')}")
     return row
 
@@ -419,10 +437,14 @@ def _s3_multi(plan: dict) -> dict:
             "cheap.measure_S3_baseline() before the multi-layer arm, or its S3 is not "
             "comparable with any single-layer cell.")
     cap_base = int(ctx.base[cheap.CAP_BASE_KEY])
-    return dict(s3_correct=int(scored["correct"]),
-                s3=int(scored["correct"]) / max(cap_base, 1),
+    correct = int(scored["correct"])
+    n = int(scored["n"])
+    acc_ci_low, acc_ci_high = cheap.wilson_interval(correct, n)
+    return dict(s3_correct=correct,
+                s3=correct / max(cap_base, 1), s3_acc=correct / n,
+                s3_acc_ci_low=acc_ci_low, s3_acc_ci_high=acc_ci_high,
                 s3_margin=scored["margin"], s3_margin_se=scored["margin_se"],
-                s3_n=scored["n"], cap_base=cap_base)
+                s3_n=n, cap_base=cap_base)
 
 
 # =====================================================================================

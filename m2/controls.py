@@ -232,11 +232,19 @@ def random_direction_control(layer: int, r: float, seeds: Sequence[int] | None =
         _append_row("controls.jsonl", dict(control="random_direction", layer=int(layer),
                                            r=dose, alpha=float(alpha), **row))
 
-    rates = [float(row["d2"]) for row in per_seed if row.get("d2") is not None]
+    # Aggregate the actual surviving counts, not the per-seed point estimates. Judge errors can
+    # make the denominators differ, and an interval over a claimed 75 trials must really contain
+    # 75 observed verdicts rather than three equally weighted rates of 24, 25 and 25.
     n_scored = sum(int(row["n_d2"]) for row in per_seed)
-    d2_random = sum(rates) / len(rates) if rates else None
-    damage_random = [float(row["d4_damage_frac"]) for row in per_seed]
-    d4_damage_random = sum(damage_random) / len(damage_random) if damage_random else None
+    n_identified = sum(int(row["d2_identified"]) for row in per_seed)
+    d2_random = n_identified / n_scored if n_scored else None
+    d2_random_ci = (cheap.wilson_interval(n_identified, n_scored)
+                    if n_scored else (None, None))
+    n_d4 = sum(int(row["d4_n"]) for row in per_seed)
+    n_damage = sum(int(row["d4_damage_count"]) for row in per_seed)
+    d4_damage_random = n_damage / n_d4 if n_d4 else None
+    d4_damage_random_ci = (cheap.wilson_interval(n_damage, n_d4)
+                           if n_d4 else (None, None))
 
     concept_row = concept_row or _concept_row_for(layer, dose)
     d2_concept = float(concept_row["d2"]) if concept_row and concept_row.get("d2") is not None else None
@@ -282,8 +290,20 @@ def random_direction_control(layer: int, r: float, seeds: Sequence[int] | None =
     out = dict(control="random_direction", layer=int(layer), r=dose, alpha=float(alpha),
                seeds=[int(s) for s in seeds], n_seeds=len(seeds), n_d2_per_seed=n_d2,
                d2_random=d2_random, d2_random_n=n_scored,
-               d2_concept=d2_concept, d2_gap=gap,
-               d4_damage_random=d4_damage_random, d4_damage_concept=d4_damage_concept,
+               d2_random_ci_low=d2_random_ci[0], d2_random_ci_high=d2_random_ci[1],
+               d2_concept=d2_concept, d2_concept_n=n_concept,
+               d2_concept_ci_low=(concept_row.get("d2_ci_low") if concept_row else None),
+               d2_concept_ci_high=(concept_row.get("d2_ci_high") if concept_row else None),
+               d2_gap=gap,
+               d4_damage_random=d4_damage_random, d4_damage_random_n=n_d4,
+               d4_damage_random_ci_low=d4_damage_random_ci[0],
+               d4_damage_random_ci_high=d4_damage_random_ci[1],
+               d4_damage_concept=d4_damage_concept,
+               d4_damage_concept_n=(concept_row.get("d4_n") if concept_row else None),
+               d4_damage_concept_ci_low=(concept_row.get("d4_damage_frac_ci_low")
+                                         if concept_row else None),
+               d4_damage_concept_ci_high=(concept_row.get("d4_damage_frac_ci_high")
+                                          if concept_row else None),
                literal_separated=literal_separated, damage_separated=damage_separated,
                verdict=verdict, mandatory=bool(depth >= 0.72), depth=depth,
                notes=notes, per_seed=per_seed)
@@ -429,7 +449,12 @@ def forced_id_capability_control(layer: int, r: float,
             entry = dict(concept=name, alpha=float(ctrl_alpha), vec_norm=ctrl_norm,
                          d2=ctrl_row.get("d2"), d2_se=ctrl_row.get("d2_se"),
                          n_d2=ctrl_row.get("n_d2"),
+                         d2_ci_low=ctrl_row.get("d2_ci_low"),
+                         d2_ci_high=ctrl_row.get("d2_ci_high"),
                          d4_damage_frac=ctrl_row.get("d4_damage_frac"),
+                         d4_damage_frac_ci_low=ctrl_row.get("d4_damage_frac_ci_low"),
+                         d4_damage_frac_ci_high=ctrl_row.get("d4_damage_frac_ci_high"),
+                         d4_n=ctrl_row.get("d4_n"),
                          d4_reading=ctrl_row.get("d4_reading"),
                          vec_fingerprint=vectors.vec_fingerprint(vec))
             # "Identifiable" means it clears the same bar the target had to fail to be
@@ -443,6 +468,8 @@ def forced_id_capability_control(layer: int, r: float,
 
     judged = [e for e in secondary if e.get("identifiable") is not None]
     n_identifiable = sum(1 for e in judged if e["identifiable"])
+    identifiable_ci = (cheap.wilson_interval(n_identifiable, len(judged))
+                       if judged else (None, None))
     secondary_pass = (None if not judged else bool(n_identifiable >= 1))
 
     if primary_pass and secondary_pass is not False:
@@ -461,11 +488,22 @@ def forced_id_capability_control(layer: int, r: float,
                    f"D2 > {d2_max}")
 
     out = dict(control="forced_id_capability", layer=int(layer), r=dose,
-               d2_concept=row.get("d2"), d4=d4, d4_dominant=row.get("d4_dominant"),
-               d4_damage_frac=damage_frac, d4_retrieval_frac=retrieval_frac,
+               d2_concept=row.get("d2"), d2_concept_n=row.get("n_d2"),
+               d2_concept_ci_low=row.get("d2_ci_low"),
+               d2_concept_ci_high=row.get("d2_ci_high"),
+               d4=d4, d4_dominant=row.get("d4_dominant"),
+               d4_damage_frac=damage_frac, d4_damage_n=row.get("d4_n"),
+               d4_damage_ci_low=row.get("d4_damage_frac_ci_low"),
+               d4_damage_ci_high=row.get("d4_damage_frac_ci_high"),
+               d4_retrieval_frac=retrieval_frac,
+               d4_retrieval_ci_low=row.get("d4_retrieval_frac_ci_low"),
+               d4_retrieval_ci_high=row.get("d4_retrieval_frac_ci_high"),
                primary_reading=primary_reading, primary_pass=primary_pass,
                secondary=secondary, secondary_pass=secondary_pass,
                n_control_identifiable=n_identifiable, n_control_judged=len(judged),
+               control_identifiable_rate=(n_identifiable / len(judged) if judged else None),
+               control_identifiable_ci_low=identifiable_ci[0],
+               control_identifiable_ci_high=identifiable_ci[1],
                d2_max=d2_max, verdict=verdict, detail=detail,
                # Spec 9.2 review flag: does the secondary method ever change a verdict the free
                # D4 reading did not already reach? Aggregate this across concepts before the
@@ -516,12 +554,15 @@ def escalation_ladder(ref_layer: int | None = None,
             alpha = config.alpha_for(int(ref_layer), dose)
         except config.Unreachable as exc:
             rungs.append(dict(r=dose, alpha=None, reachable=False, reach=None,
+                              reach_ci_low=None, reach_ci_high=None, reach_n=None,
                               note=f"alpha above ALPHA_CEIL ({ceil}): {exc}"))
             _append_row("controls.jsonl", dict(control="escalation", layer=int(ref_layer),
                                                **rungs[-1]))
             continue
         e6 = cheap.measure_E6(int(ref_layer), alpha)
         rung = dict(r=dose, alpha=float(alpha), reachable=True, reach=float(e6["reach"]),
+                    reach_ci_low=e6.get("reach_ci_low"),
+                    reach_ci_high=e6.get("reach_ci_high"), reach_n=e6.get("reach_n"),
                     e6_mass_median=e6.get("e6_mass_median"),
                     e6_rank_med=e6.get("e6_rank_med"),
                     cleared=bool(float(e6["reach"]) >= floor))
