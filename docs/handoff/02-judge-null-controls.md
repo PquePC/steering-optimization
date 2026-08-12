@@ -1,7 +1,7 @@
 # 02 — A judge null control per judged measure
 
-**Status: BUILD NOW.** Blocking. The thresholds were proposed by Sol and settled by the operator on
-2026-08-12 — they are in **Decided values** below. No further proposal needed; implement as stated.
+**Status: DONE — `4b1e66a`.** The settled E5/S1 gates and report-only D2 baseline landed at the
+shared pre-measurement config boundary, with transcript persistence and acceptance tests.
 
 ## Goal
 

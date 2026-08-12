@@ -1,7 +1,8 @@
 # 17 — Every reported rate carries a Wilson interval
 
-**Status: BUILD NOW.** Blocking for the reporting path, not for the measurement path — but do it
-before the run, because retro-fitting intervals onto stored rows is worse than emitting them.
+**Status: DONE — `4b1e66a`.** One Wilson helper now supplies every reported binomial rate while
+E5 and other score means retain mean ± SE; rows, controls, gates and result surfaces carry n and
+both endpoints.
 
 ## Goal
 

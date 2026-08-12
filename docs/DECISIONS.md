@@ -171,3 +171,24 @@ every intermediate is computed and discarded. An export flag can only ship what 
 **Result:** `1974000`; tasks [02](handoff/02-judge-null-controls.md),
 [08](handoff/08-debug-bundle.md), [17](handoff/17-wilson-intervals.md). Task 09 item 1 (the
 free-space guard) becomes a prerequisite for enabling full capture.
+
+## 2026-08-12 — Judge nulls and Wilson reporting implemented
+**By:** PquePC (decision), Sol (execution)
+**Kind:** task complete
+
+Phase 0 now measures all three judge nulls before judged science phases. E5 uses all seven open
+prompts and gates at 0.5; S1 gates only when its sub-0.90 reading disagrees with objective S2;
+D2 is never fatal, persists its unsteered transcripts, and is reported beside every raw D2.
+
+One Wilson-score helper now supplies endpoints and the surviving n for binomial rates throughout
+scan, verification, confirmation, controls, auxiliary arms, gates, the frontier and
+`operating_point.json`. E5 and S1 remain score means with standard errors. Gate comparisons remain
+on their existing point estimates: intervals change the honesty of reporting, not the criteria.
+
+**Why:** the null-gating rule requires live separation of instrument failure from model behaviour,
+which E5 provides directly and S1 obtains from S2, but D2 cannot provide without human transcript
+review. Wilson intervals prevent endpoint observations such as 0/25 from masquerading as perfect
+certainty; conceptually, observing zero events narrows the plausible rate but does not prove the
+true rate is exactly zero.
+
+**Result:** `4b1e66a`, tasks 02 and 17. Offline suite: 80 passed, 2 environment-dependent skips.
