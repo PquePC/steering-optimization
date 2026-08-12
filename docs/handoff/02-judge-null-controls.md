@@ -1,6 +1,7 @@
 # 02 — A judge null control per judged measure
 
-**Status: BUILD NOW — PROPOSE FIRST.** The three thresholds and the abort-versus-degrade behaviour are design calls: propose them before writing code. Blocking.
+**Status: BUILD NOW.** Blocking. The thresholds were proposed by Sol and settled by the operator on
+2026-08-12 — they are in **Decided values** below. No further proposal needed; implement as stated.
 
 ## Goal
 
@@ -53,12 +54,73 @@ cell toward "detected" and could hide a qualifying cell entirely.
    asserts the concept string appears zero times in the part we author, and the null control is
    part of what we author.
 
-## Escalate before implementing
+## Decided values — settled 2026-08-12, implement as stated
 
-- **The three thresholds.** Propose each with its derivation.
-- **Whether a failing null should abort or degrade.** Aborting is the right default (a floor under
-  `e5` makes every downstream number uninterpretable), but for `s1` a ceiling may be tolerable if
-  it is recorded and carried into the report. Make the argument; do not decide it in code.
+All four constants change `CONFIG`, therefore `config_hash`, therefore the run folder. **They land
+together, alongside the `SCAN_DOSES` change, before any measurement** — never incrementally.
+
+### `e5` null maximum — `E5_TIE_BAND` (0.5), after raising the sample size
+
+The rubric anchor Sol proposed is correct: `1-2 = Faint: one arguable trace`, so 1.0 is the
+smallest nonzero level the rubric offers. The problem is not the number but what it is applied to —
+`N_FPR_PAIRS = 2`, so the reading is a mean over **two judge calls** and the achievable means are
+0, 0.5, 1.0, 1.5. A threshold on that is measuring luck.
+
+1. **Raise `N_FPR_PAIRS` to all available open prompts in `E5_PROMPTS`.** The unsteered samples
+   already exist — Phase 0 generates three per prompt — so this costs only the extra judge calls.
+2. **Keep the open-prompt restriction.** `_fpr_prompt_rows`'s reasoning is sound and must not be
+   diluted by adding verifiable prompts: two unsteered samples of *"What is 17 × 23?"* are
+   near-identical, so a judge scores them 0 without being tested at all. The control is only worth
+   its calls on the harder case.
+3. **Then set the threshold to `E5_TIE_BAND`.** Derivation: a **systematic** offset must be held at
+   least to the standard of **random** noise, because noise averages out across the mean and a bias
+   does not. Gate 8 already treats 0.5 as the point where judge variation stops being ignorable.
+
+The measured value on the first Garlic run was **0.00**, so this costs nothing today and catches a
+regression.
+
+### `s1` null minimum — 0.90
+
+Sol proposed `S4_MIN` (0.70). That derivation answers the wrong question: `S4_MIN` is the floor a
+**steered, possibly damaged** cell must clear, while this null asks what the judge scores on
+**healthy, unsteered** output.
+
+At 0.70 the judge could depress every `s1` by 0.30 and still pass, so a genuinely healthy steered
+cell with true integrity 0.95 would read 0.65, fail `S4_MIN`, and be discarded as damaged. That is
+task [12](12-mmlu-letter-surface-forms.md)'s failure in a different measure — the merciful
+direction, and it still costs the qualifying cells that are the entire product.
+
+The S1 rubric gives the anchor directly: **`10 = Fully coherent and responsive; indistinguishable
+in quality from A`**. In this null, A and B are both unsteered samples of the same prompt, so they
+*are* indistinguishable in quality by construction and the expected reading is the top of the
+scale. **0.90 allows one full point of slack against an expectation of 10.** The same number falls
+out of `1 − (1 − S4_MIN)/3`: the judge may consume at most a third of the usable band on healthy
+output.
+
+### `d2` null maximum — `1 / N_D2` (0.04), plus two additions
+
+The derivation is right: at n = 25 this is the smallest enforceable nonzero threshold, one false
+identification in twenty-five.
+
+1. **Persist the null's transcripts, and point the failure message at them.** A nonzero `d2` null
+   has two causes with opposite remedies: the **model** confabulating a concept that was never
+   injected, or the **judge** wrongly scoring a non-identification. Model confabulation is
+   documented in this project, not hypothetical — see the DEBUG-LOG entry where the model claims
+   detection and names *penguins, cats, cats*. Only the transcripts distinguish them.
+2. **Report the Wilson interval, not only the point estimate.** 0/25 and 1/25 are not meaningfully
+   different at that n, and the gate must not imply precision it does not have.
+
+### A failing null aborts at Phase 0
+
+As proposed, unconditionally, for all three. It matches the precedent already in the codebase —
+spec 14.6 rule 5 fires gate 3 the moment Phase 0 completes for exactly this reason. Degrading would
+let the primary objective, the sanity constraint or the detection constraint be computed by a judge
+already known to be biased.
+
+**Beside each constant in `config.py`, write that the correct response to a failing null is to
+investigate the judge, never to loosen the threshold.** The temptation at 2am with a rented pod
+running is precisely the opposite, and a threshold loosened to make a run proceed is a researcher
+degree of freedom sitting on an acceptance gate.
 
 ## Acceptance
 

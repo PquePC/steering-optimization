@@ -115,3 +115,27 @@ across forms. A synthetic lowercase-answer test and a readable collision-guard t
 previous defect; the next fresh CAL will re-measure `cap_base`.
 
 **Result:** `8d0d230`, task 12; post-mortem in `DEBUG-LOG.md`.
+
+## 2026-08-12 — Judge null control thresholds settled
+**By:** PquePC (decision), Sol (proposal), Opus (review)
+**Kind:** decision
+
+Task 02's four values are settled and the task moves to `BUILD NOW`. `e5` null maximum becomes
+`E5_TIE_BAND` (0.5) **after** raising `N_FPR_PAIRS` from 2 to all available open prompts; `s1` null
+minimum is 0.90; `d2` null maximum is `1 / N_D2` (0.04) with transcripts persisted and a Wilson
+interval reported; a failing null aborts at Phase 0 for all three.
+
+**Why:** Sol's `e5` rubric anchor was correct (`1-2 = Faint`), but the reading was a mean over two
+judge calls, where the achievable means are 0, 0.5 and 1.0 — a threshold on that measures luck, so
+the sample size had to be fixed before the number meant anything. Once it is real, a *systematic*
+offset should be held at least to the standard of *random* noise, which is what `E5_TIE_BAND`
+already encodes. Sol's `s1` derivation from `S4_MIN` answered the wrong question: `S4_MIN` is the
+floor a damaged cell must clear, while this null asks what the judge scores on healthy output,
+which the rubric says should be indistinguishable from A — the top of the scale. At 0.70 a judge
+could depress every `s1` by 0.30 and pass, discarding healthy cells as damaged, which is task 12's
+failure in another measure. The `d2` null needed its transcripts because a nonzero reading has two
+causes with opposite remedies — the model confabulating, which is documented here, or the judge
+misscoring — and only the transcripts tell them apart.
+
+**Result:** task [02](handoff/02-judge-null-controls.md), *Decided values*. All four change
+`config_hash`, so they land together with the `SCAN_DOSES` change before any measurement.
