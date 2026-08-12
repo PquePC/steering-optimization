@@ -640,36 +640,45 @@ def render_mmlu(item: dict) -> str:
 
 
 def letter_token_ids() -> dict[str, list[int]]:
-    """'A'..'D' -> first-token ids for BOTH the bare and the leading-space surface form.
+    """'A'..'D' -> first-token ids for bare/space-prefixed, upper/lowercase forms.
 
-    After "Answer:" the tokenizer distinguishes " A" from "A", and we cannot know which the
-    model emits first. Scoring only the bare form is the documented failure (spec 5.3, 5.4):
-    it reads near-zero everywhere, which is INDISTINGUISHABLE FROM A REAL RESULT -- a
-    capability term that is silently dead looks exactly like a capability term reporting a
-    lobotomised cell. cheap.measure_S3 must take the max over the ids in each list, exactly as
-    the M1.5 lab's yes_lean does over YES_IDS / NO_IDS (cell 17). CONTRACT defence 6.
+    After "Answer:" the tokenizer distinguishes " A" from "A", and a degrading model may emit
+    the correct option as lowercase. Scoring only uppercase therefore biases S3 downward as
+    dose rises -- a capability term measuring the wrong surface form looks exactly like a
+    capability term reporting damage. cheap.score_letter_logits must take the max over the ids
+    in each list, exactly as the M1.5 lab's yes_lean does over YES_IDS / NO_IDS (cell 17).
+    CONTRACT defence 6.
 
     If the tokenizer happens to merge the two forms, the list holds one id and max() over it is
     still correct.
     """
     tok = _run().tok
     out: dict[str, list[int]] = {}
+    surfaces: dict[str, dict[int, str]] = {}
     for letter in MMLU_LETTERS:
-        ids = _first_ids(tok, letter, f" {letter}")
+        forms = (letter, f" {letter}", letter.lower(), f" {letter.lower()}")
+        ids = _first_ids(tok, *forms)
         if not ids:
             raise RuntimeError(f"tokenizer produced no first-token id for option letter "
                                f"{letter!r} -- S3 cannot be scored")
         out[letter] = ids
+        surfaces[letter] = {}
+        for form in forms:
+            form_ids = _first_ids(tok, form)
+            if form_ids:
+                surfaces[letter].setdefault(form_ids[0], form)
 
     # A shared id between two letters would make argmax(p_A..p_D) meaningless: the letters
     # would be competing for the same logit. Same family as bug 20, where an uppercase variant
     # collapsed to a bare 'B' token that collected mass from every B-word.
-    seen: dict[int, str] = {}
+    seen: dict[int, tuple[str, str]] = {}
     for letter, ids in out.items():
         for i in ids:
             if i in seen:
+                previous_letter, previous_form = seen[i]
                 raise RuntimeError(
-                    f"option letters {seen[i]!r} and {letter!r} share first-token id {i} "
+                    f"option-letter surface forms {previous_form!r} ({previous_letter}) and "
+                    f"{surfaces[letter][i]!r} ({letter}) share first-token id {i} "
                     f"({tok.decode([i])!r}) -- S3's argmax over letters would be meaningless")
-            seen[i] = letter
+            seen[i] = (letter, surfaces[letter][i])
     return out

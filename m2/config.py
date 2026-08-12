@@ -63,11 +63,12 @@ CONSTANTS: dict = {
     # Any (L, r) needing more is logged unreachable and skipped, never clamped.
     "ALPHA_CEIL": 16.0,
 
-    # LOAD-BEARING. The two Phase 1 scan doses. Brackets the r range of the seven
-    # qualifying M1.5 cells (0.114-0.303, median 0.180). Two doses, not one, because one
-    # cannot tell "this layer is inert" from "this layer is under-dosed" -- exactly the
-    # error a fixed-alpha scan makes.
-    "SCAN_DOSES": (0.15, 0.30),
+    # LOAD-BEARING. The three Phase 1 scan doses. The first two bracket the qualifying
+    # M1.5 range (0.114-0.303, median 0.180); 0.60 resolves the Garlic run's L20-L52 band,
+    # which read e6=0 at both lower doses and was therefore indistinguishable from an
+    # under-dosed region. It is deliberately below the measured r=1.42 sanity boundary at
+    # L58, but the run must still verify rather than assume that mid-depth cells tolerate it.
+    "SCAN_DOSES": (0.15, 0.30, 0.60),
 
     # --- E6, reachability rate (spec 5.2) --------------------------------------------
 

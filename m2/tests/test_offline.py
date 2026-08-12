@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import math
 import sys
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
@@ -93,6 +95,16 @@ def test_alpha_for_raises_above_ceiling_rather_than_clamping(run_ctx):
         config.alpha_for(6, 0.30)
 
 
+def test_default_scan_grid_and_opening_eta_cover_all_three_doses():
+    """Task 01: the opening SCAN prior counts `(layer, dose)`, not layers alone.
+
+    The first Garlic run had 49 layers in scope. A stale 98-unit prior after adding r=0.60
+    would understate the opening ETA by about eleven minutes while still looking plausible.
+    """
+    assert config.CONFIG["SCAN_DOSES"] == (0.15, 0.30, 0.60)
+    assert monitor.PHASE_UNITS_PRIOR["SCAN"] == 49 * len(config.CONFIG["SCAN_DOSES"])
+
+
 def test_dose_for_round_trips_alpha_for(run_ctx):
     run_ctx(norms={37: dict(vec_norm=4640.0, resid_norm=1137.03)})
     for r in (0.05, 0.15, 0.30, 0.75):
@@ -165,6 +177,104 @@ def test_render_mmlu_has_four_letters_and_ends_at_the_answer_position():
         assert f"{letter}. {choice}" in text
     assert text.rstrip().endswith("Answer:")
     assert "<thinking>" not in text and "step-by-step" not in text.lower()
+
+
+class _TokenMap:
+    """Minimal tokenizer for surface-form tests; every form maps to one explicit id."""
+
+    def __init__(self, mapping):
+        self.mapping = dict(mapping)
+
+    def encode(self, form, add_special_tokens=False):
+        assert add_special_tokens is False
+        return [self.mapping[form]]
+
+    def decode(self, ids):
+        token_id = ids[0]
+        return next((form for form, value in self.mapping.items() if value == token_id), "?")
+
+
+def _letter_surface_map():
+    forms = {}
+    token_id = 0
+    for letter in prompts.MMLU_LETTERS:
+        for form in (letter, f" {letter}", letter.lower(), f" {letter.lower()}"):
+            forms[form] = token_id
+            token_id += 1
+    return forms
+
+
+def test_s3_counts_a_lowercase_gold_letter(monkeypatch, run_ctx):
+    """Task 12: lowercase is an answer surface, not a dose-dependent capability failure.
+
+    The tiny tensor shim keeps this invariant runnable in the offline suite, where torch is
+    deliberately optional. It implements only the softmax/index/max path used by
+    `score_letter_logits`; testing a second copy of the scoring rule would prove nothing.
+    """
+    class _Vector:
+        def __init__(self, values):
+            self.values = list(values)
+
+        def detach(self):
+            return self
+
+        def cpu(self):
+            return self
+
+        def __getitem__(self, index):
+            return self.values[index]
+
+    class _Matrix:
+        def __init__(self, rows):
+            self.rows = [list(row) for row in rows]
+
+        def __getitem__(self, key):
+            row_sel, col_sel = key
+            assert isinstance(row_sel, slice)
+            return _Matrix([[row[index] for index in col_sel] for row in self.rows[row_sel]])
+
+        def max(self, dim):
+            assert dim == -1
+            return SimpleNamespace(values=_Vector(max(row) for row in self.rows))
+
+    def _softmax(rows, dim):
+        assert dim == -1
+        probabilities = []
+        for row in rows:
+            peak = max(row)
+            weights = [math.exp(value - peak) for value in row]
+            total = sum(weights)
+            probabilities.append([value / total for value in weights])
+        return _Matrix(probabilities)
+
+    mapping = _letter_surface_map()
+    ctx = run_ctx()
+    ctx.tok = _TokenMap(mapping)
+    monkeypatch.setattr(cheap, "torch", SimpleNamespace(softmax=_softmax))
+
+    logits = [[0.0] * len(mapping)]
+    logits[0][mapping["c"]] = 8.0
+    scored = cheap.score_letter_logits(
+        logits, [{"subject": "surface forms", "gold": "C"}])
+
+    assert scored["correct"] == 1
+    assert scored["per_item"][0]["pred"] == "C"
+
+
+def test_letter_collision_names_the_surface_forms(run_ctx):
+    """The cross-letter collision guard must fail readably, not merely exist."""
+    mapping = _letter_surface_map()
+    mapping[" b"] = mapping[" A"]
+    ctx = run_ctx()
+    ctx.tok = _TokenMap(mapping)
+
+    with pytest.raises(RuntimeError) as caught:
+        prompts.letter_token_ids()
+
+    message = str(caught.value)
+    assert repr(" A") in message
+    assert repr(" b") in message
+    assert "share first-token id" in message
 
 
 def test_forced_prefill_is_the_v1_string():

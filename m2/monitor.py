@@ -697,9 +697,9 @@ PHASE_UNITS_PRIOR: dict[str, int] = dict(
     #
     # These are priors and are replaced by the truth the moment each phase reports its plan
     # (`size_phase`), which for SCAN and VERIFY is before their first unit runs. The counts
-    # below are the observed Garlic shape: 49 layers in scope x 2 scan doses, a shortlist of
+    # below are the observed Garlic shape: 49 layers in scope x 3 scan doses, a shortlist of
     # 5-8, and 3 top cells x 6 neighbours in refinement.
-    CAL=1, SCAN=98, SHORTLIST=1, BISECT=8, VERIFY=8, REFINE=6, CONFIRM=1, CONTROLS=1,
+    CAL=1, SCAN=147, SHORTLIST=1, BISECT=8, VERIFY=8, REFINE=6, CONFIRM=1, CONTROLS=1,
 )
 
 # Spec 8, in order. `phases.phase5_refine` is REFINE and `phase6_confirm` is CONFIRM.

@@ -1,8 +1,8 @@
 """m2.cheap - the forward-pass tier: E6, D3, S3, S2, and the Phase 1 scan row.
 
 **Nothing in this module generates text and nothing in it calls a judge.** That is the whole
-point of the tier: spec section 8 Phase 1 runs every layer at two doses, ~100 cells, and only
-survives its ~7-10 minute budget because each cell is a handful of forward passes. The moment
+point of the tier: spec section 8 Phase 1 runs every layer at three doses, ~150 cells, and only
+survives its forward-pass-only budget because each cell is a handful of forward passes. The moment
 one of these functions generates, Phase 1 becomes an overnight job and the full-depth scan -
 the thing M2 buys over v1 - stops being affordable.
 
@@ -661,10 +661,9 @@ def score_letter_logits(last: Any, items: Sequence[dict]) -> dict:
     _require_torch()
     probs = torch.softmax(last, dim=-1)
     letters = prompts.letter_token_ids()
-    # MAX over the bare and leading-space forms, not sum (defence 6, spec 5.4). Max and not sum
-    # because the four letters compete in an argmax: if the tokenizer merges " A" and "A" into
-    # one id but keeps " B" and "B" apart, summing would hand B a systematic advantage that has
-    # nothing to do with the model's answer.
+    # MAX over the bare/space-prefixed, upper/lowercase forms, not sum (defence 6, spec 5.4).
+    # If the tokenizer merges some forms for one letter but not another, summing would hand the
+    # latter a systematic advantage that has nothing to do with the model's answer.
     col = {letter: probs[:, ids].max(dim=-1).values.detach().cpu()
            for letter, ids in letters.items()}
     del probs, last

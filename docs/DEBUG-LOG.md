@@ -1075,3 +1075,26 @@ guard, because it reads as evidence. New guards should be tested against a case 
 trip them — `test_the_undefined_name_detector_actually_detects` is the model to copy.
 
 ---
+
+### 2026-08-12 — `s3` ignored lowercase option letters
+
+**Symptom.** A model putting its answer mass on lowercase `a`–`d` was scored wrong even when the
+chosen option was correct. Because case discipline can degrade with steering dose, this made `s3`
+(MMLU capability ratio, higher is better) fall faster along the dose axis than actual capability.
+
+**Root cause.** `m2/prompts.py:letter_token_ids` enumerated only each uppercase letter's bare and
+leading-space forms. `cheap.score_letter_logits` therefore had no lowercase ids to inspect.
+
+**Why nothing caught it.** `s3` had no null control and no generated-answer cross-check. A
+capability ratio that reads plausibly low is indistinguishable from one that is measuring the
+wrong token surface; task 14's deferred generation check would have exposed the disagreement.
+
+**Fix.** `letter_token_ids` now includes bare and leading-space lowercase forms, retains max rather
+than sum across forms, and reports the exact surface forms if ids collide across option letters.
+The tests put all synthetic mass on lowercase `c` and separately trip the collision guard.
+
+**Silent?** Yes. It rejected otherwise usable cells through `s4 = min(s1, s2, s3)` without an
+exception or an obviously impossible number.
+
+**Follow-up.** The new `config_hash` from task 01 forces the next run into a fresh folder, so CAL
+will re-measure `cap_base`, the denominator of every `s3`. Task 14 remains deferred.

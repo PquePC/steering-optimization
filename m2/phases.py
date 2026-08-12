@@ -636,14 +636,15 @@ def phase0_calibrate(*, layers: Sequence[int] | None = None, n_unsteered: int = 
 def phase1_scan(*, layers: Sequence[int] | None = None,
                 doses: Sequence[float] | None = None,
                 on_cell: Any = None, on_plan: Any = None) -> list[dict]:
-    """Every layer with `d(L) >= D_MIN`, at both `SCAN_DOSES`. E6 + D3 + S3 + S2. **0 judge calls.**
+    """Every layer with `d(L) >= D_MIN`, at every `SCAN_DOSE`. E6 + D3 + S3 + S2. **0 judge calls.**
 
-    **Why TWO doses.** One dose cannot distinguish *"this layer is inert"* from *"this layer is
+    **Why THREE doses.** One dose cannot distinguish *"this layer is inert"* from *"this layer is
     under-dosed"* - which is precisely the error a fixed-alpha scan makes, and the reason
     every early-layer cell in the M1.5 grid read flat (at fixed alpha the L6 perturbation was
-    0.3% of L37's, because ||v_L|| ran 14 at L6 to 8896 at L46). Two doses give each layer a
-    slope as well as a level, and 0.15/0.30 brackets the r range of the seven qualifying M1.5
-    cells (0.114-0.303, median 0.180).
+    0.3% of L37's, because ||v_L|| ran 14 at L6 to 8896 at L46). The first two doses give each
+    layer a slope and bracket the seven qualifying M1.5 cells (r=0.114-0.303, median 0.180).
+    Garlic still read e6=0 throughout L20-L52 at both, so r=0.60 distinguishes an inert middle
+    band from one that was merely under-dosed; cheap sanity records if that dose is too high.
 
     **Why EVERY layer.** Peaks are concept-dependent and Macar's detection curves are
     multi-peaked, so sampling arbitrary layers can miss an optimum one layer away - and one
