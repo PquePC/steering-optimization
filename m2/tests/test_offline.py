@@ -27,7 +27,7 @@ _PKG_PARENT = Path(__file__).resolve().parents[2]
 if str(_PKG_PARENT) not in sys.path:
     sys.path.insert(0, str(_PKG_PARENT))
 
-from m2 import cheap, config, gates, judges, monitor, phases, prompts, runio  # noqa: E402
+from m2 import cheap, config, gates, judges, monitor, phases, prompts, runio, setup  # noqa: E402
 
 
 # =====================================================================================
@@ -74,6 +74,32 @@ def test_config_hash_changes_when_a_science_constant_changes():
     a = dict(config.CONFIG); a.pop("config_hash", None)
     b = dict(a); b["D2_MAX"] = float(a["D2_MAX"]) + 0.05
     assert config.config_hash(a) != config.config_hash(b)
+
+
+def test_runpod_volume_guard_uses_allocation_and_actually_blocks_low_space(
+        tmp_path, monkeypatch):
+    """Task 09: the old guard read a 500814 GB backing pool and could never fail.
+
+    A 10 GB RunPod allocation with 9 GB used must block even when the mounted filesystem claims
+    an absurdly large free pool. This is the counterexample that makes the guard evidence.
+    """
+    monkeypatch.setattr(setup, "WORKSPACE", tmp_path)
+    monkeypatch.setenv("RUNPOD_VOLUME_ID", "volume-test")
+    monkeypatch.setenv("RUNPOD_API_KEY", "pod-scoped-test-key")
+    monkeypatch.setattr(setup, "_runpod_volume_size_gb", lambda *_args, **_kw: 10.0)
+    monkeypatch.setattr(setup, "_tree_allocated_gb", lambda _path: 9.0)
+    monkeypatch.setattr(
+        setup.shutil, "disk_usage",
+        lambda _path: SimpleNamespace(free=500_814 * 1024 ** 3))
+
+    report = setup.Report()
+    setup.check_volume(report)
+
+    check = report.checks[-1]
+    assert check.name == "persistent volume"
+    assert check.state == setup.BLOCKED
+    assert "1 GB free" in check.detail
+    assert "9/10 GB allocation used" in check.detail
 
 
 def test_alpha_for_raises_above_ceiling_rather_than_clamping(run_ctx):
@@ -875,6 +901,49 @@ def test_exhaustive_flag_and_cost_estimate_are_explicit_before_measurement():
     assert estimate["seconds"] == pytest.approx(
         49 * (monitor.PHASE_SECONDS_PRIOR["BISECT"]
               + monitor.PHASE_SECONDS_PRIOR["VERIFY"]))
+
+
+def test_archive_without_loose_folder_prints_the_restore_command(
+        tmp_path, monkeypatch, capsys):
+    """Task 09: an archive silently skipped a run even though row-level resume needed extraction."""
+    from m2 import run as m2run
+
+    monkeypatch.setenv("M2_RUNS_DIR", str(tmp_path))
+    cfg = dict(config.CONFIG)
+    cfg["concept"] = "Garlic"
+    run_dir = config.run_dir_for("Garlic", cfg)
+    archive = runio.archive_path_for(run_dir)
+    archive.write_bytes(b"PK\x05\x06" + b"\x00" * 18)
+    assert not run_dir.exists()
+
+    notices = m2run.print_archive_restore_notices(["Garlic"], cfg)
+    output = capsys.readouterr().out
+
+    assert len(notices) == 1
+    assert "ARCHIVED RUN HAS NO LOOSE RESUME FOLDER" in output
+    assert "python -m zipfile -e" in output
+    assert str(archive) in output and str(run_dir) in output
+    assert "mv" in output and ".zip.restored" in output
+
+
+def test_run_cli_checks_for_archive_only_resume_before_public_surface(
+        monkeypatch):
+    """The restore helper must be wired into a real run, not merely pass in isolation."""
+    from m2 import run as m2run
+
+    called: list[tuple[list[str], dict]] = []
+    monkeypatch.setattr(m2run, "check_environment", lambda strict=True: {})
+    monkeypatch.setattr(
+        m2run, "print_archive_restore_notices",
+        lambda concepts, cfg: called.append((list(concepts), cfg)) or [])
+    monkeypatch.setattr(
+        gates, "check_public_surface",
+        lambda: dict(missing=["stop-after-archive-check"], unimportable={}, checked=0))
+
+    result = m2run.main(["--concepts", "Garlic", "--no-notify-test"])
+
+    assert result == m2run.EXIT_CONFIG
+    assert called and called[0][0] == ["Garlic"]
 
 
 def test_required_credentials_are_the_two_the_run_cannot_proceed_without():

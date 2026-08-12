@@ -29,9 +29,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import stat
 import shutil
 import subprocess
 import sys
+import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Sequence
@@ -54,6 +56,8 @@ DEFAULT_HF_HOME = WORKSPACE / "hf"
 # Gemma3-27B in bf16 is ~54 GB of weights. Anything much under that is a partial download.
 MODEL_GB_MIN = 45.0
 VRAM_GB_MIN = 70.0
+MIN_VOLUME_FREE_GB = 20.0
+RUNPOD_VOLUME_API = "https://rest.runpod.io/v1/networkvolumes/{volume_id}"
 
 REQUIRED_ENV = ("HF_TOKEN", "OPENROUTER_API_KEY")
 OPTIONAL_ENV = ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "HEALTHCHECK_URL", "RUNPOD_API_KEY")
@@ -114,6 +118,56 @@ def _dir_gb(path: Path) -> float:
     return total / 1024 ** 3
 
 
+def _tree_allocated_gb(path: Path) -> float:
+    """Allocated bytes below `path`, without double-counting links to model blobs.
+
+    RunPod network volumes expose the backing storage pool through `statvfs`, so
+    `shutil.disk_usage` can report hundreds of petabytes free on a 150 GB allocation. The
+    allocation API supplies the ceiling; this walk supplies the used side. `st_blocks` measures
+    real allocated storage (including copied HuggingFace snapshots), while `lstat` and inode
+    deduplication keep symlinks and hard links from counting the same bytes twice.
+    """
+    seen: set[tuple[int, int]] = set()
+    total = 0
+    for root, _dirs, files in os.walk(path, followlinks=False):
+        for name in files:
+            try:
+                info = os.lstat(Path(root) / name)
+            except OSError:
+                continue
+            if not stat.S_ISREG(info.st_mode):
+                continue
+            identity = (int(info.st_dev), int(info.st_ino))
+            if identity in seen:
+                continue
+            seen.add(identity)
+            blocks = getattr(info, "st_blocks", None)
+            total += (int(blocks) * 512
+                      if blocks is not None and int(blocks) > 0 else int(info.st_size))
+    return total / 1024 ** 3
+
+
+def _runpod_volume_size_gb(volume_id: str, api_key: str, *, timeout: float = 10.0) -> float:
+    """Read the network-volume allocation, not the distributed pool behind its mount.
+
+    RunPod provides `RUNPOD_VOLUME_ID` and a pod-scoped `RUNPOD_API_KEY`. Its documented
+    network-volume endpoint returns `size` in GB. No filesystem syscall can recover this number
+    on mounts whose `statvfs` describes the shared backing pool, which is exactly why the old
+    under-20-GB guard could never fail.
+    """
+    request = urllib.request.Request(
+        RUNPOD_VOLUME_API.format(volume_id=volume_id),
+        headers={"Authorization": f"Bearer {api_key}"},
+        method="GET",
+    )
+    with urllib.request.urlopen(request, timeout=float(timeout)) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    size = payload["size"]
+    if isinstance(size, bool) or not isinstance(size, (int, float)) or float(size) <= 0:
+        raise ValueError("RunPod network-volume response has no positive numeric size")
+    return float(size)
+
+
 # Probe by IMPORT, and treat `__version__` as optional. `nest_asyncio` is a single-module
 # package that never defined `__version__`, so the old `print(pkg.__version__)` probe raised
 # AttributeError on a perfectly good install and reported it missing forever: --repair would
@@ -153,10 +207,40 @@ def check_volume(rep: Report) -> None:
                      "every check below is moot: the 54 GB model and all run data would live on "
                      "container disk and vanish on the next stop.")
         return
-    free_gb = shutil.disk_usage(WORKSPACE).free / 1024 ** 3
-    state = OK if free_gb > 20 else BLOCKED
-    rep.add("persistent volume", state, f"{WORKSPACE}, {free_gb:.0f} GB free",
-            hint="" if state == OK else "Under 20 GB free. The model alone needs ~54 GB.")
+    volume_id = os.environ.get("RUNPOD_VOLUME_ID")
+    if volume_id:
+        api_key = os.environ.get("RUNPOD_API_KEY")
+        if not api_key:
+            rep.add(
+                "persistent volume", BLOCKED,
+                f"{WORKSPACE}, allocation unknown (RUNPOD_API_KEY is missing)",
+                hint=("RUNPOD_VOLUME_ID is set, so filesystem free space describes the shared "
+                      "backing pool rather than this volume's allocation. Restore RunPod's "
+                      "pod-scoped RUNPOD_API_KEY; do not trust df/shutil.disk_usage here."))
+            return
+        try:
+            allocated_gb = _runpod_volume_size_gb(volume_id, api_key)
+            used_gb = _tree_allocated_gb(WORKSPACE)
+        except Exception as exc:                    # noqa: BLE001 - a check reports, never aborts
+            rep.add(
+                "persistent volume", BLOCKED,
+                f"{WORKSPACE}, allocation check failed ({type(exc).__name__})",
+                hint=("Could not read the RunPod allocation. Retry setup with "
+                      "RUNPOD_VOLUME_ID and the pod-scoped RUNPOD_API_KEY present; the "
+                      "filesystem's backing-pool free count is not a safe fallback."))
+            return
+        free_gb = max(0.0, allocated_gb - used_gb)
+        detail = (f"{WORKSPACE}, {free_gb:.0f} GB free "
+                  f"({used_gb:.0f}/{allocated_gb:.0f} GB allocation used)")
+    else:
+        # Local disks expose their actual filesystem capacity. The special API path above is
+        # only for RunPod network volumes, whose mount reports the distributed backing pool.
+        free_gb = shutil.disk_usage(WORKSPACE).free / 1024 ** 3
+        detail = f"{WORKSPACE}, {free_gb:.0f} GB free (filesystem)"
+    state = OK if free_gb > MIN_VOLUME_FREE_GB else BLOCKED
+    rep.add("persistent volume", state, detail,
+            hint="" if state == OK else
+            f"Under {MIN_VOLUME_FREE_GB:g} GB free. The model alone needs ~54 GB.")
 
 
 def check_hf_home(rep: Report) -> None:

@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import signal
 import sys
 import time
@@ -197,6 +198,42 @@ def exhaustive_cost_estimate(n_cells: int, *, judge_calls_per_cell: int = 49) ->
                 judge_calls=cells * int(judge_calls_per_cell), seconds=seconds)
 
 
+def print_archive_restore_notices(concepts: Sequence[str], cfg: dict) -> list[str]:
+    """Warn when an archive marker will skip a run whose loose resume folder is gone.
+
+    A completed archive is deliberately the skip marker, but successful delivery normally wipes
+    the loose folder. Restoring rows therefore requires two reversible operations: extract the
+    archive and rename the marker so `driver.run_concept` no longer skips it. The exact command is
+    printed before model loading, when avoiding an unnecessary GPU load still saves time.
+    """
+    from m2 import config, runio                  # noqa: PLC0415 - lightweight, no model
+
+    notices: list[str] = []
+    for concept in concepts:
+        concept_cfg = dict(cfg)
+        concept_cfg["concept"] = concept
+        run_dir = config.run_dir_for(concept, concept_cfg)
+        archive = runio.archive_path_for(run_dir)
+        if not archive.is_file() or run_dir.is_dir():
+            continue
+        preserved = archive.with_suffix(archive.suffix + ".restored")
+        quote = shlex.quote
+        command = (
+            f"mkdir -p {quote(str(run_dir))} && "
+            f"python -m zipfile -e {quote(str(archive))} {quote(str(run_dir))} && "
+            f"mv {quote(str(archive))} {quote(str(preserved))}"
+        )
+        message = (
+            f"ARCHIVED RUN HAS NO LOOSE RESUME FOLDER: {concept}\n"
+            f"  {archive} is the completion marker, so this run will be skipped.\n"
+            "  Restore its rows and preserve-but-disable the marker, then rerun:\n"
+            f"  {command}"
+        )
+        print("\n" + message)
+        notices.append(message)
+    return notices
+
+
 def check_environment(strict: bool = True) -> dict:
     """Report which credentials are present, and refuse to start without the load-bearing two."""
     missing_required = [k for k in REQUIRED_ENV if not os.environ.get(k)]
@@ -291,6 +328,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if applied:
         print(f"  overrides  : {applied}")
         print("               (these change config_hash, so this run gets its own folder)")
+
+    if not args.dry_run and not args.preflight:
+        print_archive_restore_notices(concepts, config.CONFIG)
 
     surface = gates.check_public_surface()
     if surface["missing"]:
