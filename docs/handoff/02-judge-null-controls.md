@@ -97,25 +97,65 @@ scale. **0.90 allows one full point of slack against an expectation of 10.** The
 out of `1 − (1 − S4_MIN)/3`: the judge may consume at most a third of the usable band on healthy
 output.
 
-### `d2` null maximum — `1 / N_D2` (0.04), plus two additions
+### The rule that decides which nulls may gate
 
-The derivation is right: at n = 25 this is the smallest enforceable nonzero threshold, one false
-identification in twenty-five.
+**A null control may gate only if it can distinguish an instrument fault from real model behaviour
+at runtime.** A null that cannot tell those apart, and aborts anyway, is aborting on a property of
+the model — which is data, not a defect.
 
-1. **Persist the null's transcripts, and point the failure message at them.** A nonzero `d2` null
-   has two causes with opposite remedies: the **model** confabulating a concept that was never
-   injected, or the **judge** wrongly scoring a non-identification. Model confabulation is
-   documented in this project, not hypothetical — see the DEBUG-LOG entry where the model claims
-   detection and names *penguins, cats, cats*. Only the transcripts distinguish them.
-2. **Report the Wilson interval, not only the point estimate.** 0/25 and 1/25 are not meaningfully
-   different at that n, and the gate must not imply precision it does not have.
+Applied to the three:
 
-### A failing null aborts at Phase 0
+| Null | Can it tell instrument fault from model behaviour, live? | Gates? |
+|---|---|---|
+| `e5` | **Yes.** No concept was injected, so any concept-influence reading is necessarily judge-side | gate |
+| `s1` | **Yes, with a cross-check** — see below | gate |
+| `d2` | **No.** A nonzero reading is either the model confabulating or the judge misscoring, and only a human reading the transcripts can say which | **report only** |
 
-As proposed, unconditionally, for all three. It matches the precedent already in the codebase —
-spec 14.6 rule 5 fires gate 3 the moment Phase 0 completes for exactly this reason. Degrading would
-let the primary objective, the sanity constraint or the detection constraint be computed by a judge
-already known to be biased.
+### `s1` null minimum — 0.90, gated against `s2`
+
+`s1` alone has the same ambiguity `d2` has: a low reading on unsteered output could be a judge that
+calls healthy text broken, or a model that genuinely produced a poor response to one prompt. The
+difference is that **`s2` resolves it mechanically, at runtime, for free.**
+
+`s2` is objective degeneracy computed from the text with no judge involved. So:
+
+- `s1` low **and** `s2` fine → the judge is calling healthy output broken. **Instrument fault. Gate
+  fails.**
+- `s1` low **and** `s2` also low → the model really did produce degenerate output. **Model
+  behaviour. Report it, do not fail.**
+
+Gate on the *disagreement*, not on `s1` alone. That is what makes this null able to meet the rule
+above, and it costs nothing because `s2` is already computed.
+
+### `d2` null — measured and reported, NOT a gate
+
+Keep `1 / N_D2` (0.04) as the **reference line** the reading is reported against, but **it does not
+stop the run.** At runtime the pipeline cannot tell whether a nonzero reading is the judge
+misscoring a non-identification or the model naming a concept that was never injected — and the
+second is *expected behaviour*, documented in this project rather than hypothetical (the DEBUG-LOG
+entry where the model claims detection and names *penguins, cats, cats*). Aborting on it would be
+aborting on a real property of the model.
+
+What it does instead:
+
+1. **Persist the null's transcripts** for review after the run. That review is what assigns the
+   cause, and it is the only thing that can.
+2. **Report the reading with its interval beside every `d2` in the run**, as the unsteered
+   baseline. `d2 = 0.16 (unsteered baseline 0.04)` is a far more useful line than a pass/fail, and
+   it is what lets a reader judge how much of a cell's `d2` is real detection.
+3. **Flag it in the run record when it exceeds the reference line**, so the post-run review knows
+   to look.
+
+**Selection still uses raw `d2` against `D2_MAX`.** Do not net the baseline out of the constraint —
+that would be changing the selection rule after seeing the data. Report both and let the
+interpretation happen in the write-up. (Note the direction: a nonzero baseline inflates every `d2`,
+so it makes qualifying *harder*, never easier. It costs cells; it cannot manufacture one.)
+
+### A failing null aborts at Phase 0 — for `e5` and `s1` only
+
+Unconditional for those two. It matches the precedent already in the codebase: spec 14.6 rule 5
+fires gate 3 the moment Phase 0 completes for exactly this reason. Degrading would let the primary
+objective or the sanity constraint be computed by a judge already known to be biased.
 
 **Beside each constant in `config.py`, write that the correct response to a failing null is to
 investigate the judge, never to loosen the threshold.** The temptation at 2am with a rented pod
@@ -124,8 +164,14 @@ degree of freedom sitting on an acceptance gate.
 
 ## Acceptance
 
-- Each null has a test that **trips it** — feed the check a judge stub that returns the bad reading
-  and confirm the gate fails. A null control that cannot fail is worse than none.
-- Running the preflight surfaces all three nulls' readings.
-- A failing null stops the run at Phase 0, with a message naming which judge and which measure.
-- The three readings appear in the run record and in the end-of-run gate table.
+- The `e5` and `s1` nulls each have a test that **trips them** — feed the check a judge stub
+  returning the bad reading and confirm the gate fails. A null control that cannot fail is worse
+  than none.
+- The `s1` gate has a second test proving it does **not** fail when `s2` agrees the output really
+  is degenerate. That is the case it must let through.
+- The `d2` null has a test proving it **does not stop the run** at any reading, and that its
+  transcripts land.
+- Running the preflight surfaces all three readings with their intervals.
+- A failing `e5` or `s1` null stops the run at Phase 0, with a message naming which judge and which
+  measure.
+- The `d2` baseline is reported beside every `d2` in the run record and in the end-of-run report.

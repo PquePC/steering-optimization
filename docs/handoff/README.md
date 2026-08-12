@@ -34,7 +34,7 @@ reason** — that is a useful contribution. Building it is not.
 | [05](05-gate6-false-negative-audit.md) | Tiered shortlist: escalation **and** false-negative audit | The only evidence the shortlist does not drop the answer — and it can improve the answer | yes |
 | [06](06-relaxed-reselection.md) | Relaxed-threshold re-selection | Re-read a finished run at a wider `D2_MAX` without re-measuring | no |
 | [07](07-reference-cell.md) | ~~Reference cell~~ | **DEFERRED** — direct comparison against Macar is not this run's framing | no |
-| [08](08-debug-bundle.md) | `--debug-bundle` export | Lets the operator hand a full run to the orchestrator for audit | no |
+| [08](08-debug-bundle.md) | Debug **capture** then export | Nothing writes to `debug/` today, so the filter is not the blocker — the intermediates must be persisted first | **yes, for the first runs** |
 | [09](09-known-unfixed.md) | Three known-unfixed defects | Carried over from the first run | no |
 | [10](10-unexecuted-path-sweep.md) | Sweep the four never-executed phases | Half the pipeline has never run a line | yes |
 | [11](11-the-run.md) | The run itself | | last |
@@ -43,6 +43,7 @@ reason** — that is a useful contribution. Building it is not.
 | [14](14-mmlu-by-generation.md) | Verify `s3` by generation | **FUTURE** — `s3` cannot tell "answers C" from "wants to emit noise, C is highest among letters" | no |
 | [15](15-r5-portability.md) | R5's norm band is Gemma3-27B-specific | It fails on any other model while the vector is healthy; most of its job may already be done behaviourally | propose first |
 | [16](16-judge-bakeoff.md) | Judge bake-off on stored transcripts | **FUTURE** — replay judging with no GPU and score candidates on the gates already built | no |
+| [17](17-wilson-intervals.md) | Wilson intervals on every rate, every concept | A binomial SE is exactly zero at p=0 and p=1, and 29 of 30 v1 cells landed there | yes, before the run |
 
 ## What you owe the documentation
 

@@ -1,23 +1,76 @@
 # 08 — `--debug-bundle`: a full-fidelity export for audit
 
-**Status: BUILD NOW.** Implement as written, including the structural refusal for non-benign concepts. Not blocking.
+**Status: BUILD NOW.** Two halves — **capture** then export. Blocking for the first Garlic and
+Origami runs: the operator intends to audit every step of those runs from this bundle, so what it
+omits cannot be checked.
 
 ## Goal
 
-A flag that exports **everything** a run produced — including transcripts and vectors — into a
-single zip the operator can hand to the orchestrating agent to verify the pipeline did what it
-claims.
+**Everything** a run produced, in one zip the operator can hand to the orchestrating agent to
+verify the pipeline did what it claims: transcripts, generations, judge inputs and raw judge
+replies, every intermediate calculation, and the vectors.
 
-## Why
+## Why there are two halves
 
-The existing `export_bundle` deliberately drops `vectors/`, `debug/` and binary weight extensions,
-and gates transcripts on the concept being benign. That is the right default for a deliverable. It
-is the wrong thing for *"check my pipeline is working"*, where the whole point is to inspect the
-intermediate state — which vectors were extracted, what the model actually said, what the judge
-actually returned.
+The obvious reading of this task is "turn off the export filter". **That is not enough, and
+discovering why is the point of reading the code first.**
 
-Every diagnosis in the M1.5 review required reading generations. This flag is the same argument
-extended one step: some questions require reading the vectors too.
+`EXPORT_DENY` drops `vectors/`, `debug/` and the binary weight extensions, and `archive_concept`
+deliberately keeps `debug/` in the local archive because *"the debug dumps are what make a cell
+auditable"*. But **nothing in `m2/` writes to `debug/` at all.** The directory, the deny-list entry
+and the archive carve-out are inherited from the v1 lab and are vestigial. So flipping the filter
+today exports exactly one extra thing — `vectors/` — and every intermediate the operator wants to
+audit is computed and discarded.
+
+**An export flag can only ship what was written.** Hence:
+
+- **Capture** — persist the intermediates that are currently computed and thrown away.
+- **Export** — stop filtering, for benign concepts only.
+
+## Half 1 — capture
+
+Much is already persisted and needs nothing: `scan.jsonl`, `verified.jsonl`, `bisect.jsonl`,
+`confirm.jsonl`, `controls.jsonl`, `baselines.jsonl`, `norms.jsonl`, `dose_map.json`,
+`shortlist.json`, `provenance.jsonl`, `operating_point.json`, the three `judge_*.jsonl` files
+(which already carry the **raw** judge reply, on the stated principle that *"a stored score with no
+stored response is a number nobody can re-check"*), `D2_transcripts.jsonl` and
+`cis_transcripts.jsonl`.
+
+**Audit what is computed and not written**, and persist it under the flag. Start from these, and
+report anything else you find:
+
+- the per-item detail the measure functions return but the row may not keep — `e6_per_prompt`,
+  `s3_per_item`, `d3`'s per-trial readings, `s2`'s reasons;
+- the **kept/dropped concept-token table** from `concept_first_token_ids`, which task
+  [13](13-prefix-token-contamination.md) needs anyway and which is currently only surfaced when
+  extraction fails;
+- every bracket probe in Phase 3, not only the bisection result;
+- the null-control transcripts from task [02](02-judge-null-controls.md);
+- unsteered generations wherever they are only summarised;
+- the intermediate arithmetic behind each composite — the three terms behind every `s4`, the
+  `alpha`/`r` conversion inputs per cell, the residual fit behind `resid`.
+
+**Two things to decide and propose, rather than assume:**
+
+- **Raw per-position logit dumps** — the original purpose of `debug/`. These are what would let
+  someone re-derive `e6` and `d3` from scratch, and they are also enormous: vocabulary × positions
+  × cells. Full capture across a scan is not affordable. Propose a bounded form — the top-k tokens
+  with their probabilities at the scored position, say — with the size arithmetic for a full run.
+- **Where capture is switched on.** A flag on `m2.run`, and it should be **on for these first runs
+  and off by default afterwards**, because the size is real.
+
+**Prerequisite:** task [09](09-known-unfixed.md) item 1. The volume free-space guard currently
+cannot fire, and turning on full capture is exactly the change that would fill a volume. **Fix the
+guard before enabling capture**, not after.
+
+## Half 2 — export
+
+The existing `export_bundle` drops the deny list and gates transcripts on the concept being benign.
+The debug bundle disables the deny list — including `vectors/` and `debug/` — with the benign check
+made hard rather than overridable.
+
+Every diagnosis in the M1.5 review required reading generations. This is the same argument extended
+one step: some questions require reading the vectors and the intermediates too.
 
 ## The hard constraint
 

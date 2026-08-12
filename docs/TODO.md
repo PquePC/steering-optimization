@@ -23,16 +23,17 @@ document first.
 | # | Decision | Task |
 |---|---|---|
 | 1 | `SCAN_DOSES` becomes `(0.15, 0.30, 0.60)` — the mid band L20–L52 is currently undecidable between inert and under-dosed, and that is where the qualifying region is predicted to sit | [01](handoff/01-scan-doses.md) |
-| 2 | A judge null control per judged measure (`e5`, `s1`, `d2`), each gating its own phase before that phase spends judge calls | [02](handoff/02-judge-null-controls.md) |
+| 2 | A judge null control per judged measure. `e5` and `s1` **gate** their phase before it spends judge calls; `d2`'s is **reported, not gated**, because at runtime it cannot tell judge error from model confabulation and the latter is expected behaviour | [02](handoff/02-judge-null-controls.md) |
 | 3 | Gate 4 re-anchors on a cell above **this run's own** bisected sanity boundary, measuring all three sanity terms live | [03](handoff/03-gate4-reanchor.md) |
 | 4 | Gate 1 selects its anchors from this run's own scan surface, and becomes an instrument gate keyed on judge configuration rather than a per-concept gate | [04](handoff/04-gate1-anchors.md) |
 | 5 | Phase 2 emits **tiers** rather than a flat shortlist. Tier 1 always runs (the false-negative audit); further tiers run only when no window has been found. Every knob parametrized, including an exhaustive mode | [05](handoff/05-gate6-false-negative-audit.md) |
 | 6 | A relaxed-threshold re-selection pass, so a run that finds no cell at `D2_MAX = 0.20` can be re-read at 0.30 **without re-measuring anything** | [06](handoff/06-relaxed-reselection.md) |
 | 7 | ~~Reference cell~~ — **deferred 2026-08-12**, direct comparison against Macar is not this run's framing | [07](handoff/07-reference-cell.md) |
-| 8 | A `--debug-bundle` flag that exports everything, including vectors, for benign concepts only | [08](handoff/08-debug-bundle.md) |
+| 8 | Debug **capture** and export: persist the intermediates that are currently computed and discarded, then ship everything including vectors, for benign concepts only | [08](handoff/08-debug-bundle.md) |
 | 9 | **Defect:** `s3` scores only uppercase option letters, so a degraded model answering `c` is counted wrong — a dose-dependent bias in a sanity term | [12](handoff/12-mmlu-letter-surface-forms.md) |
 | 10 | The `prefix_only` contamination in `e6` / `d3` gets a diagnostic before the scan surface is trusted, and a two-token lookahead only if the diagnostic warrants it | [13](handoff/13-prefix-token-contamination.md) |
 | 11 | R5's norm band is a property of Gemma3-27B and does not port. It is scoped to that model and skips elsewhere; what it was really testing — that extraction produced a working direction — is re-derived from the dimensionless `‖v‖/‖h‖` ratio and from behaviour (R14, the §9.3 ladder) | [15](handoff/15-r5-portability.md) |
+| 12 | Every reported rate carries a **Wilson** interval, on every concept — a binomial SE is exactly zero at p = 0 and p = 1, and the v1 sweep landed there on 29 of 30 cells | [17](handoff/17-wilson-intervals.md) |
 
 ---
 
@@ -69,7 +70,7 @@ re-run anything. Rebuilding costs ~600 generations and ~1,300 judge calls. **Set
 the stored status was produced by v1's extraction and v1's judge and M2 has replaced both — so
 even a recovered file would validate an apparatus that no longer exists. The apparatus is covered
 instead by R14 (hook liveness), R5 (extraction), R7 (prompt match), gate 3 (`e5` judge null) and
-gate 11 (`d2` against the upstream judge), plus decision 7's reference cell.
+gate 11 (`d2` against the upstream judge).
 
 Available if a reviewer asks for an end-to-end calibration against the published aggregate: 10
 concepts at L37 / α=4, aggregate detection with both the pooled and the between-concept interval,
