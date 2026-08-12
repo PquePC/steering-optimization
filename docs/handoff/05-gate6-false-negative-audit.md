@@ -1,6 +1,7 @@
 # 05 — A tiered shortlist: escalation and false-negative audit
 
-**Status: BUILD NOW — PROPOSE FIRST.** The defaults are settled (tier size 3, ordered by `e6`); the parameter *names* and the tier-ordering refinement are yours to propose. Blocking.
+**Status: BUILD NOW.** Blocking. Names, ordering and the exhaustive-mode gate behaviour were
+settled on 2026-08-12 - see **Decided** at the end. No further proposal needed.
 
 ## What Phase 2 does, and its one dangerous failure
 
@@ -118,3 +119,87 @@ print its own cost estimate before starting, because it is the expensive path by
 - Every knob above is read from `CONFIG`, and `--set` reaches all of them.
 - Exhaustive mode prints an estimated cell count and cost before it starts.
 - The run record carries, per tier: which layers, why each was ordered where, and their verdicts.
+
+---
+
+# Decided 2026-08-12
+
+## Config names — approved as proposed
+
+```
+SHORTLIST_TIER_SIZE   = 3
+SHORTLIST_AUDIT_TIERS = 1
+SHORTLIST_MAX_TIER    = 3          # permits tiers 0-3; None = until in-scope layers are exhausted
+SHORTLIST_TIER_ORDER  = "e6_residual_interleave"
+SHORTLIST_EXHAUSTIVE  = False
+```
+
+Two notes on them:
+
+- **`SHORTLIST_MAX_TIER = None` and `SHORTLIST_EXHAUSTIVE = True` are not the same thing**, and they
+  will be confused unless each says so beside itself. `MAX_TIER = None` escalates through every tier
+  **only while no qualifying cell exists** and stops the moment one is found. `EXHAUSTIVE = True`
+  verifies every in-scope cell **regardless**. Write the distinction into both comments; two knobs
+  that look like they mean the same thing is how one gets set meaning the other.
+- **`SHORTLIST_TIER_ORDER` must raise on an unrecognised value**, never fall back to a default. A
+  mistyped ordering that silently becomes `e6_desc` is a run measuring something other than what it
+  reports.
+
+## Tier ordering — `e6_residual_interleave`, approved
+
+Sol's argument is right and supersedes the earlier `e6_desc`. Phase 2 can wrongly reject a layer in
+two independent ways — missing the `E6_FLOOR` cutoff, and mishandling the residual route — and an
+audit ordered on `e6` alone leaves the second essentially untested.
+
+The residual route is not the minor one. **It is the route that found the cell this pipeline exists
+to find**: on the first Garlic run, L58 came from the residual — `e6` reach 0.42, `d3` 0.027,
+`resid` −0.375, influence without proportional forced-ID detectability. Auditing only the `e6`
+boundary would leave the route that produced the headline unaudited.
+
+### The guard the residual ordering must inherit
+
+**A dead layer must never enter a tier, by either ordering.** Commit `1dc85b1` — *"Stop the
+shortlist widening onto layers with no concept mass"* — fixed exactly this: the old guard tested
+`d3 > 0.0`, and `d3` is a probability mass that is never exactly zero, so Garlic put L13/L14/L15 on
+the shortlist at reach 0.00. The bar is now `D3_SIGNAL_MIN`, a floor under the unsteered `d3`
+baseline.
+
+**Residual ordering can walk around that guard through a new door.** On a dead layer both `d3` and
+`e6` are ≈ 0, so `resid = d3 − predicted_d3(e6)` is whatever the fit noise makes it — and a
+slightly negative value would rank a dead layer at the top of a "most negative residual" ordering.
+That is `1dc85b1`'s bug reintroduced, in the one place built to catch false negatives.
+
+Both orderings draw from the **live** rejected population only, filtered by `D3_SIGNAL_MIN` exactly
+as the shortlist is. **Test it against a synthetic dead layer with a mildly negative residual and
+confirm it is not selected.**
+
+### Composition at `SHORTLIST_TIER_SIZE = 3`
+
+Alternate starting with `e6`, deduplicating — `e6` #1, most-negative residual #1, `e6` #2 — so tier
+1 carries two `e6` near-misses and one residual near-miss. Record **which ordering selected each
+layer** in the row, so a tier-1 qualifier can be traced to the route that would have missed it.
+
+## Gate 6 in exhaustive mode — NOT APPLICABLE, and distinguish it from a skip
+
+Sol's reasoning is correct: reporting PASS when every in-scope layer was verified would be a gate
+that cannot fail, because there is no rejected population for it to audit.
+
+One refinement. **"Not applicable" and "could not run" are opposite in meaning and must not share a
+column.** A reader scanning the not-run gates is looking for gaps in the evidence. This is not a
+gap — it is the strongest possible outcome: nothing was rejected, so nothing could have been
+wrongly rejected. Exhaustive mode is *stronger* than a gate-6 pass, not weaker.
+
+Report it as `NOT APPLICABLE — every in-scope layer was verified; there is no rejected population
+to audit`, and give the gate table a state distinct from both `PASS` and `SKIPPED`.
+
+## Cost, and the unit counts that go with it
+
+Tier 1 always running means `SHORTLIST_TIER_SIZE` extra layers through **both** BISECT and VERIFY —
+at the measured 99 s per bisection candidate and 50 s per verified cell, roughly **7.5 minutes per
+concept** at the default of 3.
+
+**Update `PHASE_UNITS_PRIOR` for BISECT and VERIFY accordingly**, and state the unit beside each
+number. `BISECT` was already wrong by 12× once because its prior was priced per bisection *probe*
+while the board ticks once per *candidate*; a change that raises the candidate count is exactly
+where that class of error returns. The ETA must account for the audit tier from the opening board,
+not discover it mid-run.

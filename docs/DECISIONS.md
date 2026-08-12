@@ -277,3 +277,32 @@ than fail when none has one, and report "sanity held at every reachable dose acr
 as a finding rather than an absence.
 
 **Result:** task [03](handoff/03-gate4-reanchor.md), *Decided*.
+
+## 2026-08-12 — Tasks 03 and 04 landed; task 05's ordering and exhaustive-mode behaviour settled
+**By:** Sol (implementation and proposals), PquePC (decision), Opus (review)
+**Kind:** task complete + decision
+
+Tasks [03](handoff/03-gate4-reanchor.md) (`97fb032`) and [04](handoff/04-gate1-anchors.md)
+(`cf13fdf`) are implemented, 88 tests passing, no measurements run.
+
+Task 05: config names approved as proposed. **Tier ordering becomes `e6_residual_interleave`**,
+superseding the earlier `e6_desc`. **Gate 6 in exhaustive mode reports NOT APPLICABLE**, in a
+gate-table state distinct from both PASS and SKIPPED.
+
+**Why:** Phase 2 can wrongly reject a layer in two independent ways — missing the `E6_FLOOR` cutoff
+and mishandling the residual route — and the residual route is the one that found L58 on the first
+Garlic run, the exact influence-without-detectability shape this pipeline exists to find. An audit
+ordered on `e6` alone would leave it untested. On exhaustive mode, reporting PASS with no rejected
+population would be a gate that cannot fail; and "not applicable" must be distinguishable from
+"could not run", because exhaustive coverage is *stronger* than a gate-6 pass rather than a gap in
+the evidence.
+
+**Caveats added:** the residual ordering must inherit the `D3_SIGNAL_MIN` guard from `1dc85b1` — on
+a dead layer both `d3` and `e6` are ≈ 0 so the residual is fit noise, and a mildly negative value
+would rank dead layers first, reintroducing that bug through a new door. `SHORTLIST_MAX_TIER = None`
+and `SHORTLIST_EXHAUSTIVE = True` are different behaviours and both comments must say so.
+`SHORTLIST_TIER_ORDER` must raise on an unknown value rather than defaulting. Tier 1 always running
+adds `SHORTLIST_TIER_SIZE` layers to both BISECT and VERIFY — about 7.5 minutes per concept at the
+default — so `PHASE_UNITS_PRIOR` must account for it from the opening board.
+
+**Result:** task [05](handoff/05-gate6-false-negative-audit.md), *Decided*.
