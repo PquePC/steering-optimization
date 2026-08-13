@@ -1205,3 +1205,28 @@ imports and then raises specifically from `LLMJudge`.
 
 **Result.** `d82c03a`. Silent? Yes — the skipped gate removed evidence from the run after the
 apparatus had been declared ready.
+
+### 2026-08-13 — Routine package recovery required an unnecessary second setup command
+
+**Symptom.** On a migrated pod, plain `m2.setup` detected the predictably missing container-local
+packages but stopped at `FIX` and instructed the operator to invoke it again with `--repair`.
+
+**Root cause.** The setup driver put package installation behind the same opt-in as repository
+updates, harness cloning and run-data edits, even though package loss is the normal consequence of
+every pod migration and carries no operator choice.
+
+**Why nothing caught it.** Setup tests checked package detection and the explicit repair helper,
+but no test drove the no-flag CLI with a missing package. The documented two-command ritual made
+the omission look intentional.
+
+**Fix.** Both setup entrypoints select only the `python packages` repair automatically, attempt it
+once, and re-diagnose. All other repair callbacks retain the `--repair` boundary. The dependency
+callback also resolves the harness at execution time, so a harness cloned earlier in an explicit
+repair pass is usable immediately rather than on a second invocation.
+
+**Test.** The no-flag CLI must invoke package installation and re-check; the alias through
+`m2.run --setup` must do the same; another repair callback must not run; and a simulated failed
+installation must remain non-ready, exit non-zero and make exactly one attempt.
+
+**Result.** `5d7a2ed`. Silent? No — setup reported the missing packages, but required avoidable
+manual intervention before the run could start.

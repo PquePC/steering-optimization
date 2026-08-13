@@ -22,12 +22,12 @@ Skip to this. Migrating pods is routine — the network volume survives, the con
 ```bash
 export HF_HOME=/workspace/hf
 cd "/workspace/steering-optimization"
-python -m m2.setup --repair
+python -m m2.setup
 ```
 
-That reinstalls what the container took, pulls any code updates, tells you what each concept has
-already measured, and names anything only you can fix. Then re-export your credentials
-(§5) and go to §8.
+That automatically reinstalls the Python packages the container took, tells you what each concept
+has already measured, and names anything only you can fix. If it reports a non-package `FIX`,
+review it and use `--repair` explicitly. Then re-export your credentials (§5) and go to §8.
 
 If `/workspace/steering-optimization` is missing, the volume did not follow — start at §1.
 
@@ -95,7 +95,8 @@ python -m m2.setup --repair
 **This is the install step.** It clones the upstream harness from
 `safety-research/introspection-mechanisms`, installs every dependency, pulls any code updates,
 and runs the offline tests. It imports nothing heavy, so it works when the missing thing *is*
-the dependencies.
+the dependencies. Missing Python packages install on every setup invocation; `--repair` is present
+here because a fresh pod also needs the harness and the other reversible setup actions.
 
 It also reports what it cannot fix. Expect this on a fresh pod:
 
@@ -115,12 +116,13 @@ Three states, no ambiguity:
 | | meaning |
 |---|---|
 | `ok` | present and usable |
-| `FIX` | `--repair` handles it |
+| `FIX` | packages install automatically; `--repair` handles the other reversible items |
 | `BLOCK` | only you can — credentials, GPU, the volume itself |
 
 `--repair` never deletes a measured row.
 
-**Read-only any time:** `python -m m2.setup`. Also available as `python -m m2.run --setup`.
+**Routine setup/check:** `python -m m2.setup`. It changes only a missing Python environment unless
+you add `--repair`. The same behavior is available as `python -m m2.run --setup`.
 
 ---
 
@@ -323,7 +325,7 @@ whether `--repair` can fix it.
 
 | What you see | What it means | Fix |
 |---|---|---|
-| `No module named pytest` / `torch` / `m2` | dependencies gone (container disk) or wrong directory | `cd` to the project dir, then `python -m m2.setup --repair` |
+| `No module named pytest` / `torch` / `m2` | dependencies gone (container disk) or wrong directory | `cd` to the project dir, then `python -m m2.setup`; missing packages install automatically |
 | `Username for 'https://github.com':` on a clone | wrong URL — GitHub prompts for auth rather than 404ing | the harness is `safety-research/introspection-mechanisms`; `--repair` uses the right one |
 | `Could not open requirements file` | the clone above failed | same |
 | `refusing to start: HF_TOKEN, OPENROUTER_API_KEY not set` | no TTY under `nohup`, so nothing can prompt | §5, in the same shell |

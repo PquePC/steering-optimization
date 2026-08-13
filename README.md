@@ -114,6 +114,9 @@ python -m m2.setup --repair
 python -m m2.run --concepts Garlic --preflight
 ```
 
+Missing Python packages install automatically even without `--repair`. The flag remains in this
+fresh-pod example because it also clones the upstream harness and applies other explicit repairs.
+
 ---
 
 ## Safety

@@ -436,3 +436,15 @@ CONTROLS remain unobserved priors.
 
 **Result:** `d82c03a`; Task 18 complete, TODO items 11 and 13 resolved; 110 offline tests passed,
 2 environment-dependent tests skipped.
+
+## 2026-08-13 — Setup installs a missing Python environment without `--repair`
+**By:** Tomás (scope), Sol (execution)
+**Kind:** decision
+
+Every `python -m m2.setup` and `python -m m2.run --setup` invocation now installs missing Python
+packages once and immediately re-runs the checks. A failed install stays non-ready and exits
+non-zero. `--repair` remains explicit for repository updates, harness cloning, `HF_HOME` changes
+and run-data repair; setup never interprets automatic package installation as authority for those
+different actions.
+
+**Result:** `5d7a2ed` on `main`; 114 offline tests passed, 2 environment-dependent tests skipped.
