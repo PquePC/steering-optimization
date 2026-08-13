@@ -108,6 +108,11 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--transcripts-override", action="store_true",
                    help="include transcripts in the bundle for concepts that are NOT on "
                         "BENIGN_CONCEPTS. Read spec 14.3 before using this.")
+    p.add_argument("--autopsy-cells", nargs="?", const="", default=None,
+                   metavar="LAYER@R,...",
+                   help="run disposable task-25 d3/d2 diagnostics instead of the pipeline. "
+                        "With no value uses 57@0.30,58@0.30,59@0.30,52@0.60; every override "
+                        "must retain positive-control cell 59@0.30.")
 
     p.add_argument("--setup", action="store_true",
                    help="report what this pod already has and what it needs, then exit. "
@@ -329,7 +334,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"  overrides  : {applied}")
         print("               (these change config_hash, so this run gets its own folder)")
 
-    if not args.dry_run and not args.preflight:
+    autopsy_cells = None
+    if args.autopsy_cells is not None:
+        from m2 import autopsy                    # noqa: PLC0415 - disposable standalone mode
+        autopsy_cells = autopsy.prepare(
+            concepts, config.CONFIG, args.autopsy_cells, log_path=args.log)
+        print(f"  task 25    : d3 autopsy on "
+              f"{', '.join(f'L{layer}@{r:.2f}' for layer, r in autopsy_cells)}")
+
+    if not args.dry_run and not args.preflight and autopsy_cells is None:
         print_archive_restore_notices(concepts, config.CONFIG)
 
     surface = gates.check_public_surface()
@@ -366,7 +379,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     # Validate the ordering and the relationship among the tier knobs before loading the
     # model. An invalid string must never survive until Phase 2 and quietly become another
     # ordering after paid work has started.
-    phases._tier_config(config.CONFIG)
+    if autopsy_cells is None:
+        phases._tier_config(config.CONFIG)
 
     log_path = args.log or None
     if log_path is not None:
@@ -383,7 +397,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"  {config.CONFIG['model']}  {ctx.n_layers} layers  "
           f"padding={ctx.tok.padding_side}  ({time.time() - t0:.0f}s)")
 
-    if config.CONFIG["SHORTLIST_EXHAUSTIVE"]:
+    if autopsy_cells is None and config.CONFIG["SHORTLIST_EXHAUSTIVE"]:
         n_cells = len(phases.layers_in_scope(int(ctx.n_layers),
                                              float(config.CONFIG["D_MIN"])))
         estimate = exhaustive_cost_estimate(n_cells)
@@ -395,6 +409,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("  every layer runs even after a qualifying cell is found")
 
     driver.set_concept(concepts[0])
+
+    if autopsy_cells is not None:
+        print("\nTASK 25 STANDALONE MODE - diagnostic numbers are not reportable run results")
+        autopsy.run_autopsy(autopsy_cells)
+        return EXIT_OK
 
     if args.preflight:
         # Gate 11 uses the upstream repo's LLMJudge, whose constructor reads
