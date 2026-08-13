@@ -418,3 +418,21 @@ excluded 26 of 41 rejected layers. Gates 2a, 3, 7a, 7b and 9 passed. The `d2` nu
 landed. Gate 1 wrote its 24-row role-blind label packet.
 
 **Result:** gates 5 pass / 1 FAIL / 7 SKIPPED. Timings and science in [`TODO.md`](TODO.md).
+
+## 2026-08-12 — Task 18 and the universal shakedown fixes landed
+**By:** PquePC (decisions), Sol (execution)
+**Kind:** task complete
+
+Task 18 now routes every judge cache key through `judges.cache_key_for`, which normalises `r` at
+construction with `R_DECIMALS`; the order guard remains exact and reports both float values with
+`repr`. A failed verification tier now records an **aborted** termination rather than claiming the
+configured tiers were exhausted. The preflight constructs the upstream Gate 11 judge, without
+making a judge call, so a missing `OPENAI_API_KEY` fails before the run instead of skipping Gate 11
+after paid work.
+
+The opening-board priors now record the shakedown's observed units: CAL 89.9 s/concept (prior
+420 s), SCAN 10.9 s/(layer, dose) cell, and BISECT 68.7 s/candidate. VERIFY, REFINE, CONFIRM and
+CONTROLS remain unobserved priors.
+
+**Result:** `d82c03a`; Task 18 complete, TODO items 11 and 13 resolved; 110 offline tests passed,
+2 environment-dependent tests skipped.
