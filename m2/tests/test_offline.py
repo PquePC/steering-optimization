@@ -942,15 +942,13 @@ def test_every_tier_knob_is_in_config_and_reachable_through_set():
         "SHORTLIST_TIER_SIZE=4",
         "SHORTLIST_AUDIT_TIERS=2",
         "SHORTLIST_MAX_TIER=null",
-        "SHORTLIST_TIER_ORDER=e6_desc",
         "SHORTLIST_EXHAUSTIVE=true",
     ])
     assert set(applied) == {
         "SHORTLIST_TIER_SIZE", "SHORTLIST_AUDIT_TIERS", "SHORTLIST_MAX_TIER",
-        "SHORTLIST_TIER_ORDER", "SHORTLIST_EXHAUSTIVE"}
+        "SHORTLIST_EXHAUSTIVE"}
     assert cfg["SHORTLIST_TIER_SIZE"] == 4 and cfg["SHORTLIST_AUDIT_TIERS"] == 2
     assert cfg["SHORTLIST_MAX_TIER"] is None
-    assert cfg["SHORTLIST_TIER_ORDER"] == "e6_desc"
     assert cfg["SHORTLIST_EXHAUSTIVE"] is True
 
 
@@ -1237,12 +1235,99 @@ def test_tier_escalation_stops_at_the_configured_limit_and_says_so():
     assert "SHORTLIST_MAX_TIER=3" in reason
 
 
-def test_tier_ordering_rejects_an_unknown_value():
+def test_task21_tier_ordering_is_fixed_to_pareto_distance():
     from m2 import phases
     cfg = dict(config.CONFIG)
-    cfg["SHORTLIST_TIER_ORDER"] = "e6_typo"
-    with pytest.raises(ValueError, match="not recognised"):
-        phases._tier_config(cfg)
+    assert "SHORTLIST_TIER_ORDER" not in cfg, "an obsolete knob must not change the new design"
+    assert phases._tier_config(cfg)["tier_order"] == "pareto_distance"
+
+
+def test_task21_real_garlic_scan_reproduces_the_four_cell_frontier():
+    fixture = Path(__file__).parent / "fixtures" / "garlic_shakedown_scan.jsonl"
+    rows = [json.loads(line) for line in fixture.read_text(encoding="utf-8").splitlines()]
+    result = phases.phase2_shortlist(rows, write=False)
+
+    got = {(row["layer"], round(row["r"], 2)) for row in result["frontier"]}
+    assert got == {(52, 0.60), (51, 0.60), (58, 0.30), (57, 0.30)}
+    assert result["n_cells_scanned"] == 147
+    assert result["n_cells_reachable"] == 130
+    assert result["n_cells_eligible"] == 19
+    assert result["detection_axis"] == "d3"
+
+    # Each displayed metric must come from the selected cell, not from different doses on
+    # the same layer as the old `_by_layer` table did.
+    source = {(row["layer"], round(row["r"], 6)): row for row in rows}
+    for candidate in result["candidates"]:
+        raw = source[(candidate["layer"], round(candidate["r"], 6))]
+        assert candidate["reach"] == raw["reach"]
+        assert candidate["d3"] == raw["d3"]
+        assert candidate["s3"] == raw["s3"]
+        assert candidate["why"]
+
+    excluded = {row["layer"]: row for row in result["excluded_layers"]}
+    assert 37 in excluded and 18 in excluded
+    assert {cell["r"] for cell in excluded[37]["cells"]} == {0.15, 0.30, 0.60}
+    assert all("reach" in cell and "s3" in cell for cell in excluded[37]["cells"])
+    assert any(row["layer"] == 56 and row["r"] == 0.30
+               and row["kind"] == "below_reach_floor"
+               for row in result["near_misses"])
+
+
+def test_task21_keeps_two_tradeoff_doses_from_the_same_layer():
+    rows = [
+        dict(layer=10, r=0.30, reachable=True, reach=0.40, d3=0.10,
+             d3_rate=0.0, s3=0.95, alpha=1.0),
+        dict(layer=10, r=0.60, reachable=True, reach=0.80, d3=0.60,
+             d3_rate=1.0, s3=0.95, alpha=2.0),
+        dict(layer=11, r=0.30, reachable=True, reach=0.30, d3=0.30,
+             d3_rate=1.0, s3=0.95, alpha=1.0),
+    ]
+    result = phases.phase2_shortlist(rows, write=False)
+    frontier = {(row["layer"], row["r"]) for row in result["frontier"]}
+    assert (10, 0.30) in frontier and (10, 0.60) in frontier
+    assert (11, 0.30) not in frontier
+
+
+def test_task21_phase3_maps_sanity_without_replacing_the_selected_dose(
+        run_ctx, tmp_path, monkeypatch):
+    ctx = run_ctx(run_dir=tmp_path)
+    ctx.mw = object()
+
+    def fake_probe(layer, r, cache):
+        key = phases._cell_key(layer, r)
+        if key not in cache:
+            sane = float(r) < 0.40
+            cache[key] = dict(layer=layer, r=float(r), reachable=True, alpha=float(r),
+                              s3=0.95 if sane else 0.50,
+                              reach=0.40 if sane else 0.0, d3=0.05)
+        return cache[key]
+
+    monkeypatch.setattr(phases, "_probe", fake_probe)
+    candidate = dict(layer=58, r=0.30, why=["frontier"], routes=["pareto_frontier"],
+                     tier=0, tier_rank=1, tier_ordering="pareto_frontier",
+                     tier_order_rank=1, tier_source_layer=58,
+                     tier_source_cell=dict(layer=58, r=0.30))
+    row = phases.phase3_bisect([candidate])[0]
+    assert row["r"] == 0.30
+    assert row["selected_r"] == 0.30
+    assert row["boundary_hi"] != row["r"], "the boundary must remain metadata"
+    assert row["has_window"] is True
+
+
+def test_task21_gate5_cannot_substitute_d3_rate_for_the_d3_axis(monkeypatch):
+    rows = [dict(layer=i, alpha=float(i), d2=i / 9, usable=True) for i in range(10)]
+
+    def fake_d3(_layer, alpha):
+        value = float(alpha) / 9
+        return dict(d3=1.0 - value, d3_rate=value, d3_rank_med=10 - int(alpha))
+
+    monkeypatch.setattr(cheap, "measure_D3", fake_d3)
+    result = cheap.validate_d3(rows, min_rho=0.70, verbose=False)
+    assert result["axis"] == "mass"
+    assert result["best"].startswith("rate")
+    assert result["rhos"]["mass"] < 0.0 and result["rhos"][result["best"]] > 0.99
+    assert result["passed"] is False, "the treatment and diagnostic must not be confused"
+    assert gates._ACCEPTANCE[0][0] == 5, "gate 5 rho must be first in the report"
 
 
 def _gate6_row(layer, tier, e5, qualifies, *, source=None):
@@ -1256,8 +1341,9 @@ def _gate6_plan(*, exhaustive=False):
         exhaustive=exhaustive, audit_tiers=1,
         n_rejected=6, n_rejected_live=5, n_rejected_dead=1,
         tiers=[
-            dict(tier=0, candidates=[dict(layer=31)]),
-            dict(tier=1, candidates=[dict(layer=40), dict(layer=41), dict(layer=42)]),
+            dict(tier=0, candidates=[dict(layer=31, r=0.3)]),
+            dict(tier=1, candidates=[dict(layer=40, r=0.3), dict(layer=41, r=0.3),
+                                     dict(layer=42, r=0.3)]),
         ])
 
 

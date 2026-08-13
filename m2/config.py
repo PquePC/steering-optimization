@@ -80,13 +80,13 @@ CONSTANTS: dict = {
 
     # --- Phases 2 and 3 ---------------------------------------------------------------
 
-    # (min, max) target size of the Phase 2 shortlist, in layers. A band and not a single
-    # number because Phase 2 merges candidates within +/-1 layer, so the count is an
-    # outcome of the merge. Raise the band if gate 5 (D3 vs D2) fails and the scan loses
-    # its detection axis.
+    # (min, max) target size of the Phase 2 shortlist, in CELLS. Phase 2 first keeps the
+    # complete reach-vs-d3 Pareto frontier, fills toward the lower bound with the nearest
+    # dominated eligible cells, and caps only when the frontier exceeds the upper bound.
+    # Raise the band if gate 5 (d3 vs d2) fails and the scan loses its detection axis.
     "SHORTLIST_N": (8, 12),
 
-    # Number of LIVE rejected layers per tier beyond tier 0. Tier 1 is always paid as the
+    # Number of near-miss CELLS per tier beyond tier 0. Tier 1 is always paid as the
     # false-negative audit, so increasing this adds the same number of BISECT candidates and
     # VERIFY cells even when tier 0 already found a qualifying cell.
     "SHORTLIST_TIER_SIZE": 3,
@@ -97,17 +97,12 @@ CONSTANTS: dict = {
     "SHORTLIST_AUDIT_TIERS": 1,
 
     # Highest numbered tier permitted during failure-driven escalation. None means keep
-    # escalating through every LIVE rejected tier only while no qualifying cell has been found,
+    # escalating through every near-miss cell tier only while no qualifier has been found,
     # then stop. This is deliberately different from SHORTLIST_EXHAUSTIVE: None still stops on
-    # success, whereas exhaustive mode verifies every in-scope layer regardless of success.
+    # success, whereas exhaustive mode verifies every eligible cell regardless of success.
     "SHORTLIST_MAX_TIER": 3,
 
-    # Ordering over the live rejected population. The implementation validates this string and
-    # raises on an unknown value; silently falling back would run a different audit from the one
-    # named in config.json. Interleaving starts E6, residual, E6 and deduplicates.
-    "SHORTLIST_TIER_ORDER": "e6_residual_interleave",
-
-    # Verify every in-scope layer, ignoring tiers and never stopping when a qualifier is found.
+    # Verify every eligible scan cell, ignoring tiers and never stopping when a qualifier is found.
     # This is deliberately different from SHORTLIST_MAX_TIER=None, which remains a tiered search
     # and stops as soon as an outer tier finds a qualifying cell.
     "SHORTLIST_EXHAUSTIVE": False,

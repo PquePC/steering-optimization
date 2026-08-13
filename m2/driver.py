@@ -858,8 +858,8 @@ def run_concept(name: str, *, notifier: Any = None, wipe: bool = True, deliver: 
         layers = sorted({int(c["layer"]) for c in candidates if "layer" in c})
         span = f"L{layers[0]}-L{layers[-1]}" if layers else "no layer field"
         _notify(notifier, board, "Phase 2 shortlist chosen",
-                f"{len(candidates)} tier-0 candidates, {span}; "
-                f"{tier_plan['n_rejected_live']} live rejected layers available for audit")
+                f"{len(candidates)} tier-0 cells, {span}; "
+                f"{tier_plan['n_rejected_live']} Pareto near-miss cells available for audit")
 
     # ---- Phases 3/4, tiered. Bisection and verification are intentionally interleaved.
     # Tier 1 always runs, even when tier 0 qualifies; deeper tiers are created lazily only
@@ -894,16 +894,19 @@ def run_concept(name: str, *, notifier: Any = None, wipe: bool = True, deliver: 
             break
 
         tier_candidates = list(tier_spec["candidates"])
-        runio.log(f"{label}: BISECT {len(tier_candidates)} layer(s) - {reason}")
+        runio.log(f"{label}: BISECT {len(tier_candidates)} selected cell(s) - {reason}")
 
-        # Resume at layer/tier granularity. The config hash includes every tier knob, so a
+        # Resume at cell/tier granularity. Task 21 may select two doses from one layer, so a
+        # layer-only key would silently discard one of them. The config hash includes every tier knob, so a
         # matching stored bisection row was produced under this exact plan.
         stored_bisect = runio.rows_for_run(BISECT_FILE)
         def _same_tier(row: dict) -> bool:
             return (row.get("tier") == number and
                     bool(row.get("exhaustive", False)) == bool(tier_plan["exhaustive"]))
-        existing = {int(row["layer"]): row for row in stored_bisect if _same_tier(row)}
-        todo = [row for row in tier_candidates if int(row["layer"]) not in existing]
+        existing = {_phases()._cell_key(row["layer"], row["r"]): row
+                    for row in stored_bisect if _same_tier(row)}
+        todo = [row for row in tier_candidates
+                if _phases()._cell_key(row["layer"], row["r"]) not in existing]
         bisected_new: list[dict] = []
         ok_bisect = True
         if todo:
@@ -914,7 +917,7 @@ def run_concept(name: str, *, notifier: Any = None, wipe: bool = True, deliver: 
                 self_reporting=True)
             bisected_new = got if ok_bisect and isinstance(got, list) else []
         else:
-            runio.log(f"{label}: all {len(existing)} bisection rows recovered from disk")
+            runio.log(f"{label}: all {len(existing)} cell bisections recovered from disk")
         tier_bisected = list(existing.values()) + bisected_new
 
         if not ok_bisect or not tier_bisected:
@@ -942,11 +945,11 @@ def run_concept(name: str, *, notifier: Any = None, wipe: bool = True, deliver: 
             tier=number, state="DONE" if ok_verify else "FAILED",
             reason=reason if ok_verify else f"{label} verification failed",
             kind=tier_spec["kind"], mandatory=bool(tier_spec["mandatory"]),
-            layers=tier_spec["layers"], orderings=[row.get("tier_ordering")
-                                                   for row in tier_candidates],
+            layers=tier_spec["layers"], cells=tier_spec.get("cells", []),
+            orderings=[row.get("tier_ordering") for row in tier_candidates],
             n_bisected=len(tier_bisected), n_verified=len(verdicts),
             verdicts=[dict(layer=row["layer"], r=row["r"], e5=row.get("e5"),
-                           d2=row.get("d2"), s4=row.get("s4"),
+                           d3=row.get("d3"), d2=row.get("d2"), s4=row.get("s4"),
                            qualifies=row.get("qualifies"),
                            tier_ordering=row.get("tier_ordering"))
                       for row in verdicts]))
@@ -999,7 +1002,7 @@ def run_concept(name: str, *, notifier: Any = None, wipe: bool = True, deliver: 
                     bool(tier_plan["exhaustive"])]
             tier_record["refinement_verdicts"] = [
                 dict(layer=row["layer"], r=row["r"], e5=row.get("e5"),
-                     d2=row.get("d2"), s4=row.get("s4"),
+                     d3=row.get("d3"), d2=row.get("d2"), s4=row.get("s4"),
                      qualifies=row.get("qualifies"),
                      tier_ordering=row.get("tier_ordering"),
                      tier_source_layer=row.get("tier_source_layer"),
@@ -1115,6 +1118,12 @@ def run_concept(name: str, *, notifier: Any = None, wipe: bool = True, deliver: 
 
     # ---- Acceptance gates, section 10. After the data exists and before the archive.
     _, gate_report = state.phase("GATES", lambda: _gates().run_acceptance_gates(), tracked=False)
+    gate5_first = (gate_report.get("gate5_first")
+                   if isinstance(gate_report, dict) else None)
+    if isinstance(gate5_first, dict):
+        rho = gate5_first.get("axis_rho")
+        runio.log(f"GATE 5 FIRST - frontier validity: d3 vs d2 rho={rho}; "
+                  f"passed={gate5_first.get('passed')}")
 
     # ---- The answer. Written whether or not a cell qualified: "no operating point exists at
     # these constraints" is a real result (spec 9.3), and the envelope carries the reason, the
@@ -1130,6 +1139,7 @@ def run_concept(name: str, *, notifier: Any = None, wipe: bool = True, deliver: 
         confirm=confirm,
         controls=ctrl if isinstance(ctrl, dict) else {},
         control_verdicts=control_verdicts,
+        gate5_first=gate5_first,
         gates=gate_report,
         failed_phases=list(state.failed),
         **_threshold_record_fields(threshold_analysis),
@@ -1204,6 +1214,12 @@ def _finish_concept(state: _ConceptRun, winner: dict | None, control_verdicts: d
     owns the ordering and the guarantee that the archive exists before anything is deleted.
     """
     elapsed = time.time() - state.t0
+    gate5_first = None
+    try:
+        acceptance = runio.read_json("acceptance_gates.json")
+        gate5_first = acceptance.get("gate5_first") if isinstance(acceptance, dict) else None
+    except Exception:                                  # noqa: BLE001 - partial failed runs may lack it
+        pass
     record = dict(
         concept=state.concept,
         run_dir=str(state.run_dir),
@@ -1211,6 +1227,7 @@ def _finish_concept(state: _ConceptRun, winner: dict | None, control_verdicts: d
         failed_phases=list(state.failed),
         failure_labels=dict(state.labels),
         control_verdicts=dict(control_verdicts),
+        gate5_first=gate5_first,
         operating_point=winner,
         **_threshold_record_fields(threshold_analysis),
         elapsed_s=round(elapsed, 1),

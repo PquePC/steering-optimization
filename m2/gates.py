@@ -1493,9 +1493,12 @@ def gate5_d3_vs_d2(*, rows: Sequence[dict] | None = None) -> dict:
         return dict(gate=name, passed=False, skipped=True, reason=reason,
                     ok=gate_skipped(name, reason))
 
+    axis = str(result["axis"])
+    axis_rho = float(result["rhos"][axis])
     ok = gate(name, bool(result["passed"]),
-              f"best rho {result['rhos'][result['best']]:.3f} < {result['min_rho']:g} over "
-              f"{result['n']} cells. Phase 1 loses its detection axis")
+              f"d3 {axis} rho {axis_rho:.3f} against d2, threshold "
+              f"{result['min_rho']:g}, over {result['n']} cells. This is the axis used by "
+              "the Task 21 frontier; the best alternate rho is diagnostic only")
     consequence = None
     if not ok:
         lo, hi = tuple(_cfg("SHORTLIST_N"))
@@ -1504,7 +1507,7 @@ def gate5_d3_vs_d2(*, rows: Sequence[dict] | None = None) -> dict:
             shortlist_on="E6 alone",
             shortlist_n_current=[int(lo), int(hi)],
             shortlist_n_raised=[int(lo) * 2, int(hi) * 2],
-            reason=(f"gate 5 failed at rho {result['rhos'][result['best']]:.3f}; spec 5.3 "
+            reason=(f"gate 5 failed for d3 {axis} at rho {axis_rho:.3f}; spec 5.3 "
                     "requires the shortlist to be built on E6 alone with a raised "
                     "SHORTLIST_N. Recall dominates precision (Pipeline Plan 1.1), so the "
                     "response to losing an axis is a wider shortlist, not a narrower one"),
@@ -1517,7 +1520,8 @@ def gate5_d3_vs_d2(*, rows: Sequence[dict] | None = None) -> dict:
         _write_run_json("gate5_d3.json", consequence)
 
     return dict(gate=name, passed=ok, skipped=False, source=source,
-                n=result["n"], rhos=result["rhos"], best=result["best"],
+                n=result["n"], rhos=result["rhos"], axis=axis,
+                axis_rho=axis_rho, best=result["best"],
                 min_rho=result["min_rho"], consequence=consequence)
 
 
@@ -1530,7 +1534,7 @@ def gate6_e6_shortlist_recall(*, verified_rows: Sequence[dict] | None = None,
     """No outer-tier cell may qualify at or above tier 0's own winner.
 
     This is a run gate, not an external comparison. Tier 1 is an adversarial sample of this
-    run's live rejected population, so Gate 6 can execute on any concept or model. A lower E5
+    run's Pareto near-miss CELL population, so Gate 6 can execute on any concept or model. A lower E5
     outer qualifier is imprecision and is reported; an equal-or-higher one proves tier 0
     dropped the answer. If tier 0 found nothing and an outer tier did, that is also a failure.
     """
@@ -1552,7 +1556,7 @@ def gate6_e6_shortlist_recall(*, verified_rows: Sequence[dict] | None = None,
 
     exhaustive = bool(_field(tier_plan, "exhaustive", "shortlist.json"))
     if exhaustive:
-        reason = ("every in-scope layer was verified; there is no rejected population to "
+        reason = ("every eligible scan cell was verified; there is no rejected population to "
                   "audit. Exhaustive coverage is stronger than a Gate 6 pass.")
         gate_not_applicable(name, reason)
         return dict(gate=name, passed=False, skipped=False, not_applicable=True,
@@ -1566,24 +1570,30 @@ def gate6_e6_shortlist_recall(*, verified_rows: Sequence[dict] | None = None,
     tier0 = [row for row in rows if row.get("tier") == 0]
     outer = [row for row in rows
              if row.get("tier") is not None and int(row["tier"]) > 0]
-    audited_layers = sorted({int(row.get("tier_source_layer", row["layer"])) for row in outer})
+    def source_cell(row: dict) -> tuple[int, float]:
+        source = row.get("tier_source_cell")
+        if isinstance(source, dict) and source.get("layer") is not None and source.get("r") is not None:
+            return int(source["layer"]), round(float(source["r"]), 6)
+        return int(row.get("tier_source_layer", row["layer"])), round(float(row["r"]), 6)
+
+    audited_cells = sorted({source_cell(row) for row in outer})
 
     audit_tiers = int(_field(tier_plan, "audit_tiers", "shortlist.json"))
-    expected_audit = {int(candidate["layer"])
+    expected_audit = {(int(candidate["layer"]), round(float(candidate["r"]), 6))
                       for tier in _field(tier_plan, "tiers", "shortlist.json")
                       if tier["tier"] is not None and 0 < int(tier["tier"]) <= audit_tiers
                       for candidate in tier["candidates"]}
-    missing = sorted(expected_audit - set(audited_layers))
+    missing = sorted(expected_audit - set(audited_cells))
     if missing:
-        reason = (f"mandatory audit layers {[f'L{x}' for x in missing]} have no verification "
+        labels = [f"L{layer}@{dose:.6f}" for layer, dose in missing]
+        reason = (f"mandatory audit cells {labels} have no verification "
                   "verdict. Gate 6 could not run; this is an evidence gap, not a pass.")
         return dict(gate=name, passed=False, skipped=True, reason=reason,
-                    audit_sampled=len(audited_layers), rejected_live=n_live,
+                    audit_sampled=len(audited_cells), rejected_live=n_live,
                     ok=gate_skipped(name, reason))
 
     if n_live == 0:
-        reason = ("tier 0 rejected no layer with scan signal; the remaining rejected layers "
-                  "were excluded by the shared D3_SIGNAL_MIN guard and cannot form an audit "
+        reason = ("tier 0 left no Pareto near-miss cell; ineligible scan cells cannot form an audit "
                   "population")
         gate_not_applicable(name, reason)
         return dict(gate=name, passed=False, skipped=False, not_applicable=True,
@@ -1603,9 +1613,9 @@ def gate6_e6_shortlist_recall(*, verified_rows: Sequence[dict] | None = None,
         damaging = [row for row in outer_qualifiers if float(row["e5"]) >= floor]
     lower = [row for row in outer_qualifiers if row not in damaging]
 
-    print(f"   audit power: {len(audited_layers)}/{n_live} live rejected layers sampled "
-          f"({n_dead} dead/unreachable rejected layers excluded before ordering)")
-    print("   A sample that finds no miss is evidence, not proof that every rejected layer "
+    print(f"   audit power: {len(audited_cells)}/{n_live} Pareto near-miss cells sampled "
+          f"({n_dead} ineligible scan cells excluded before ordering)")
+    print("   A sample that finds no miss is evidence, not proof that every rejected cell "
           "was safe.")
     if tier0_winner is None:
         print("   tier 0 winner: none")
@@ -1624,9 +1634,10 @@ def gate6_e6_shortlist_recall(*, verified_rows: Sequence[dict] | None = None,
                "equal or better answer. Widen E6_FLOOR/residual routing before trusting it"))
     return dict(
         gate=name, passed=ok, skipped=False, not_applicable=False,
-        audit_sampled=len(audited_layers), audit_layers=audited_layers,
+        audit_sampled=len(audited_cells),
+        audit_cells=[dict(layer=layer, r=dose) for layer, dose in audited_cells],
         rejected=n_rejected, rejected_live=n_live, rejected_dead=n_dead,
-        power_statement=(f"sampled {len(audited_layers)} of {n_live} live rejected layers; "
+        power_statement=(f"sampled {len(audited_cells)} of {n_live} Pareto near-miss cells; "
                          "failure to find a miss does not prove none exists"),
         tier0_winner=tier0_winner,
         final_winner=all_selection["winner"] if all_selection["found"] else None,
@@ -2631,14 +2642,14 @@ def _write_run_json(name: str, payload: Any) -> Path | None:
         return None
 
 
-# Every acceptance gate, in spec section 10's order, which is "ordered by how much collapses
-# on failure". Gate 11 is appended and labels itself as an addition.
+# TODO 15 makes gate 5 the first result a reader must see: it decides whether Task 21's d3
+# frontier is a real search surface. The remaining gates retain spec section 10's order.
 _ACCEPTANCE: tuple[tuple[int, str, Any, bool], ...] = (
+    (5,  "D2-lite vs D2 - FRONTIER VALIDITY", gate5_d3_vs_d2,                False),
     (1,  "Judge E5 vs hand labels",   gate1_judge_e5_vs_hand_labels, True),
     (2,  "E5/S1 independence",        gate2_e5_s1_independence,      False),
     (3,  "Judge E5 FPR",              gate3_judge_e5_fpr,            True),
     (4,  "Sanity acceptance",         gate4_sanity_acceptance,       True),
-    (5,  "D2-lite vs D2",             gate5_d3_vs_d2,                False),
     (6,  "E6 shortlist recall",       gate6_e6_shortlist_recall,     False),
     (7,  "D2 transcript capture",     gate7_d2_transcript_capture,   False),
     (8,  "Judge stability",           gate8_judge_stability,         True),
@@ -2676,6 +2687,7 @@ def run_acceptance_gates(*, allow_judge_calls: bool = True,
     print("=" * 78)
     print("ACCEPTANCE GATES - spec section 10, gates 1-10, plus gate 11 (an addition)")
     print("=" * 78)
+    print("GATE 5 IS FIRST: its d3-vs-d2 rho decides whether the Pareto frontier is real.")
     concept = _concept_ready()
     print(f"concept {concept or '<unset>'} | model {'loaded' if _model_ready() else 'NOT '
           'loaded'} | judge calls {'allowed' if allow_judge_calls else 'DISABLED'}")
@@ -2714,8 +2726,10 @@ def run_acceptance_gates(*, allow_judge_calls: bool = True,
         print("  a SKIPPED gate is NOT a passed gate - the property it tests is unverified")
     print("=" * 78)
 
+    gate5_first = results.get("gate5")
     out = dict(kind="acceptance_gates", concept=concept,
                config_hash=config.CONFIG["config_hash"], ts=_now(),
+               gate5_first=gate5_first,
                allow_judge_calls=allow_judge_calls, results=results,
                summary=summary, records=[dict(r) for r in GATES])
     _write_run_json("acceptance_gates.json", out)

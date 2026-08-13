@@ -568,6 +568,10 @@ def validate_d3(rows: Sequence[dict], cells: Iterable[tuple] | None = None,
     }
     rhos = {k: _spearman(v, d2) for k, v in variants.items()}
     best = max(rhos, key=lambda k: rhos[k])
+    # Task 21 fixes the selection axis before the run: continuous d3 mass. d3_rate is nearly
+    # binary on the Garlic surface and cannot replace it merely because it happens to win on
+    # one small verified sample. Report every rho, but gate the axis the frontier actually used.
+    axis = "mass"
 
     if verbose:
         ctx = _run()
@@ -583,18 +587,20 @@ def validate_d3(rows: Sequence[dict], cells: Iterable[tuple] | None = None,
         print("")
         print("  Spearman rho vs real D2:")
         for k, v in sorted(rhos.items(), key=lambda kv: -kv[1]):
-            print(f"    {k:<14} {v:>6.3f}" + ("   <== best" if k == best else ""))
+            suffix = ("   <== d3 frontier axis" if k == axis else
+                      ("   <== diagnostic best" if k == best else ""))
+            print(f"    {k:<14} {v:>6.3f}" + suffix)
         print("")
-        if rhos[best] >= min_rho:
-            print(f"  PASS - '{best}' at rho {rhos[best]:.3f} >= {min_rho}. Usable as the scan's")
+        if rhos[axis] >= min_rho:
+            print(f"  PASS - d3 mass at rho {rhos[axis]:.3f} >= {min_rho}. Usable as the scan's")
             print("  detection axis. Still verify shortlisted cells with real D2.")
         else:
-            print(f"  FAIL - best rho {rhos[best]:.3f} < {min_rho}. Do NOT use D3 to prune")
-            print("  layers: shortlist on E6 alone and raise SHORTLIST_N (spec 5.3).")
+            print(f"  FAIL - d3 mass rho {rhos[axis]:.3f} < {min_rho}. The Pareto frontier's")
+            print("  detection axis is not validated; do not substitute d3_rate at runtime.")
         print("=" * 70)
 
-    return dict(n=len(got), rhos=rhos, best=best, min_rho=min_rho,
-                passed=rhos[best] >= min_rho, rows=got)
+    return dict(n=len(got), rhos=rhos, axis=axis, best=best, min_rho=min_rho,
+                passed=rhos[axis] >= min_rho, rows=got)
 
 
 # =====================================================================================

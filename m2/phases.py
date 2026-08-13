@@ -1,13 +1,14 @@
 """m2.phases - the screening procedure of spec section 8, and the selection rule of section 7.
 
-Phase 0 calibrates, Phase 1 scans every layer cheaply, Phase 2 turns that surface into a
-shortlist, Phase 3 finds each candidate's dose, Phases 4 and 5 pay for real E5/S1/D2, and
+Phase 0 calibrates, Phase 1 scans every layer cheaply, Phase 2 selects cells on the cheap
+reach-vs-d3 Pareto frontier, Phase 3 maps each cell's sane range, Phases 4 and 5 pay for real
+E5/S1/D2, and
 Phase 6 re-measures the winner on held-out prompts.
 
   phase0_calibrate       spec 5.1 - vectors, norms, dose map, baselines, cap_base, 2 judge calls
   phase1_scan            every layer with d(L) >= D_MIN, at both SCAN_DOSES. Zero judge calls
-  phase2_shortlist       local maxima + stratified coverage + the residual. Never top-K
-  phase3_bisect          bracket then bisect the sanity boundary, BISECT_STEPS steps
+  phase2_shortlist       eligible cells, then the reach-vs-d3 Pareto frontier
+  phase3_bisect          preserve the selected dose while mapping its sanity boundary
   phase4_verify          expensive.verify_cell on the shortlist
   phase5_refine          layer +/-1, +/-2 and one dose step either side, around the top cells
   phase6_confirm         the winner on prompts.E5_HELDOUT at N_CONFIRM, no adaptive stopping
@@ -21,11 +22,9 @@ that and are enforced here rather than remembered: Phase 6 measures on a prompt 
 from the one the winner was chosen on, and every screening row is written with its own phase
 label so a Phase 4 screening number can never be read as a confirmation.
 
-**Selection never touches the residual.** `resid` and `covertness_margin` are search and
-reporting devices (spec 7.2); `select_operating_point` implements spec 7.1 and nothing else.
-Of 30 usable high-effectiveness M1.5 cells only 7 had D2 <= 0.2, and four of those sat at L31
-while effectiveness peaked at L46 for every concept - which is why Phase 2 needs the residual
-to widen its shortlist, and exactly why the final choice must not use it.
+**Selection never touches a fitted residual.** Phase 2 uses the measured cell coordinates
+directly: more reach is better and less d3 is better. `covertness_margin` remains a reported
+expensive-tier diagnostic; `select_operating_point` implements spec 7.1 and nothing else.
 
 Import order (CONTRACT section 1): this module may use config, model, vectors, prompts, cheap,
 judges and expensive, and nothing later. `vectors` and `expensive` are imported LAZILY inside
@@ -786,12 +785,11 @@ def _by_layer(scan_rows: Sequence[dict]) -> dict[int, dict]:
 
 
 def _tier_config(cfg: dict) -> dict:
-    """Validate and normalise every Task 05 knob; defaults are never supplied here."""
+    """Validate and normalise the cell-tier controls; defaults are never supplied here."""
     size = int(cfg["SHORTLIST_TIER_SIZE"])
     audit = int(cfg["SHORTLIST_AUDIT_TIERS"])
     maximum_raw = cfg["SHORTLIST_MAX_TIER"]
     maximum = None if maximum_raw is None else int(maximum_raw)
-    ordering = str(cfg["SHORTLIST_TIER_ORDER"])
     exhaustive = bool(cfg["SHORTLIST_EXHAUSTIVE"])
     if size <= 0:
         raise ValueError(f"SHORTLIST_TIER_SIZE must be positive, got {size}")
@@ -801,12 +799,8 @@ def _tier_config(cfg: dict) -> dict:
         raise ValueError(
             f"SHORTLIST_MAX_TIER={maximum} is below SHORTLIST_AUDIT_TIERS={audit}; the "
             "audit tiers are mandatory, so this configuration contradicts itself")
-    if ordering not in TIER_ORDERINGS:
-        raise ValueError(
-            f"SHORTLIST_TIER_ORDER={ordering!r} is not recognised; choose one of "
-            f"{sorted(TIER_ORDERINGS)}")
     return dict(tier_size=size, audit_tiers=audit, max_tier=maximum,
-                tier_order=ordering, exhaustive=exhaustive)
+                tier_order="pareto_distance", exhaustive=exhaustive)
 
 
 def _should_execute_tier(tier: int | None, *, has_qualifier: bool,
@@ -827,149 +821,312 @@ def _should_execute_tier(tier: int | None, *, has_qualifier: bool,
     return True, "no qualifying cell yet; failure-driven escalation continues"
 
 
+def _scan_cell_order(row: dict) -> tuple[int, float]:
+    """Deterministic identity order for scan cells."""
+    return int(row["layer"]), float(row["r"])
+
+
+def _eligible_scan_cell(row: dict, *, reach_floor: float, s4_min: float) -> bool:
+    """Task 21 eligibility: reachable, sane, live, and readable on both proxy axes."""
+    return bool(
+        row.get("reachable")
+        and row.get("reach") is not None
+        and row.get("d3") is not None
+        and row.get("s3") is not None
+        and float(row["s3"]) >= float(s4_min)
+        and float(row["reach"]) >= float(reach_floor)
+    )
+
+
+def _proxy_dominates(left: dict, right: dict) -> bool:
+    """Whether `left` is at least as influential and no more detectable, with one strict."""
+    l_reach, l_d3 = float(left["reach"]), float(left["d3"])
+    r_reach, r_d3 = float(right["reach"]), float(right["d3"])
+    return (l_reach >= r_reach and l_d3 <= r_d3
+            and (l_reach > r_reach or l_d3 < r_d3))
+
+
+def _proxy_frontier(rows: Sequence[dict]) -> list[dict]:
+    """The reach-ascending/d3-descending Pareto frontier over eligible cells."""
+    cells = list(rows)
+    out = [row for row in cells
+           if not any(_proxy_dominates(other, row) for other in cells if other is not row)]
+    return sorted(out, key=lambda row: (-float(row["reach"]), float(row["d3"]),
+                                        int(row["layer"]), float(row["r"])))
+
+
+def _frontier_distance(row: dict, frontier_rows: Sequence[dict],
+                       reach_floor: float) -> tuple[float, dict]:
+    """Additive-epsilon distance to the closest frontier cell.
+
+    Reach is divided by its honest eligible support, ``1 - E6_FLOOR``; d3 already lives on
+    [0, 1]. The score is the smallest worst-axis improvement needed to meet a frontier cell:
+    it is zero on the frontier and has an operational meaning on both dominated eligible
+    cells and live cells just below the reach floor. No empirical SD or fitted scale can move
+    the ranking when the scan sample changes.
+    """
+    if not frontier_rows:
+        raise ValueError("frontier distance is undefined without a frontier")
+    span = 1.0 - float(reach_floor)
+    if not span > 0.0:
+        raise ValueError(f"E6_FLOOR must be below 1 for distance scaling, got {reach_floor}")
+    reach = float(row["reach"])
+    d3 = float(row["d3"])
+    scored: list[tuple[float, tuple, dict]] = []
+    for anchor in frontier_rows:
+        reach_deficit = max(0.0, float(anchor["reach"]) - reach) / span
+        d3_excess = max(0.0, d3 - float(anchor["d3"]))
+        distance = max(reach_deficit, d3_excess)
+        tie = (float(anchor["d3"]), -float(anchor["reach"]),
+               int(anchor["layer"]), float(anchor["r"]))
+        scored.append((distance, tie, anchor))
+    distance, _, anchor = min(scored, key=lambda item: (item[0], item[1]))
+    return float(distance), anchor
+
+
+def _objective_distance(left: dict, right: dict, reach_floor: float) -> float:
+    """L-infinity distance on the same normalized objective plane as near-miss distance."""
+    span = 1.0 - float(reach_floor)
+    return max(abs(float(left["reach"]) - float(right["reach"])) / span,
+               abs(float(left["d3"]) - float(right["d3"])))
+
+
+def _cap_proxy_frontier(frontier_rows: Sequence[dict], limit: int,
+                        reach_floor: float) -> list[dict]:
+    """Preserve both extremes, then greedily cover the frontier's objective-space shape."""
+    rows = list(frontier_rows)
+    if len(rows) <= int(limit):
+        return rows
+    if limit < 2:
+        raise ValueError(f"SHORTLIST_N upper bound must be >=2 to preserve both extremes")
+
+    max_reach = min(rows, key=lambda row: (-float(row["reach"]), float(row["d3"]),
+                                           -float(row["s3"]), *_scan_cell_order(row)))
+    min_d3 = min(rows, key=lambda row: (float(row["d3"]), -float(row["reach"]),
+                                        -float(row["s3"]), *_scan_cell_order(row)))
+    chosen = [max_reach]
+    if _cell_key(min_d3["layer"], min_d3["r"]) != _cell_key(max_reach["layer"], max_reach["r"]):
+        chosen.append(min_d3)
+    remaining = [row for row in rows
+                 if _cell_key(row["layer"], row["r"]) not in
+                 {_cell_key(c["layer"], c["r"]) for c in chosen}]
+    while remaining and len(chosen) < int(limit):
+        def coverage_rank(row: dict) -> tuple:
+            separation = min(_objective_distance(row, kept, reach_floor) for kept in chosen)
+            return (separation, float(row["s3"]), float(row["reach"]),
+                    -float(row["d3"]), -int(row["layer"]), -float(row["r"]))
+        picked = max(remaining, key=coverage_rank)
+        chosen.append(picked)
+        remaining.remove(picked)
+    return sorted(chosen, key=lambda row: (-float(row["reach"]), float(row["d3"]),
+                                           int(row["layer"]), float(row["r"])))
+
+
+def _fill_proxy_frontier(frontier_rows: Sequence[dict], dominated_rows: Sequence[dict],
+                         target: int, reach_floor: float) -> list[tuple[dict, float, dict]]:
+    """Fill toward the lower bound without letting one dense frontier region monopolize it."""
+    groups: dict[tuple, list[tuple[dict, float, dict]]] = {}
+    anchors: dict[tuple, dict] = {}
+    for row in dominated_rows:
+        distance, anchor = _frontier_distance(row, frontier_rows, reach_floor)
+        key = _cell_key(anchor["layer"], anchor["r"])
+        anchors[key] = anchor
+        groups.setdefault(key, []).append((row, distance, anchor))
+    for values in groups.values():
+        values.sort(key=lambda item: (item[1], -float(item[0]["reach"]),
+                                      float(item[0]["d3"]), *_scan_cell_order(item[0])))
+
+    anchor_order = sorted(groups, key=lambda key: (
+        float(anchors[key]["d3"]), -float(anchors[key]["reach"]), key))
+    picked: list[tuple[dict, float, dict]] = []
+    while len(frontier_rows) + len(picked) < int(target):
+        progressed = False
+        for key in anchor_order:
+            if not groups[key]:
+                continue
+            picked.append(groups[key].pop(0))
+            progressed = True
+            if len(frontier_rows) + len(picked) >= int(target):
+                break
+        if not progressed:
+            break
+    return picked
+
+
+def _selection_candidate(row: dict, *, kind: str, distance: float,
+                         anchor: dict | None, why: str) -> dict:
+    """Copy one scan cell into the shortlist envelope with traceable selection provenance."""
+    out = dict(row)
+    out.update(
+        e6=float(row["reach"]),
+        selection_kind=str(kind),
+        pareto_frontier=(kind == "frontier"),
+        frontier_distance=float(distance),
+        nearest_frontier=(None if anchor is None else
+                          dict(layer=int(anchor["layer"]), r=float(anchor["r"]),
+                               reach=float(anchor["reach"]), d3=float(anchor["d3"]))),
+        why=[why],
+        routes=["pareto_frontier" if kind == "frontier" else "pareto_fill"],
+        merged_from=[],
+    )
+    return out
+
+
+def _excluded_layer_records(surface: Sequence[dict], eligible: Sequence[dict],
+                            *, reach_floor: float, s4_min: float) -> list[dict]:
+    """Report every layer with no eligible cell, including each dose's reach and s3."""
+    eligible_layers = {int(row["layer"]) for row in eligible}
+    by_layer: dict[int, list[dict]] = {}
+    for row in surface:
+        by_layer.setdefault(int(row["layer"]), []).append(row)
+    out: list[dict] = []
+    for layer, rows in sorted(by_layer.items()):
+        if layer in eligible_layers:
+            continue
+        cells = []
+        for row in sorted(rows, key=lambda item: float(item["r"])):
+            reasons = []
+            if not row.get("reachable"):
+                reasons.append("unreachable")
+            else:
+                if row.get("s3") is None or float(row["s3"]) < s4_min:
+                    reasons.append(f"s3 below S4_MIN={s4_min:g}")
+                if row.get("reach") is None or float(row["reach"]) < reach_floor:
+                    reasons.append(f"reach below E6_FLOOR={reach_floor:g}")
+                if row.get("d3") is None:
+                    reasons.append("d3 unavailable")
+            cells.append(dict(r=float(row["r"]), reachable=bool(row.get("reachable")),
+                              reach=row.get("reach"), d3=row.get("d3"), s3=row.get("s3"),
+                              reasons=reasons))
+        out.append(dict(layer=layer, reason="no eligible cell", cells=cells))
+    return out
+
+
 def phase2_shortlist(scan_rows: Sequence[dict], *,
                      n_bins: int = STRATIFIED_BINS, write: bool = True) -> dict:
-    """Turn Phase 1 into tier 0 plus an adversarial ordering of live rejected layers.
+    """Select `(layer, r)` cells: eligibility, then the reach-vs-d3 Pareto frontier.
 
-    Three routes, all three of them, per spec 8 Phase 2:
+    The unit stays a cell all the way into verification. The old implementation collapsed
+    each layer to one dose, fitted d3~reach, then selected layers through six routes; Phase 3
+    consequently discarded the dose that made a cell interesting. This rule reads the two
+    measured proxy coordinates directly and keeps the entering dose.
 
-      1. **all local maxima** of the lightly smoothed E6 curve that clear `E6_FLOOR` and are
-         supported at both doses - not just the global max;
-      2. a **stratified sample across the E6 range**, because the target cells are outliers
-         from the influence<->detection relationship and outliers are not found by looking
-         where the surface is highest;
-      3. **the residual**: any layer whose D3 is low relative to its E6, i.e. `resid =
-         D3 - predicted_D3(E6)` at least `RESID_SIGMA` residual-SDs below the fit. This route
-         aims directly at the objective - a cell that under-detects for its influence.
-
-    Candidates within +/-1 layer are merged, keeping the better and unioning the reasons.
-    That is tier 0. Every LIVE rejected layer is then ordered into fixed-size outer tiers;
-    dead layers are excluded before either E6 or residual ranking can see them.
-
-    **NEVER top-K by effectiveness.** Spec 7.2: E5 and D2 are positively correlated, so a
-    shortlist built by argmax on the cheap effectiveness proxy systematically walks away from
-    the qualifying region. Of 30 usable M1.5 cells with effectiveness > 8, only 7 had
-    D2 <= 0.2, and four of those sat at L31 while effectiveness peaked at L46 for EVERY
-    concept. A top-K shortlist would have measured L46 ten times and never looked at L31.
-
-    The residual is a search device here and only here. Once Phase 4 has real E5 and D2,
-    `select_operating_point` applies spec 7.1 and does not use it.
+    `n_bins` is retained only for call compatibility with old notebooks and is ignored.
     """
+    del n_bins
     cfg = _cfg()
     tier_cfg = _tier_config(cfg)
-    doses = [float(d) for d in cfg["SCAN_DOSES"]]
-    floor = float(cfg["E6_FLOOR"])
+    reach_floor = float(cfg["E6_FLOOR"])
+    s4_min = float(cfg["S4_MIN"])
     want_lo, want_hi = (int(x) for x in cfg["SHORTLIST_N"])
+    if want_lo > want_hi or want_lo < 1:
+        raise ValueError(f"SHORTLIST_N must be a positive ordered band, got {(want_lo, want_hi)}")
 
-    per_layer = _by_layer(scan_rows)
-    if not per_layer:
+    # A resumed JSONL may contain an exact duplicate after an interrupted append. Selection
+    # is over cells, not file lines, so use the same canonical key as every resume guard.
+    by_key = {_cell_key(row["layer"], row["r"]): row for row in scan_rows}
+    surface = sorted(by_key.values(), key=_scan_cell_order)
+    reachable = [row for row in surface if row.get("reachable")]
+    eligible = [row for row in surface
+                if _eligible_scan_cell(row, reach_floor=reach_floor, s4_min=s4_min)]
+    if not eligible:
         raise RuntimeError(
-            "Phase 2 has no reachable scan rows to work from. Either Phase 1 did not run, or "
-            "every (layer, r) needed alpha > ALPHA_CEIL - check dose_map.json before "
-            "widening the search.")
-    layers = sorted(per_layer)
+            f"Phase 2 found no eligible scan cell: 0/{len(surface)} were reachable with "
+            f"s3 >= S4_MIN={s4_min:g} and reach >= E6_FLOOR={reach_floor:g}. The excluded "
+            "layer table in scan.jsonl is the result; do not manufacture a frontier from "
+            "dead or damaged cells.")
+
+    full_frontier = _proxy_frontier(eligible)
+    frontier_keys = {_cell_key(row["layer"], row["r"]) for row in full_frontier}
+    dominated = [row for row in eligible
+                 if _cell_key(row["layer"], row["r"]) not in frontier_keys]
     notes: list[str] = []
 
-    # --- route 1: local maxima of the smoothed reach curve ---------------------------
-    raw_reach = [per_layer[layer]["e6"] for layer in layers]
-    smoothed = smooth(raw_reach, SMOOTH_WINDOW)
-    peak_idx = local_maxima(smoothed)
-    if len(peak_idx) > max(3, len(layers) // 3):
-        # A curve on which a third of the layers are "local maxima" is flat, and every one of
-        # them would be a coincidence rather than a peak. Route 1 is suppressed and SAID to be
-        # suppressed; routes 2 and 3 still populate the shortlist.
-        notes.append(f"route 1 suppressed: {len(peak_idx)} of {len(layers)} layers read as "
-                     "local maxima, so the reach curve is flat and its peaks are noise")
-        peak_idx = []
-    route1: list[int] = []
-    for i in peak_idx:
-        layer = layers[i]
-        entry = per_layer[layer]
-        # Clears the floor, and was reachable at every dose scanned - "supported at both
-        # doses" - so a peak that exists only because the other dose was unreachable is out.
-        if entry["e6"] >= floor and entry["n_doses"] >= len(doses):
-            route1.append(layer)
-    if not route1 and not notes:
-        notes.append(f"route 1 empty: no local maximum of reach clears E6_FLOOR={floor:g} at "
-                     "both doses")
-
-    # --- route 3: the residual (computed before route 2 so route 2 can report it) -----
-    xs, ys, cells = [], [], []
-    for row in scan_rows:
-        if not row["reachable"] or row["reach"] is None or row["d3"] is None:
-            continue
-        xs.append(float(row["reach"]))
-        ys.append(float(row["d3"]))
-        cells.append(row)
-    fit = ols_fit(xs, ys)
-    resid_by_layer: dict[int, float] = {}
-    if fit is None:
-        notes.append("route 3 unavailable: D3 vs E6 has no fit (fewer than 3 reachable cells, "
-                     "or no variation in reach). Residual recorded as null, not as zero")
+    if len(full_frontier) > want_hi:
+        selected_frontier = _cap_proxy_frontier(full_frontier, want_hi, reach_floor)
+        notes.append(f"Pareto frontier capped from {len(full_frontier)} to {want_hi} cells; "
+                     "max-reach and min-d3 extremes were pinned, then maximin coverage was "
+                     "applied on the normalized proxy plane")
     else:
-        for row, x, y in zip(cells, xs, ys):
-            layer = int(row["layer"])
-            e = y - predict(fit, x)
-            # Most negative across doses: the strongest evidence this layer under-detects.
-            if layer not in resid_by_layer or e < resid_by_layer[layer]:
-                resid_by_layer[layer] = e
-    for layer in layers:
-        per_layer[layer]["resid"] = resid_by_layer[layer] if layer in resid_by_layer else None
+        selected_frontier = list(full_frontier)
 
-    route3: list[int] = []
-    if fit is not None and resid_by_layer:
-        sd = fit["resid_sd"]
-        threshold = -RESID_SIGMA * float(sd) if sd else None
-        ordered = sorted(resid_by_layer, key=lambda layer: resid_by_layer[layer])
-        if threshold is not None:
-            route3 = [layer for layer in ordered
-                      if resid_by_layer[layer] <= threshold][:RESID_MAX_CANDIDATES]
-        if not route3:
-            route3 = ordered[:2]
-            notes.append("route 3: no layer sits a full sigma below the D3~E6 fit; the two "
-                         "most negative residuals are taken so the route still contributes")
+    selected: list[dict] = [
+        _selection_candidate(
+            row, kind="frontier", distance=0.0, anchor=row,
+            why=(f"Pareto frontier: no eligible cell has reach >= {float(row['reach']):.3f} "
+                 f"with d3 <= {float(row['d3']):.6f}"))
+        for row in selected_frontier
+    ]
+    if len(selected) < want_lo:
+        fills = _fill_proxy_frontier(full_frontier, dominated, want_lo, reach_floor)
+        for row, distance, anchor in fills:
+            selected.append(_selection_candidate(
+                row, kind="filled", distance=distance, anchor=anchor,
+                why=(f"filled toward SHORTLIST_N={want_lo}: additive-epsilon distance "
+                     f"{distance:.6f} from frontier cell L{anchor['layer']}@{float(anchor['r']):.6f}")))
+        if fills:
+            notes.append(f"frontier had {len(full_frontier)} cells; filled with {len(fills)} "
+                         "nearest dominated eligible cells, round-robin across frontier anchors")
+        if len(selected) < want_lo:
+            notes.append(f"shortlist stops at {len(selected)}, below SHORTLIST_N={want_lo}: "
+                         "there are no more eligible cells to verify")
 
-    # --- route 2: stratified coverage of the E6 range ---------------------------------
-    route2 = [entry["layer"] for entry in
-              stratified_pick([per_layer[layer] for layer in layers], "e6", n_bins)]
-
-    # --- assemble, merge within +/-1, then size to SHORTLIST_N ------------------------
-    reasons: dict[int, list[str]] = {}
-    for layer in route1:
-        reasons.setdefault(layer, []).append(
-            f"local maximum of smoothed reach ({per_layer[layer]['e6']:.2f}) clearing "
-            f"E6_FLOOR={floor:g} at both doses")
-    for layer in route2:
-        reasons.setdefault(layer, []).append(
-            f"stratified coverage of the E6 range (reach {per_layer[layer]['e6']:.2f})")
-    for layer in route3:
-        resid = resid_by_layer[layer]
-        reasons.setdefault(layer, []).append(
-            f"residual: D3 sits {resid:+.3f} below its E6-predicted value (spec 7.2 search "
-            "device, not a selection criterion)")
-
-    routes = {"local_max": set(route1), "stratified": set(route2), "residual": set(route3)}
-    merged = _merge_adjacent(sorted(reasons), per_layer, reasons, routes)
-    sized, size_note = _size_shortlist(merged, per_layer, want_lo, want_hi)
-    if size_note:
-        notes.append(size_note)
-
+    selected.sort(key=lambda row: (0 if row["selection_kind"] == "frontier" else 1,
+                                   -float(row["reach"]), float(row["d3"]),
+                                   int(row["layer"]), float(row["r"])))
     tier0: list[dict] = []
-    for rank, candidate in enumerate(sized, start=1):
+    for rank, candidate in enumerate(selected, start=1):
         tier0.append(dict(candidate, tier=0, tier_rank=rank,
-                          tier_ordering="tier0_routes",
+                          tier_ordering="pareto_frontier",
                           tier_order_rank=rank,
                           tier_source_layer=int(candidate["layer"]),
+                          tier_source_cell=dict(layer=int(candidate["layer"]),
+                                                r=float(candidate["r"])),
                           exhaustive=False))
 
-    all_scanned_layers = sorted({int(row["layer"]) for row in scan_rows})
-    tier0_layers = {int(row["layer"]) for row in tier0}
-    rejected_layers = [layer for layer in all_scanned_layers if layer not in tier0_layers]
-    outer_order, dead_rejected = _order_rejected_layers(
-        per_layer, rejected_layers, tier_cfg["tier_order"], d3_base=_d3_baseline())
+    selected_keys = {_cell_key(row["layer"], row["r"]) for row in tier0}
+    omitted_frontier_keys = frontier_keys - selected_keys
+    near_misses: list[dict] = []
+    for row in eligible:
+        key = _cell_key(row["layer"], row["r"])
+        if key in selected_keys:
+            continue
+        distance, anchor = _frontier_distance(row, full_frontier, reach_floor)
+        kind = "frontier_omitted_by_cap" if key in omitted_frontier_keys else "dominated_eligible"
+        near_misses.append(dict(row=row, distance=distance, anchor=anchor, kind=kind,
+                                priority=0 if key in omitted_frontier_keys else 1))
+
+    # E6_FLOOR is load-bearing, but a live sane cell just below it is still useful evidence
+    # about the floor. Report it as a near-miss; do not let reach=0 dead cells back in.
+    for row in surface:
+        if (row.get("reachable") and row.get("reach") is not None and row.get("d3") is not None
+                and row.get("s3") is not None and float(row["s3"]) >= s4_min
+                and 0.0 < float(row["reach"]) < reach_floor):
+            distance, anchor = _frontier_distance(row, full_frontier, reach_floor)
+            near_misses.append(dict(row=row, distance=distance, anchor=anchor,
+                                    kind="below_reach_floor", priority=2))
+
+    near_misses.sort(key=lambda item: (item["priority"], item["distance"],
+                                       -float(item["row"]["reach"]),
+                                       float(item["row"]["d3"]),
+                                       *_scan_cell_order(item["row"])))
+    outer_order: list[dict] = []
+    for rank, item in enumerate(near_misses, start=1):
+        row, anchor = item["row"], item["anchor"]
+        candidate = _selection_candidate(
+            row, kind="near_miss", distance=item["distance"], anchor=anchor,
+            why=(f"{item['kind']} near-miss at additive-epsilon distance "
+                 f"{item['distance']:.6f} from L{anchor['layer']}@{float(anchor['r']):.6f}"))
+        candidate.update(near_miss_kind=item["kind"], routes=[], merged_from=[],
+                         tier_ordering="pareto_distance", tier_order_rank=rank,
+                         tier_source_layer=int(row["layer"]),
+                         tier_source_cell=dict(layer=int(row["layer"]), r=float(row["r"])))
+        outer_order.append(candidate)
 
     tiers: list[dict] = [dict(tier=0, kind="shortlist", mandatory=True,
                               candidates=tier0,
+                              cells=[dict(layer=int(row["layer"]), r=float(row["r"]))
+                                     for row in tier0],
                               layers=[int(row["layer"]) for row in tier0])]
     size = tier_cfg["tier_size"]
     for offset in range(0, len(outer_order), size):
@@ -981,45 +1138,52 @@ def phase2_shortlist(scan_rows: Sequence[dict], *,
             kind="audit" if number <= tier_cfg["audit_tiers"] else "escalation",
             mandatory=(number <= tier_cfg["audit_tiers"]),
             candidates=chunk,
+            cells=[dict(layer=int(row["layer"]), r=float(row["r"])) for row in chunk],
             layers=[int(row["layer"]) for row in chunk],
         ))
 
     exhaustive_candidates: list[dict] = []
     if tier_cfg["exhaustive"]:
-        # Best-candidate-first for interruptibility, but every in-scope layer remains present.
-        ranked = tier0 + [dict(row, tier=None, exhaustive=True) for row in outer_order]
-        ranked_layers = {int(row["layer"]) for row in ranked}
-        for layer in all_scanned_layers:
-            if layer in ranked_layers:
+        # Exhaustive means every eligible CELL. Ineligible cells cannot satisfy the settled
+        # Phase 2 contract and measuring them would turn exhaustive evidence into scope drift.
+        ranked = list(tier0)
+        ranked_keys = {_cell_key(row["layer"], row["r"]) for row in ranked}
+        for row in eligible:
+            if _cell_key(row["layer"], row["r"]) in ranked_keys:
                 continue
-            entry = per_layer.get(layer)
+            distance, anchor = _frontier_distance(row, full_frontier, reach_floor)
             ranked.append(dict(
-                layer=layer,
-                r=(entry["e6_at_r"] if entry is not None else min(doses)),
-                e6=(entry["e6"] if entry is not None else None),
-                d3=(entry["d3"] if entry is not None else None),
-                s3=(entry["s3"] if entry is not None else None),
-                resid=(entry.get("resid") if entry is not None else None),
-                reach_by_dose=(entry["reach_by_dose"] if entry is not None else {}),
-                d3_by_dose=(entry["d3_by_dose"] if entry is not None else {}),
-                why=["exhaustive mode: verify every in-scope layer regardless of scan signal"],
-                routes=[], merged_from=[], tier=None, tier_rank=None,
-                tier_ordering="exhaustive_remainder", tier_order_rank=None,
-                tier_source_layer=layer, exhaustive=True,
-            ))
+                _selection_candidate(
+                    row, kind="near_miss", distance=distance, anchor=anchor,
+                    why="exhaustive mode: verify every eligible scan cell"),
+                tier=None, tier_rank=None, tier_ordering="exhaustive_eligible",
+                tier_order_rank=None, tier_source_layer=int(row["layer"]),
+                tier_source_cell=dict(layer=int(row["layer"]), r=float(row["r"])),
+                exhaustive=True))
         exhaustive_candidates = [dict(row, tier=None, tier_rank=i + 1,
                                       exhaustive=True)
                                  for i, row in enumerate(ranked)]
         tiers = [dict(tier=None, kind="exhaustive", mandatory=True,
                       candidates=exhaustive_candidates,
+                      cells=[dict(layer=int(row["layer"]), r=float(row["r"]))
+                             for row in exhaustive_candidates],
                       layers=[int(row["layer"]) for row in exhaustive_candidates])]
 
+    excluded_layers = _excluded_layer_records(
+        surface, eligible, reach_floor=reach_floor, s4_min=s4_min)
+    frontier_records = [dict(layer=int(row["layer"]), r=float(row["r"]),
+                             reach=float(row["reach"]), d3=float(row["d3"]),
+                             d3_rate=row.get("d3_rate"), s3=float(row["s3"]))
+                        for row in full_frontier]
     payload = dict(
         phase=PHASE2,
-        e6_floor=floor, shortlist_n=[want_lo, want_hi], doses=doses,
-        n_layers_scanned=len(all_scanned_layers), n_candidates=len(tier0),
-        d3_vs_e6_fit=fit, notes=notes,
-        routes={name: sorted(members) for name, members in routes.items()},
+        selection_unit="cell", detection_axis="d3",
+        e6_floor=reach_floor, s4_min=s4_min, shortlist_n=[want_lo, want_hi],
+        n_cells_scanned=len(surface), n_cells_reachable=len(reachable),
+        n_cells_eligible=len(eligible), n_frontier=len(full_frontier),
+        frontier=frontier_records,
+        n_layers_scanned=len({int(row["layer"]) for row in surface}),
+        n_candidates=len(tier0), notes=notes,
         candidates=tier0,
         tiers=tiers,
         exhaustive=tier_cfg["exhaustive"],
@@ -1027,37 +1191,42 @@ def phase2_shortlist(scan_rows: Sequence[dict], *,
         audit_tiers=tier_cfg["audit_tiers"],
         max_tier=tier_cfg["max_tier"],
         tier_order=tier_cfg["tier_order"],
-        n_rejected=len(rejected_layers),
+        n_rejected=len(outer_order),
         n_rejected_live=len(outer_order),
-        n_rejected_dead=len(dead_rejected),
-        rejected_dead_layers=dead_rejected,
+        n_rejected_dead=len(surface) - len(eligible),
+        n_near_miss=len(outer_order),
+        near_misses=[dict(layer=int(row["layer"]), r=float(row["r"]),
+                          reach=float(row["reach"]), d3=float(row["d3"]),
+                          s3=float(row["s3"]), kind=row["near_miss_kind"],
+                          frontier_distance=float(row["frontier_distance"]),
+                          nearest_frontier=row["nearest_frontier"])
+                     for row in outer_order],
+        excluded_layers=excluded_layers,
     )
     if write:
         _write_json(SHORTLIST_FILE, payload)
 
     print("=" * 78)
-    print(f"PHASE 2 - tiered shortlist: {len(tier0)} tier-0 layers from "
-          f"{len(all_scanned_layers)} scanned")
+    print(f"PHASE 2 - cell Pareto shortlist: {len(surface)} scanned -> {len(eligible)} "
+          f"eligible -> {len(full_frontier)} frontier -> {len(tier0)} tier-0 cells")
     print("=" * 78)
     for note in notes:
         print(f"   note: {note}")
-    print(f"   {'layer':>6} {'reach':>7} {'D3':>7} {'resid':>8}  why")
+    print(f"   {'cell':>14} {'reach':>7} {'d3':>9} {'s3':>7}  why")
     for cand in tier0:
-        entry = per_layer[cand["layer"]]
-        resid = entry["resid"]
-        print(f"   {'L' + str(cand['layer']):>6} {entry['e6']:>7.2f} "
-              f"{(entry['d3'] if entry['d3'] is not None else float('nan')):>7.3f} "
-              f"{(resid if resid is not None else float('nan')):>8.3f}  "
-              f"{'; '.join(cand['routes'])}")
+        label = f"L{cand['layer']}@{float(cand['r']):.3f}"
+        print(f"   {label:>14} {float(cand['reach']):>7.2f} "
+              f"{float(cand['d3']):>9.5f} {float(cand['s3']):>7.2f}  "
+              f"{cand['selection_kind']} distance={float(cand['frontier_distance']):.6f}")
     if tier_cfg["exhaustive"]:
-        print(f"   EXHAUSTIVE: {len(exhaustive_candidates)} in-scope layers will be bisected "
+        print(f"   EXHAUSTIVE: {len(exhaustive_candidates)} eligible cells will be bisected "
               "and verified; qualifiers never stop execution")
     else:
-        print(f"   outer audit population: {len(outer_order)}/{len(rejected_layers)} rejected "
-              f"layers are live; {len(dead_rejected)} excluded by D3_SIGNAL_MIN guard")
+        print(f"   outer audit population: {len(outer_order)} Pareto near-miss cells; "
+              f"{len(excluded_layers)} layers have no eligible cell and are reported")
         for tier in tiers[1:]:
-            sources = [row["tier_ordering"] for row in tier["candidates"]]
-            print(f"   tier {tier['tier']}: {tier['layers']} via {sources} "
+            cells = [f"L{row['layer']}@{float(row['r']):.3f}" for row in tier["candidates"]]
+            print(f"   tier {tier['tier']}: {cells} by Pareto distance "
                   f"({'always runs' if tier['mandatory'] else 'failure escalation'})")
     return payload
 
@@ -1378,13 +1547,14 @@ def _probe(layer: int, r: float, cache: dict) -> dict:
 def phase3_bisect(candidates: Sequence[dict], *,
                   scan_rows: Sequence[dict] | None = None,
                   on_cell: Any = None, on_plan: Any = None) -> list[dict]:
-    """Per candidate layer: bracket the sanity boundary, then bisect it. **0 judge calls.**
+    """Per selected cell: preserve its dose while mapping the sanity boundary. **0 judge calls.**
 
     1. **Bracket** - the lowest `r` clearing `E6_FLOOR`, and the lowest `r` failing cheap
        sanity. The scan doses are reused for free; above them the probe escalates by
        `BISECT_ESCALATE` until sanity fails or the cell goes unreachable at `ALPHA_CEIL`.
     2. **Bisect** with `BISECT_STEPS` evaluations, giving ~3% resolution in `r`.
-    3. Take the point just inside the boundary and **keep one step either side for Phase 4**.
+    3. Keep the selected Phase 2 dose as the Phase 4 cell. The boundary is evidence for
+       Gate 4 and a map of the sane range; it never replaces the selected answer candidate.
 
     **Bisection is sound here because sanity is monotone in dose** - 0 violations in 18 M1.5
     (concept, layer) series. The effectiveness violations were noise (-0.12, -0.21) and the two
@@ -1397,10 +1567,10 @@ def phase3_bisect(candidates: Sequence[dict], *,
     at `r = 0` nothing is injected, `S3 = cap_base / cap_base = 1`, and spending a forward pass
     to confirm that would confirm the instrument, not the cell.
 
-    Returns one row per candidate carrying `r` (the chosen dose, which Phase 4 verifies) plus
-    `r_below` / `r_above` (the step either side, which Phase 5 uses). Phase 4 is costed at ~10
-    cells in spec section 12, so the neighbours are carried as metadata rather than verified
-    three-deep here.
+    Returns one row per candidate carrying the SAME `r` selected by Phase 2 plus `r_below` /
+    `r_above` for Phase 5. `boundary_lo` / `boundary_hi` are distinct metadata. This
+    separation is load-bearing: L58@0.30 was the target cell, while its highest sane dose was
+    1.35; using the boundary as `r` silently discarded the answer.
     """
     cfg = _cfg()
     floor = float(cfg["E6_FLOOR"])
@@ -1423,14 +1593,15 @@ def phase3_bisect(candidates: Sequence[dict], *,
     t0 = time.time()
     for cand in candidates:
         layer = int(cand["layer"])
+        selected_r = float(cand["r"])
         history: list[dict] = []
 
         # --- bracket ------------------------------------------------------------------
         lo_sane = 0.0                # unsteered: sane by construction, see the docstring
         hi_insane: float | None = None
         r_clears_floor: float | None = None
-        probes = list(scan_doses)
-        rung = max(scan_doses)
+        probes = sorted(set(scan_doses + [selected_r]))
+        rung = max(probes)
         for _ in range(BISECT_MAX_PROBES):
             rung = rung * BISECT_ESCALATE
             probes.append(rung)
@@ -1458,8 +1629,6 @@ def phase3_bisect(candidates: Sequence[dict], *,
         if hi_insane is None:
             # Sanity never failed inside the reachable range. The operating dose is then the
             # highest reachable dose that was measured sane; there is no boundary to refine.
-            chosen = lo_sane
-            step = max(chosen * DOSE_STEP_FRAC, BISECT_MIN_R)
             boundary_lo = None
             boundary_hi = None
             boundary = "not reached: sanity held at every reachable dose"
@@ -1484,23 +1653,25 @@ def phase3_bisect(candidates: Sequence[dict], *,
                         r_clears_floor = float(mid)
                 else:
                     hi = mid
-            chosen = lo
-            step = hi - lo
             boundary_lo = lo
             boundary_hi = hi
             boundary = f"sane up to r={lo:.4f}, first failure at r={hi:.4f}"
 
-        chosen = max(float(chosen), BISECT_MIN_R)
-        r_below = max(chosen - step, BISECT_MIN_R)
-        r_above = chosen + step
-        # A layer whose sanity boundary sits below its effectiveness floor has no window: at
-        # every sane dose the concept is not reachable, and at every reachable dose the model
-        # is damaged. Flagged rather than dropped, and ordered last, so 49 judge calls are not
-        # spent on it before the cells that do have a window.
-        has_window = bool(r_clears_floor is not None and chosen >= r_clears_floor)
+        selected = _probe(layer, selected_r, cache)
+        selected_sane = _cheap_sane(selected, s4_min)
+        has_window = bool(selected_sane is True and selected.get("reach") is not None
+                          and float(selected["reach"]) >= floor)
+        measured_doses = sorted({float(key[1]) for key in cache if int(key[0]) == layer})
+        neighbour_gaps = [abs(value - selected_r) for value in measured_doses
+                          if abs(value - selected_r) > 10 ** -6]
+        step = (min(neighbour_gaps) if neighbour_gaps
+                else max(selected_r * DOSE_STEP_FRAC, BISECT_MIN_R))
+        r_below = max(selected_r - step, BISECT_MIN_R)
+        r_above = selected_r + step
 
         row = dict(
-            phase=PHASE3, layer=layer, r=chosen, r_below=r_below, r_above=r_above,
+            phase=PHASE3, layer=layer, r=selected_r, selected_r=selected_r,
+            selected_from_scan=True, r_below=r_below, r_above=r_above,
             step=step, bracket_lo=lo_sane, bracket_hi=hi_insane,
             # The converged endpoints, distinct from the initial bracket above. Gate 4's
             # run-local anchor is boundary_hi: the nearest dose known to fail cheap S3.
@@ -1508,6 +1679,11 @@ def phase3_bisect(candidates: Sequence[dict], *,
             r_clears_floor=r_clears_floor, has_window=has_window, boundary=boundary,
             e6_floor=floor, s4_min=s4_min, bisect_steps=steps,
             n_evaluations=len(history), history=history,
+            selected_reach=selected.get("reach"), selected_d3=selected.get("d3"),
+            selected_s3=selected.get("s3"),
+            selection_kind=cand.get("selection_kind"),
+            frontier_distance=cand.get("frontier_distance"),
+            nearest_frontier=cand.get("nearest_frontier"),
             why=cand["why"] if "why" in cand else [],
             routes=cand["routes"] if "routes" in cand else [],
             tier=cand["tier"] if "tier" in cand else 0,
@@ -1522,12 +1698,13 @@ def phase3_bisect(candidates: Sequence[dict], *,
         out.append(row)
         if on_cell is not None:
             on_cell(row)
-        print(f"   L{layer:<3} r={chosen:.4f}  (+/- {step:.4f})  "
+        print(f"   L{layer:<3} selected r={selected_r:.4f}  (+/- {step:.4f})  "
               f"{'window' if has_window else 'NO WINDOW'}  {boundary}")
 
-    # Cells with a window first, then by the dose they can carry - so a truncated Phase 4
-    # spends its budget where an operating point can exist.
-    out.sort(key=lambda row: (not row["has_window"], -float(row["r"]), int(row["layer"])))
+    # Preserve tier rank: Phase 2 already decided the evidence order on the proxy surface.
+    out.sort(key=lambda row: (not row["has_window"],
+                              int(row["tier_rank"] or 10**9),
+                              int(row["layer"]), float(row["r"])))
     print(f"phase 3    : {len(out)} candidates in {time.time() - t0:.0f}s, "
           f"{sum(1 for row in out if row['has_window'])} with a window")
     return out
@@ -1628,6 +1805,9 @@ def _verify_cells(cells: Sequence[dict], phase: str, *,
                                         if "tier_order_rank" in cell else None),
                        tier_source_layer=(cell["tier_source_layer"]
                                           if "tier_source_layer" in cell else layer),
+                       tier_source_cell=(cell["tier_source_cell"]
+                                         if "tier_source_cell" in cell else
+                                         dict(layer=layer, r=r)),
                        exhaustive=bool(cell["exhaustive"])
                        if "exhaustive" in cell else False,
                        refined_from=(cell["refined_from"]
@@ -1670,12 +1850,15 @@ def _verify_cells(cells: Sequence[dict], phase: str, *,
                              if "tier_order_rank" in cell else None),
             tier_source_layer=(cell["tier_source_layer"]
                                if "tier_source_layer" in cell else layer),
+            tier_source_cell=(cell["tier_source_cell"]
+                              if "tier_source_cell" in cell else dict(layer=layer, r=r)),
             exhaustive=bool(cell["exhaustive"]) if "exhaustive" in cell else False,
             refined_from=cell["refined_from"] if "refined_from" in cell else None,
         )
         _append_row(VERIFIED_FILE, row)
         out.append(row)
-        print(f"   L{layer} r={r:.3f} rate intervals: reach {row['reach']:.2f} "
+        print(f"   L{layer} r={r:.3f}: d3={float(row['d3']):.4f} beside "
+              f"d2={float(row['d2']):.4f}; rate intervals: reach {row['reach']:.2f} "
               f"[{row['reach_ci_low']:.2f}, {row['reach_ci_high']:.2f}], n={row['reach_n']}; "
               f"D3-rate {row['d3_rate']:.2f} [{row['d3_rate_ci_low']:.2f}, "
               f"{row['d3_rate_ci_high']:.2f}], n={row['d3_rate_n']}; "
@@ -1765,6 +1948,9 @@ def phase5_refine(top_cells: Sequence[dict], *, n_top: int = 3,
                                  if "tier_order_rank" in base else None),
                 tier_source_layer=(base["tier_source_layer"]
                                    if "tier_source_layer" in base else layer),
+                tier_source_cell=(base["tier_source_cell"]
+                                  if "tier_source_cell" in base else
+                                  dict(layer=layer, r=r)),
                 exhaustive=bool(base["exhaustive"]) if "exhaustive" in base else False,
                 refined_from=dict(layer=layer, r=r),
             ))
@@ -1845,7 +2031,7 @@ def phase6_confirm(winner: dict, *, n_confirm: int | None = None) -> dict:
     _append_row(CONFIRM_FILE, out)
     print(f"phase 6    : E5={out['e5']:.2f} +/- "
           f"{(out['e5_se'] if out['e5_se'] is not None else float('nan')):.2f}   "
-          f"S4={out['s4']:.2f}   D2={out['d2']:.3f} "
+          f"S4={out['s4']:.2f}   d3={out['d3']:.4f} beside D2={out['d2']:.3f} "
           f"(95% Wilson [{out['d2_ci_low']:.3f}, {out['d2_ci_high']:.3f}], "
           f"n={out['n_d2']}; unsteered {out['d2_null']:.3f} "
           f"[{out['d2_null_ci_low']:.3f}, {out['d2_null_ci_high']:.3f}])   "
@@ -1911,6 +2097,7 @@ def _select_operating_point(rows: Sequence[dict], constraints: dict[str, float])
         n_considered=len(considered), n_qualifying=len(qualifying),
         best_e5=best_e5, tie_band=tie_band,
         tied=[dict(layer=int(row["layer"]), r=float(row["r"]), e5=float(row["e5"]),
+                   d3=(float(row["d3"]) if row.get("d3") is not None else None),
                    d2=float(row["d2"]), s4=float(row["s4"]),
                    phase=row["phase"] if "phase" in row else None)
               for row in ranked],
@@ -2018,6 +2205,9 @@ def frontier(rows: Sequence[dict]) -> list[dict]:
             reach_ci_low=row["reach_ci_low"] if "reach_ci_low" in row else None,
             reach_ci_high=row["reach_ci_high"] if "reach_ci_high" in row else None,
             reach_n=row["reach_n"] if "reach_n" in row else None,
+            # Task 21 / TODO 15: d3 and d2 belong beside each other wherever both exist;
+            # otherwise judging the proxy disagreement requires joining two files by hand.
+            d3=row["d3"] if "d3" in row else None,
             d3_rate=row["d3_rate"] if "d3_rate" in row else None,
             d3_rate_ci_low=row["d3_rate_ci_low"] if "d3_rate_ci_low" in row else None,
             d3_rate_ci_high=row["d3_rate_ci_high"] if "d3_rate_ci_high" in row else None,
@@ -2097,7 +2287,8 @@ def covertness_margin(rows: Sequence[dict]) -> list[dict]:
         record = dict(
             layer=int(row["layer"]), r=float(row["r"]),
             phase=row["phase"] if "phase" in row else None,
-            e5=x, d2=y, predicted_d2=predicted, covertness_margin=margin,
+            e5=x, d3=(row["d3"] if "d3" in row else None), d2=y,
+            predicted_d2=predicted, covertness_margin=margin,
             fit=fit, reason=reason,
         )
         # Also fill the field on the caller's own row, so a caller that keeps the verified
