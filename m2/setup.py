@@ -329,7 +329,12 @@ def check_hf_home(rep: Report) -> None:
     stray = [p for p in (WORKSPACE / ".cache", Path.home() / ".cache")
              if p.exists() and list(p.glob("**/models--google--gemma-3-27b-it"))]
     if hits:
-        gb = _dir_gb(hits[0])
+        # `_tree_allocated_gb`, not a plain rglob+stat walk. `Path.stat()` FOLLOWS symlinks, and
+        # the HuggingFace cache keeps one real file per shard in `blobs/` and symlinks it into
+        # `snapshots/<rev>/`. Counting both reported 102 GB for a 54 GB model on every pod so
+        # far - close enough to a plausible "double download" to have been believed twice, and
+        # it disagreed with the volume check's own figure for the same bytes.
+        gb = _tree_allocated_gb(hits[0])
         state = OK if gb >= MODEL_GB_MIN else FIX
         rep.add("model cache", state, f"{gb:.0f} GB at {hits[0].parent}",
                 hint="" if state == OK else

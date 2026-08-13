@@ -1407,3 +1407,32 @@ suite with the variable unset. Both matter; only one was ever run before.
 
 **Result.** Silent? No — `check_tests` blocked the run on it, which is exactly the sequence that
 check was added for.
+
+### 2026-08-13 — The model cache read 102 GB because a walk followed symlinks
+
+**Symptom.** `python -m m2.setup` reported `model cache 102 GB at /workspace/hf/hub` for
+Gemma3-27B, whose bf16 weights are ~54 GB. Observed on at least two pods and each time read as a
+double download or a stray second copy.
+
+**Root cause.** `check_hf_home` sized the cache with `_dir_gb`, which walks with `rglob` and sums
+`Path.stat().st_size`. **`stat()` follows symlinks**, and the HuggingFace cache stores one real
+file per shard under `blobs/` and symlinks it into `snapshots/<rev>/`. Every shard was counted
+once as a blob and once as its link. 54 x 2 = 108, and 102 is that minus the files with no second
+name.
+
+**Why nothing caught it.** The number was *plausible* — "the model downloaded twice" is a real
+failure this project has had, and `HF_HOME` being unset is its documented cause, so the reading
+confirmed an expectation instead of contradicting one. It also passed its own threshold:
+`MODEL_GB_MIN` is a floor at 45 GB, so 102 reads `OK` and the check never had to be right about
+the number to return the right state. And `setup.py` already contained a correct implementation —
+`_tree_allocated_gb`, written later for the volume check with `lstat` and inode deduplication —
+so the same file measured the same bytes two ways and disagreed by exactly 2x with nothing
+comparing them.
+
+**Fix.** `check_hf_home` uses `_tree_allocated_gb`. A test builds a `blobs/` + `snapshots/` pair
+sharing one file and asserts the naive walk double-counts while the corrected one does not.
+
+**Check.** The two functions now agree on the cache tree; `du -sh` on the pod confirms ~54 GB.
+
+**Result.** Silent? Yes, and comfortably so: a wrong number that passes its own threshold and
+matches a story you already believe is one nobody re-derives.

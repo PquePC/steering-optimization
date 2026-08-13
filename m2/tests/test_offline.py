@@ -115,6 +115,33 @@ def test_runpod_volume_guard_uses_allocation_and_actually_blocks_low_space(
     assert "9/10 GB allocation used" in check.detail
 
 
+def test_model_cache_size_does_not_count_linked_shards_twice(tmp_path):
+    """The HuggingFace cache keeps one real file per shard in `blobs/` and links it into
+    `snapshots/<rev>/`. A walk that follows links counts every shard twice, which is why
+    `model cache` read 102 GB for a 54 GB model on every pod and was twice mistaken for a
+    double download. Hard links stand in for symlinks here because Windows needs a privilege
+    to create a symlink; `_tree_allocated_gb` skips symlinks by `lstat` and deduplicates hard
+    links by inode, so one walk handles both.
+    """
+    blobs = tmp_path / "blobs"
+    snapshot = tmp_path / "snapshots" / "rev"
+    blobs.mkdir(parents=True)
+    snapshot.mkdir(parents=True)
+    shard = blobs / "shard"
+    shard.write_bytes(b"x" * (4 * 1024 * 1024))
+
+    linked = snapshot / "shard.safetensors"
+    try:
+        os.link(shard, linked)
+    except (OSError, NotImplementedError):          # pragma: no cover - filesystem dependent
+        pytest.skip("filesystem supports neither hard links nor symlinks")
+
+    once = setup._tree_allocated_gb(tmp_path)
+    twice = setup._dir_gb(tmp_path)
+    assert twice > once * 1.8, "the naive walk should double-count, or this test proves nothing"
+    assert once < 6 / 1024, f"the shard must be counted once, got {once * 1024:.1f} MB"
+
+
 def test_declared_volume_is_a_fallback_and_still_blocks_low_space(tmp_path, monkeypatch):
     """`M2_VOLUME_GB` must not become a way past the guard.
 
