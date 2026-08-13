@@ -33,6 +33,7 @@ import stat
 import shutil
 import subprocess
 import sys
+import time
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -171,6 +172,25 @@ def _runpod_volume_size_gb(volume_id: str, api_key: str, *, timeout: float = 10.
     return float(size)
 
 
+def _runpod_volume_size_gb_retrying(volume_id: str, api_key: str, *, attempts: int = 3) -> float:
+    """`_runpod_volume_size_gb`, retried, because one bad response should not block a pod.
+
+    Observed 2026-08-13: setup blocked on `HTTPError` against a healthy 150 GB volume, and the
+    identical request succeeded moments later from both curl and urllib. A single transient
+    response was stopping a whole run on a check about disk space. Retries are cheap here - the
+    request is small and runs once per setup - and a persistent failure still blocks.
+    """
+    last: Exception | None = None
+    for attempt in range(int(attempts)):
+        try:
+            return _runpod_volume_size_gb(volume_id, api_key)
+        except Exception as exc:                      # noqa: BLE001 - retried, then reported
+            last = exc
+            if attempt + 1 < int(attempts):
+                time.sleep(1.5 * (attempt + 1))
+    raise last if last is not None else RuntimeError("no attempt was made")
+
+
 # Probe by IMPORT, and treat `__version__` as optional. `nest_asyncio` is a single-module
 # package that never defined `__version__`, so the old `print(pkg.__version__)` probe raised
 # AttributeError on a perfectly good install and reported it missing forever: --repair would
@@ -211,59 +231,69 @@ def check_volume(rep: Report) -> None:
                      "container disk and vanish on the next stop.")
         return
     volume_id = os.environ.get("RUNPOD_VOLUME_ID")
-    declared = os.environ.get("M2_VOLUME_GB")
-    if declared:
-        # The operator supplies the allocation the API could not. Weaker than the API path and
-        # deliberately so: the USED side is still walked, so this still catches the thing the
-        # check exists for - a volume filling up mid-run. What it cannot catch is an allocation
-        # smaller than stated, so read the number off the RunPod console rather than memory.
-        # Added 2026-08-13, when a fresh 150 GB volume blocked setup on an unexplained
-        # HTTPError and the only way past was to unset RUNPOD_VOLUME_ID, which substitutes the
-        # backing-pool free count - a number that always passes and means nothing.
+    raw_declared = os.environ.get("M2_VOLUME_GB")
+    declared: float | None = None
+    if raw_declared:
         try:
-            allocated_gb = float(declared)
-            if not allocated_gb > 0:
+            declared = float(raw_declared)
+            if not declared > 0:
                 raise ValueError("not a positive size")
         except ValueError:
             rep.add("persistent volume", BLOCKED,
-                    f"M2_VOLUME_GB={declared!r} is not a positive number of GB",
+                    f"M2_VOLUME_GB={raw_declared!r} is not a positive number of GB",
                     hint="Set M2_VOLUME_GB to the allocation in the RunPod console, e.g. 150")
             return
+
+    allocated_gb: float | None = None
+    source = ""
+    api_failure = ""
+    if volume_id:
+        # The API is AUTHORITATIVE and is tried first. `M2_VOLUME_GB` is a fallback for when it
+        # cannot be read, never an override of a working reading - an operator's remembered
+        # number must not silently replace the allocation RunPod reports.
+        api_key = os.environ.get("RUNPOD_API_KEY")
+        if not api_key:
+            api_failure = "RUNPOD_API_KEY is missing"
+        else:
+            try:
+                allocated_gb = _runpod_volume_size_gb_retrying(volume_id, api_key)
+                source = "GB allocation used"
+            except Exception as exc:                # noqa: BLE001 - a check reports, never aborts
+                # Carry the HTTP status. Without it 401, 403 and 404 all read "HTTPError" and
+                # have nothing in common: a bad key, a key without REST scope, and a wrong
+                # volume id need three different fixes. A diagnostic that cannot separate them
+                # is not one.
+                status = getattr(exc, "code", None) or getattr(exc, "status", None)
+                api_failure = type(exc).__name__ + ("" if status is None else f" {status}")
+
+    if allocated_gb is None and declared is not None:
+        # Weaker than the API path and deliberately so: the USED side is still walked, so this
+        # still catches what the check exists for - a volume filling up mid-run. What it cannot
+        # catch is an allocation smaller than stated, so read the number off the RunPod console
+        # rather than memory. Added 2026-08-13, when a transient HTTPError on a fresh 150 GB
+        # volume blocked setup outright and the only way past was to unset RUNPOD_VOLUME_ID,
+        # which substitutes the backing-pool free count - a number that always passes and means
+        # nothing.
+        allocated_gb = declared
+        source = "GB declared via M2_VOLUME_GB"
+
+    if allocated_gb is not None:
         used_gb = _tree_allocated_gb(WORKSPACE)
         free_gb = max(0.0, allocated_gb - used_gb)
         detail = (f"{WORKSPACE}, {free_gb:.0f} GB free "
-                  f"({used_gb:.0f}/{allocated_gb:.0f} GB declared via M2_VOLUME_GB)")
+                  f"({used_gb:.0f}/{allocated_gb:.0f} {source})")
+        if api_failure and source.endswith("M2_VOLUME_GB"):
+            detail += f" - API unread ({api_failure})"
     elif volume_id:
-        api_key = os.environ.get("RUNPOD_API_KEY")
-        if not api_key:
-            rep.add(
-                "persistent volume", BLOCKED,
-                f"{WORKSPACE}, allocation unknown (RUNPOD_API_KEY is missing)",
-                hint=("RUNPOD_VOLUME_ID is set, so filesystem free space describes the shared "
-                      "backing pool rather than this volume's allocation. Restore RunPod's "
-                      "pod-scoped RUNPOD_API_KEY; do not trust df/shutil.disk_usage here."))
-            return
-        try:
-            allocated_gb = _runpod_volume_size_gb(volume_id, api_key)
-            used_gb = _tree_allocated_gb(WORKSPACE)
-        except Exception as exc:                    # noqa: BLE001 - a check reports, never aborts
-            # Carry the HTTP status. Without it 401, 403 and 404 all read "HTTPError" and have
-            # nothing in common: a bad key, a key without REST scope, and a wrong volume id
-            # need three different fixes. A diagnostic that cannot separate them is not one.
-            status = getattr(exc, "code", None) or getattr(exc, "status", None)
-            named = type(exc).__name__ + ("" if status is None else f" {status}")
-            rep.add(
-                "persistent volume", BLOCKED,
-                f"{WORKSPACE}, allocation check failed ({named})",
-                hint=("401 = key rejected, 403 = key lacks REST scope (a graphql-only key "
-                      "does), 404 = wrong volume id or the pod has no network volume. "
-                      "To proceed without the API, state the allocation yourself: "
-                      "export M2_VOLUME_GB=150 - used space is still measured. The "
-                      "filesystem's backing-pool free count is not a safe fallback."))
-            return
-        free_gb = max(0.0, allocated_gb - used_gb)
-        detail = (f"{WORKSPACE}, {free_gb:.0f} GB free "
-                  f"({used_gb:.0f}/{allocated_gb:.0f} GB allocation used)")
+        rep.add(
+            "persistent volume", BLOCKED,
+            f"{WORKSPACE}, allocation check failed ({api_failure})",
+            hint=("401 = key rejected, 403 = key lacks REST scope (a graphql-only key does), "
+                  "404 = wrong volume id or no network volume. Transient 429/5xx are retried "
+                  "already. To proceed without the API, state the allocation yourself: "
+                  "export M2_VOLUME_GB=150 - used space is still measured. The filesystem's "
+                  "backing-pool free count is not a safe fallback."))
+        return
     else:
         # Local disks expose their actual filesystem capacity. The special API path above is
         # only for RunPod network volumes, whose mount reports the distributed backing pool.

@@ -95,6 +95,10 @@ def test_runpod_volume_guard_uses_allocation_and_actually_blocks_low_space(
     monkeypatch.setattr(setup, "WORKSPACE", tmp_path)
     monkeypatch.setenv("RUNPOD_VOLUME_ID", "volume-test")
     monkeypatch.setenv("RUNPOD_API_KEY", "pod-scoped-test-key")
+    # Clear the operator override. Without this the test reads the ambient environment: a pod
+    # with M2_VOLUME_GB=150 exported made the low-space case report OK and the guard became
+    # exactly the un-failable check it was written to disprove.
+    monkeypatch.delenv("M2_VOLUME_GB", raising=False)
     monkeypatch.setattr(setup, "_runpod_volume_size_gb", lambda *_args, **_kw: 10.0)
     monkeypatch.setattr(setup, "_tree_allocated_gb", lambda _path: 9.0)
     monkeypatch.setattr(
@@ -109,6 +113,41 @@ def test_runpod_volume_guard_uses_allocation_and_actually_blocks_low_space(
     assert check.state == setup.BLOCKED
     assert "1 GB free" in check.detail
     assert "9/10 GB allocation used" in check.detail
+
+
+def test_declared_volume_is_a_fallback_and_still_blocks_low_space(tmp_path, monkeypatch):
+    """`M2_VOLUME_GB` must not become a way past the guard.
+
+    Two properties in one test, because they fail in opposite directions. It must not override
+    a working API reading - an operator's remembered number silently replacing the allocation
+    RunPod reports is worse than no override. And when it IS used, the used side is still walked,
+    so a nearly-full volume still blocks.
+    """
+    monkeypatch.setattr(setup, "WORKSPACE", tmp_path)
+    monkeypatch.setenv("RUNPOD_VOLUME_ID", "volume-test")
+    monkeypatch.setenv("RUNPOD_API_KEY", "pod-scoped-test-key")
+    monkeypatch.setenv("M2_VOLUME_GB", "150")
+    monkeypatch.setattr(setup, "_tree_allocated_gb", lambda _path: 9.0)
+
+    # The API works: it wins, and the declared 150 is ignored.
+    monkeypatch.setattr(setup, "_runpod_volume_size_gb", lambda *_a, **_kw: 10.0)
+    report = setup.Report()
+    setup.check_volume(report)
+    assert report.checks[-1].state == setup.BLOCKED
+    assert "9/10 GB allocation used" in report.checks[-1].detail
+
+    # The API cannot be read: the declared value carries the check rather than blocking it,
+    # and a low declared allocation still blocks.
+    def _boom(*_a, **_kw):
+        raise RuntimeError("unreachable")
+
+    monkeypatch.setattr(setup, "_runpod_volume_size_gb", _boom)
+    monkeypatch.setenv("M2_VOLUME_GB", "10")
+    report = setup.Report()
+    setup.check_volume(report)
+    assert report.checks[-1].state == setup.BLOCKED
+    assert "declared via M2_VOLUME_GB" in report.checks[-1].detail
+    assert "API unread" in report.checks[-1].detail
 
 
 def test_alpha_for_raises_above_ceiling_rather_than_clamping(run_ctx):

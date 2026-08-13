@@ -1373,3 +1373,37 @@ construction.
 
 **Result.** Silent? No — preflight stopped before measurement. The full offline suite passes 128
 tests with 2 environment-dependent skips.
+
+### 2026-08-13 — An operator override made the volume guard un-failable
+
+**Symptom.** `python -m m2.setup` on a pod with `M2_VOLUME_GB=150` exported reported
+`offline tests: 1 failed` —
+`test_runpod_volume_guard_uses_allocation_and_actually_blocks_low_space` asserted `BLOCKED` and
+got `OK`. Setup blocked the run, correctly.
+
+**Root cause.** Two defects in the same change, introduced hours earlier to get past a transient
+`HTTPError` from RunPod's allocation API. `M2_VOLUME_GB` was checked *before* the API rather than
+as a fallback, so a remembered number silently replaced an authoritative reading. And
+`check_volume` reads that variable from the real environment while the test never cleared it, so
+the low-space case the test exists to prove became unreachable whenever an operator exported the
+override.
+
+**Why nothing caught it.** It was caught, immediately, by the one test written to prove this guard
+can fail — the same test that exists because the original guard read a 500814 GB backing pool and
+could never fail. The gap is that the defect was introduced on a Windows checkout where the
+failing test still passed, because the override was not set there. **The test was environment-
+sensitive, so "the suite is green" meant "green on this machine's environment"** — which is the
+same class of defect as the guard it protects.
+
+**Fix.** The API is authoritative and tried first; `M2_VOLUME_GB` applies only when the API cannot
+be read, and says `API unread (...)` in the detail when it does. The guard test clears the
+variable. A second test asserts both directions: a working API beats a declared value, and a
+declared value still blocks on low free space. The API call is retried three times, since the
+original `HTTPError` proved transient — the identical request returned 200 from curl and urllib
+minutes later.
+
+**Check.** `M2_VOLUME_GB=150 python -m pytest m2/tests/test_offline.py` passes, and so does the
+suite with the variable unset. Both matter; only one was ever run before.
+
+**Result.** Silent? No — `check_tests` blocked the run on it, which is exactly the sequence that
+check was added for.
