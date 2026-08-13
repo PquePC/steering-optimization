@@ -1,6 +1,6 @@
 # 21 — Unified cell-level selection: eligibility, then the Pareto frontier
 
-**Status: BUILD NOW — PROPOSE FIRST.** Branch `pareto` only. This supersedes tasks
+**Status: DONE — `65141ea`.** Branch `pareto` only. This supersedes tasks
 [19](19-phase3-dose-selection.md) and [20](20-phase2-sanity-filter.md), which stay on `main` as the
 fallback. Propose the frontier-size and fill rules before writing code.
 

@@ -485,3 +485,44 @@ so its resolution is 1/12 = 0.083 and a third level resolves the dose finer than
 distinguish.
 
 **Result:** task 24; statuses updated on 08, 10, 15.
+
+## 2026-08-13 — Task 21 replaced layer routes with one cell-level Pareto search
+**By:** PquePC (design), Sol (execution)
+**Kind:** task complete
+
+Phase 2 now filters cells by reachability, `s3 >= S4_MIN` and `reach >= E6_FLOOR`, then selects
+the Pareto frontier on higher reach against lower `d3`. The Garlic fixture reproduces the four
+settled cells, and Phase 3 preserves their entering doses while mapping sanity boundaries as
+metadata. Gate 5's `d3`-against-`d2` rho is first in run output and records, and every per-cell
+record that has both values places `d3` beside `d2`.
+
+**Why:** the old layer routes discarded the dose that made L58 interesting and could display a
+low `d3` from a different, damaged dose. TODO item 15 makes Gate 5 the validity test for the whole
+frontier rather than a secondary table entry.
+**Result:** `65141ea`; Task 21 complete on `pareto`; 118 offline tests passed, 2 environment skips.
+
+## 2026-08-13 — Task 24 added the confirmed two-level SCAN knee search
+**By:** PquePC (depth and thresholds), Sol (execution)
+**Kind:** task complete
+
+SCAN now identifies the 0.30–0.60 transition band using `|Δreach| >= 0.20` or `|Δd3| >= 0.30`
+from a sane lower endpoint, then runs exactly two cheap bisection probes per band layer. The
+Garlic fixture selects 21 layers, so the opening prior and printed plan include 42 cells and
+about 7.6 minutes. Every new cell is written into `scan.jsonl` with knee depth, interval,
+direction and reason before Phase 2 reads the unified surface.
+
+**Why:** two levels resolve the 0.30 dose gap to 0.075, already finer than reach's 1/12 = 0.083
+resolution; a third level cannot be distinguished by the measure.
+**Result:** `e43faa8`; Task 24 complete on `pareto`; 122 offline tests passed, 2 environment skips.
+
+## 2026-08-13 — Task 15 landed in minimal portable form; the full task remains deferred
+**By:** PquePC (scope), Sol (execution)
+**Kind:** task complete
+
+R5 now passes only when the displayed reference-layer vector norm is finite and non-zero. The
+Gemma3-27B-specific 4664 ± 982 band is gone. The dimensionless ratio, behavioural check and
+per-model configuration remain deferred exactly as directed.
+
+**Why:** zero, NaN or infinity catches extraction returning no usable direction without adding a
+model-specific failure point to the run; R14 and the escalation ladder retain behavioural roles.
+**Result:** `2c46cd3`; Task 15 minimal scope complete on `pareto`; full suite 123 passed, 2 skips.

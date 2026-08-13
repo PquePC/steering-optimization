@@ -1,6 +1,6 @@
 # 24 — Bisect the dose gap during SCAN, before selection
 
-**Status: BUILD NOW.** Branch `pareto`. Runs as a SCAN extension, **before Phase 2**, not as a
+**Status: DONE — `e43faa8`.** Branch `pareto`. Runs as a SCAN extension, **before Phase 2**, not as a
 refinement of chosen cells. Measured cost on the shakedown shape: **~7.6 minutes per concept.**
 
 ## Why it must run before selection, not after

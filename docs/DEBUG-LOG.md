@@ -1205,3 +1205,66 @@ imports and then raises specifically from `LLMJudge`.
 
 **Result.** `d82c03a`. Silent? Yes — the skipped gate removed evidence from the run after the
 apparatus had been declared ready.
+
+### 2026-08-13 — Layer-level selection discarded the dose that made a cell useful
+
+**Symptom.** The shakedown selected L58 because of its r=0.30 proxy signature, then Phase 3 sent
+r=1.35—the highest sane dose—to VERIFY, where the layer was already saturated.
+
+**Root cause.** Phase 2 selected layers through independent routes, so dose was not part of a
+candidate's identity. Phase 3 consequently chose a new dose using sanity rather than preserving
+the measured `(layer, r)` trade-off.
+
+**Why nothing caught it.** Selection tests asserted layer membership and never supplied two
+non-dominated doses from the same layer or checked that Phase 3 returned the entering dose.
+
+**Fix.** Task 21 selects eligible cells directly on the reach-versus-`d3` Pareto frontier. Resume,
+tiering and Gate 6 all use canonical cell identities; Phase 3 maps the sanity boundary without
+replacing the selected dose. Gate 5 is surfaced first because TODO item 15 makes its rho the
+validity test for this frontier.
+
+**Test.** The committed Garlic surface yields exactly L52@0.60, L51@0.60, L58@0.30 and L57@0.30;
+two trade-off doses from one synthetic layer both survive, and a boundary above the seed cannot
+change the Phase 3 output dose.
+
+**Result.** `65141ea`. Silent? Yes—the old pipeline measured a real but different cell.
+
+### 2026-08-13 — The coarse scan grid could not select cells hidden inside its own gap
+
+**Symptom.** L45–L52 were healthy and inert at r=0.30, then alive and detectable at r=0.60. Any
+covert knee between them was absent from the surface and therefore impossible for Phase 2 to
+select or for post-selection refinement to visit.
+
+**Root cause.** Candidate generation and dose refinement were ordered circularly: only selected
+cells were refined, while selection itself depended on a three-dose grid.
+
+**Why nothing caught it.** Tests covered configured scan doses and post-selection bisection but
+did not construct a layer whose only eligible cell lay strictly between adjacent scan doses.
+
+**Fix.** Task 24 adds a two-level, cheap-only knee search inside SCAN. Its cells carry provenance
+and join `scan.jsonl` before selection. The cap is two because 0.075 dose resolution is already
+finer than reach's 1/12 = 0.083 measurement resolution.
+
+**Test.** The real fixture selects the confirmed 21-layer band; an insane midpoint must move down,
+a flat dead layer stays out, and a synthetic midpoint appears in Task 21's frontier.
+
+**Result.** `e43faa8`. Silent? Yes—the old grid reported absence where it had not sampled.
+
+### 2026-08-13 — R5 encoded one model's norm distribution as a universal rig check
+
+**Symptom.** A healthy vector from another architecture could fail R5 solely because its raw norm
+did not fall inside Gemma3-27B's published 4664 ± 982 population band.
+
+**Root cause.** A model- and depth-specific descriptive statistic was treated as a portable
+instrument invariant, although R5's actual role is only to catch extraction returning no vector.
+
+**Why nothing caught it.** Garlic's norm is 4054 and passes the old band, so every run on the one
+current model exercised only the agreeing case.
+
+**Fix.** Minimal Task 15 removes the population band. R5 now checks only that the displayed norm
+is finite and non-zero; all broader portability and behavioural additions remain deferred.
+
+**Test.** Zero, NaN, infinity and negative norms fail, while an arbitrarily small positive norm
+passes, proving no hidden lower band remains.
+
+**Result.** `2c46cd3`. Silent? Yes—a future model would have been rejected before measurement.

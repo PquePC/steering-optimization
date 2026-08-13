@@ -1,6 +1,6 @@
 # 15 — R5 does not port to another model
 
-**Status: BUILD NOW - MINIMAL ONLY.** Do the one-line version: **R5 checks the vector norm is
+**Status: DONE — MINIMAL ONLY — `2c46cd3`.** The one-line version is complete: **R5 checks the vector norm is
 non-zero and finite, and nothing else.** Drop the +/-2 sigma band against Macar's 4664 +/- 982.
 Everything below stays DEFERRED - the dimensionless ratio, the behavioural check, the per-model
 configuration. Rationale: the band is another failure point on a run that needs to reach the end,
