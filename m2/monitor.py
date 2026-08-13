@@ -667,7 +667,7 @@ PHASE_SECONDS_PRIOR: dict[str, float] = dict(
     # (2026-08-12 shakedown). Units must match the board counter beside every value.
     CAL=89.9,        # seconds per CONCEPT (one CAL unit), warm persistent volume. Prior 420.
     SCAN=10.9,       # seconds per (LAYER, DOSE) CELL; 147 cells in 26m46s. Prior 13.0.
-    SHORTLIST=0.0,   # free
+    SHORTLIST=13.0,  # seconds per D2_SELECT CELL; task 25 measured four n=5 cells in 57 s.
     BISECT=68.7,     # seconds per CANDIDATE; 8 candidates in 9m09s. Prior 100.0. A candidate
                      # is a bracket hunt plus BISECT_STEPS probes; the board does not count
                      # individual probes, so a per-probe prior would repeat the 12x unit bug.
@@ -693,11 +693,12 @@ PHASE_UNITS_PRIOR: dict[str, int] = dict(
     # These are priors and are replaced by the truth the moment each phase reports its plan
     # (`size_phase`), which for SCAN and VERIFY is before their first unit runs. The counts
     # below are the observed Garlic shape: 49 layers x 3 base doses plus Task 24's 21-layer,
-    # two-level knee search (147 + 42 = 189 SCAN CELLS), eight tier-0 cells plus
+    # two-level knee search (147 + 42 = 189 SCAN CELLS), at most 30 measured-D2 selection
+    # cells in the first eligibility pass, eight tier-0 cells plus
     # SHORTLIST_TIER_SIZE=3 mandatory audit cells, and refinement neighbours.
     # Units are stated because BISECT was once priced per probe while ticking per candidate:
     # BISECT=11 CANDIDATES; VERIFY=11 CELLS. The live plan replaces both before either starts.
-    CAL=1, SCAN=189, SHORTLIST=1, BISECT=11, VERIFY=11, REFINE=6, CONFIRM=1, CONTROLS=1,
+    CAL=1, SCAN=189, SHORTLIST=30, BISECT=11, VERIFY=11, REFINE=6, CONFIRM=1, CONTROLS=1,
 )
 
 # Spec 8, in order. `phases.phase5_refine` is REFINE and `phase6_confirm` is CONFIRM.
@@ -709,7 +710,8 @@ PHASE_ORDER: tuple[str, ...] = (
 # scan cell that comes back quickly is just a fast forward pass, whereas a verification cell
 # that comes back in a fifth of its prior means empty generations or a judge answering
 # instantly.
-_JUDGE_PHASES: frozenset[str] = frozenset({"CAL", "VERIFY", "REFINE", "CONFIRM", "CONTROLS"})
+_JUDGE_PHASES: frozenset[str] = frozenset(
+    {"CAL", "SHORTLIST", "VERIFY", "REFINE", "CONFIRM", "CONTROLS"})
 
 _FINISHED_STATES: frozenset[str] = frozenset({"done", "failed", "skipped"})
 
@@ -747,7 +749,7 @@ def verdict_detail(status: "RunStatus") -> tuple[str, list[str]]:
 
     # --- rule 1: stall -> stop --------------------------------------------------------
     # Six times that phase's own per-unit time, floored at three minutes so a cheap phase's
-    # setup cost cannot trip it. SHORTLIST's prior is 0.0, so the floor is what applies.
+    # setup cost cannot trip it.
     if running:
         phase = running[0]
         rate, _ = status.rate(phase)

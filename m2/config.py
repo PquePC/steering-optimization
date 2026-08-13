@@ -95,10 +95,25 @@ CONSTANTS: dict = {
 
     # --- Phases 2 and 3 ---------------------------------------------------------------
 
+    # Phase 2 selection measures real D2 on five forced-ID trials per eligible cell. Task 25
+    # priced that at about 13 seconds per cell; five is screening resolution, while Phase 4
+    # still re-measures shortlisted cells at N_D2=25.
+    "D2_SELECT_N": 5,
+
+    # Cost cap per eligibility pass. Thirty cells x five trials is 150 judge calls, the upper
+    # end of task 26's measured 4-7 minute budget. If a pass contains more, Phase 2 samples
+    # evenly across reach and names every omitted cell; a silent cap would look like evidence.
+    "D2_SELECT_MAX": 30,
+
+    # Reach is k/12, not continuous. Phase 2 begins at 3/12, relaxes to 2/12 only if measured
+    # D2 leaves no selectable cell, and measures 1/12 only as report-only near-misses. The last
+    # tier can never produce a candidate because its Wilson interval is too wide to evidence
+    # influence.
+    "D2_SELECT_REACH_COUNTS": (3, 2, 1),
+
     # (min, max) target size of the Phase 2 shortlist, in CELLS. Phase 2 first keeps the
-    # complete reach-vs-d3 Pareto frontier, fills toward the lower bound with the nearest
-    # dominated eligible cells, and caps only when the frontier exceeds the upper bound.
-    # Raise the band if gate 5 (d3 vs d2) fails and the scan loses its detection axis.
+    # complete reach-vs-measured-D2 Pareto frontier, then fills toward the lower bound with
+    # the nearest dominated eligible cells. D3 remains visible but never ranks selection.
     "SHORTLIST_N": (8, 12),
 
     # Number of near-miss CELLS per tier beyond tier 0. Tier 1 is always paid as the
@@ -165,8 +180,9 @@ CONSTANTS: dict = {
 
     # --- D3, the cheap detection proxy (spec 5.3) ------------------------------------
 
-    # Gate 5: D3 must reach this Spearman rho against real D2 or Phase 1 loses its
-    # detection axis and must shortlist on E6 alone with a raised SHORTLIST_N.
+    # Gate 5: D3 must reach this Spearman rho against real D2. Task 26 removed D3 from
+    # selection after task 25 proved it measured preamble skipping, so failure is now a
+    # reported finding about the scan proxy rather than a runtime shortlist mutation.
     "D3_MIN_RHO": 0.70,
 
     # Concept mass above which a D3 trial counts toward `d3_rate`, the rate-shaped

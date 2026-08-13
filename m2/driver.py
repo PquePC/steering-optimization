@@ -84,6 +84,7 @@ SCAN_FILE = "scan.jsonl"
 # that afterwards is the point.
 PROVENANCE_FILE = "provenance.jsonl"
 SHORTLIST_FILE = "shortlist.json"
+SELECTION_D2_FILE = "selection_d2.jsonl"
 BISECT_FILE = "bisect.jsonl"
 VERIFIED_FILE = "verified.jsonl"
 CONFIRM_FILE = "confirm.jsonl"
@@ -851,7 +852,9 @@ def run_concept(name: str, *, notifier: Any = None, wipe: bool = True, deliver: 
 
     # ---- Phase 2
     ok_short, tier_plan = state.phase(
-        "SHORTLIST", lambda: _phases().phase2_shortlist(scan_rows), units=1)
+        "SHORTLIST", lambda: _phases().phase2_shortlist(
+            scan_rows, on_cell=state.tick("SHORTLIST"), on_plan=state.plan("SHORTLIST")),
+        self_reporting=True)
     candidates = (tier_plan.get("candidates", [])
                   if isinstance(tier_plan, dict) else [])
     if ok_short and candidates:
@@ -859,6 +862,8 @@ def run_concept(name: str, *, notifier: Any = None, wipe: bool = True, deliver: 
         span = f"L{layers[0]}-L{layers[-1]}" if layers else "no layer field"
         _notify(notifier, board, "Phase 2 shortlist chosen",
                 f"{len(candidates)} tier-0 cells, {span}; "
+                f"eligibility tier {tier_plan['eligibility_tier']} "
+                f"({tier_plan['eligibility_reach_count']}/{tier_plan['eligibility_reach_n']}); "
                 f"{tier_plan['n_rejected_live']} Pareto near-miss cells available for audit")
 
     # ---- Phases 3/4, tiered. Bisection and verification are intentionally interleaved.
@@ -1122,7 +1127,7 @@ def run_concept(name: str, *, notifier: Any = None, wipe: bool = True, deliver: 
                    if isinstance(gate_report, dict) else None)
     if isinstance(gate5_first, dict):
         rho = gate5_first.get("axis_rho")
-        runio.log(f"GATE 5 FIRST - frontier validity: d3 vs d2 rho={rho}; "
+        runio.log(f"GATE 5 FIRST - d3 proxy validity finding: d3 vs d2 rho={rho}; "
                   f"passed={gate5_first.get('passed')}")
 
     # ---- The answer. Written whether or not a cell qualified: "no operating point exists at
@@ -1133,6 +1138,14 @@ def run_concept(name: str, *, notifier: Any = None, wipe: bool = True, deliver: 
     payload.update(
         concept=concept,
         found=bool(winner is not None),
+        eligibility_tier=(tier_plan.get("eligibility_tier")
+                          if isinstance(tier_plan, dict) else None),
+        eligibility_reach_count=(tier_plan.get("eligibility_reach_count")
+                                 if isinstance(tier_plan, dict) else None),
+        eligibility_reach_n=(tier_plan.get("eligibility_reach_n")
+                             if isinstance(tier_plan, dict) else None),
+        eligibility_report_only=(tier_plan.get("eligibility_report_only")
+                                 if isinstance(tier_plan, dict) else None),
         selection=selection if isinstance(selection, dict) else None,
         frontier=front if isinstance(front, list) else [],
         covertness_margin=margins if isinstance(margins, list) else [],
@@ -1167,6 +1180,10 @@ def run_concept(name: str, *, notifier: Any = None, wipe: bool = True, deliver: 
 def _one_line(point: dict) -> str:
     """One readable line for the phone: (L, alpha, r), E5, D2, sanity, control verdicts."""
     bits = []
+    if point.get("eligibility_tier") is not None:
+        count = point.get("eligibility_reach_count")
+        n = point.get("eligibility_reach_n")
+        bits.append(f"eligibility tier {point['eligibility_tier']} ({count}/{n})")
     for key, fmt in (("layer", "L{}"), ("alpha", "alpha={:.3f}"), ("r", "r={:.3f}"),
                      ("e5", "E5={:.2f}"), ("d2", "D2={:.2f}"), ("s4", "S4={:.2f}")):
         if key in point and point[key] is not None:
@@ -1190,7 +1207,8 @@ def _resume_banner() -> None:
     log. Cheap to print, and it names the exact files spec 14.8 resumes from.
     """
     counts = []
-    for name in (SCAN_FILE, BISECT_FILE, VERIFIED_FILE, CONFIRM_FILE, CONTROLS_FILE):
+    for name in (SCAN_FILE, SELECTION_D2_FILE, BISECT_FILE, VERIFIED_FILE,
+                 CONFIRM_FILE, CONTROLS_FILE):
         try:
             n = len(runio.rows_for_run(name))
         except Exception:                               # noqa: BLE001 - a banner must not fail

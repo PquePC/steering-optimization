@@ -728,6 +728,8 @@ def test_operating_point_and_frontier_keep_rate_intervals_and_e5_se(run_ctx, tmp
         d2_null=0.04, d2_null_ci_low=0.01, d2_null_ci_high=0.20, d2_null_n=25,
         s2_ci_low=0.76, s2_ci_high=1.0, s2_n=12,
         s3_acc=0.80, s3_acc_ci_low=0.68, s3_acc_ci_high=0.88, s3_n=57,
+        s2_forced=1.0, eligibility_tier=1,
+        eligibility_reach_count=2, eligibility_reach_n=12,
         s4_term="S1", d4={}, d4_reading="retrieval", resid=0.0,
     )
     selection = phases.select_operating_point([row])
@@ -741,6 +743,9 @@ def test_operating_point_and_frontier_keep_rate_intervals_and_e5_se(run_ctx, tmp
     assert front["s2_ci_low"] == 0.76 and front["s2_n"] == 12
     assert front["s3_acc_ci_high"] == 0.88 and front["s3_n"] == 57
     assert screening["e5_se"] == 0.35
+    assert screening["s2_forced"] == 1.0
+    assert payload["operating_point"]["eligibility_tier"] == 1
+    assert payload["operating_point"]["eligibility_reach_count"] == 2
     assert "e5_ci_low" not in screening and "e5_ci_low" not in front
 
 
@@ -928,8 +933,9 @@ def test_phase_priors_cover_every_phase_and_price_verify_highest():
     # invariant - measurement put SCAN at 13 s against VERIFY's 50 s prior and the assertion
     # failed on correct data. Assert the ordering that is actually load-bearing.
     assert prior["VERIFY"] > prior["SCAN"]
-    assert prior["SHORTLIST"] == 0.0
+    assert prior["SHORTLIST"] == pytest.approx(13.0)  # seconds per measured D2 selection cell
     assert all(v >= 0.0 for v in prior.values())
+    assert monitor.PHASE_UNITS_PRIOR["SHORTLIST"] == config.CONFIG["D2_SELECT_MAX"]
     assert monitor.PHASE_UNITS_PRIOR["BISECT"] == 11  # candidates, incl. audit tier
     assert monitor.PHASE_UNITS_PRIOR["VERIFY"] == 11  # cells, incl. audit tier
 
@@ -1426,58 +1432,163 @@ def test_task21_tier_ordering_is_fixed_to_pareto_distance():
     assert phases._tier_config(cfg)["tier_order"] == "pareto_distance"
 
 
-def test_task21_real_garlic_scan_reproduces_the_four_cell_frontier(capsys):
+def _fake_selection_d2(values=None, *, collapsed=()):
+    values = {} if values is None else dict(values)
+    collapsed = set(collapsed)
+
+    def measure(row, n):
+        key = (int(row["layer"]), round(float(row["r"]), 6))
+        d2 = float(values.get(key, 0.0))
+        hits = int(round(d2 * n))
+        low, high = cheap.wilson_interval(hits, n)
+        normal = ("This is a complete and ordinary response with enough distinct words to "
+                  "remain structurally healthy throughout the forced identification trial.")
+        looping = "garlic " * 60
+        responses = [looping if key in collapsed else normal for _ in range(n)]
+        return dict(
+            d2=d2, d2_se=math.sqrt(d2 * (1.0 - d2) / n),
+            d2_ci_low=low, d2_ci_high=high, n_d2=n, d2_identified=hits,
+            d2_judge_errors=0, d2_judge_error_detail=[], d2_n_generated=n,
+            responses=responses)
+    return measure
+
+
+def test_task26_task25_cells_cannot_reach_frontier_on_low_d3(capsys):
     fixture = Path(__file__).parent / "fixtures" / "garlic_shakedown_scan.jsonl"
     rows = [json.loads(line) for line in fixture.read_text(encoding="utf-8").splitlines()]
-    result = phases.phase2_shortlist(rows, write=False)
+    wanted = {(57, 0.30), (58, 0.30), (59, 0.30), (52, 0.60)}
+    rows = [row for row in rows if (row["layer"], round(row["r"], 2)) in wanted]
+    measured = {key: 1.0 for key in wanted}
+    result = phases.phase2_shortlist(
+        rows, write=False, measure_cell=_fake_selection_d2(measured))
 
-    got = {(row["layer"], round(row["r"], 2)) for row in result["frontier"]}
-    assert got == {(52, 0.60), (51, 0.60), (58, 0.30), (57, 0.30)}
-    assert result["n_cells_scanned"] == 147
-    assert result["n_cells_reachable"] == 130
-    assert result["n_cells_eligible"] == 19
-    assert result["detection_axis"] == "d3"
-
-    # Each displayed metric must come from the selected cell, not from different doses on
-    # the same layer as the old `_by_layer` table did.
-    source = {(row["layer"], round(row["r"], 6)): row for row in rows}
-    for frontier_cell in result["frontier"]:
-        raw = source[(frontier_cell["layer"], round(frontier_cell["r"], 6))]
-        assert frontier_cell["d3_rank_med"] == raw["d3_rank_med"]
-    for candidate in result["candidates"]:
-        raw = source[(candidate["layer"], round(candidate["r"], 6))]
-        assert candidate["reach"] == raw["reach"]
-        assert candidate["d3"] == raw["d3"]
-        assert candidate["d3_rank_med"] == raw["d3_rank_med"]
-        assert candidate["s3"] == raw["s3"]
-        assert candidate["why"]
-
-    table = capsys.readouterr().out
-    assert "d3 rank" in table
-    assert "L57@0.300" in table and "        2" in table
-
-    excluded = {row["layer"]: row for row in result["excluded_layers"]}
-    assert 37 in excluded and 18 in excluded
-    assert {cell["r"] for cell in excluded[37]["cells"]} == {0.15, 0.30, 0.60}
-    assert all("reach" in cell and "s3" in cell for cell in excluded[37]["cells"])
-    assert any(row["layer"] == 56 and row["r"] == 0.30
-               and row["kind"] == "below_reach_floor"
-               for row in result["near_misses"])
+    assert result["detection_axis"] == "d2_measured"
+    assert result["frontier"] == []
+    assert result["candidates"] == []
+    assert result["n_cells_d2_measured"] == 4
+    assert all(row["kind"] == "d2_above_D2_MAX" for row in result["near_misses"])
+    low_d3 = {(row["layer"], round(row["r"], 2)): row for row in result["near_misses"]}
+    assert low_d3[(57, 0.30)]["d3"] < 0.01 and low_d3[(57, 0.30)]["d2"] == 1.0
+    assert low_d3[(58, 0.30)]["d3"] < 0.03 and low_d3[(58, 0.30)]["d2"] == 1.0
+    assert "tier 2" in capsys.readouterr().out
 
 
-def test_task21_keeps_two_tradeoff_doses_from_the_same_layer():
+def test_task26_keeps_two_measured_tradeoff_doses_from_the_same_layer():
     rows = [
-        dict(layer=10, r=0.30, reachable=True, reach=0.40, d3=0.10,
-             d3_rate=0.0, s3=0.95, alpha=1.0),
-        dict(layer=10, r=0.60, reachable=True, reach=0.80, d3=0.60,
-             d3_rate=1.0, s3=0.95, alpha=2.0),
-        dict(layer=11, r=0.30, reachable=True, reach=0.30, d3=0.30,
-             d3_rate=1.0, s3=0.95, alpha=1.0),
+        dict(layer=10, r=0.30, reachable=True, reach=5 / 12, d3=0.10,
+             reach_n=12, d3_rate=0.0, s3=0.95, alpha=1.0),
+        dict(layer=10, r=0.60, reachable=True, reach=10 / 12, d3=0.60,
+             reach_n=12, d3_rate=1.0, s3=0.95, alpha=2.0),
+        dict(layer=11, r=0.30, reachable=True, reach=4 / 12, d3=0.30,
+             reach_n=12, d3_rate=1.0, s3=0.95, alpha=1.0),
     ]
-    result = phases.phase2_shortlist(rows, write=False)
+    d2 = {(10, 0.30): 0.0, (10, 0.60): 0.4, (11, 0.30): 0.2}
+    result = phases.phase2_shortlist(
+        rows, write=False, measure_cell=_fake_selection_d2(d2))
     frontier = {(row["layer"], row["r"]) for row in result["frontier"]}
     assert (10, 0.30) in frontier and (10, 0.60) in frontier
     assert (11, 0.30) not in frontier
+
+
+def _task26_scan_row(layer, reach_count, *, r=0.30, d3=0.1, s3=0.95):
+    return dict(layer=layer, r=r, reachable=True, reach=reach_count / 12,
+                reach_n=12, d3=d3, d3_rate=0.0, d3_rank_med=2,
+                s2=None, s2_n=None, s2_ci_low=None, s2_ci_high=None,
+                s3=s3, alpha=1.0)
+
+
+def test_task26_relaxes_by_reach_count_and_never_remeasures():
+    rows = [_task26_scan_row(50, 3), _task26_scan_row(51, 2),
+            _task26_scan_row(52, 1)]
+    values = {(50, 0.30): 1.0, (51, 0.30): 0.2, (52, 0.30): 0.0}
+    calls = []
+    base = _fake_selection_d2(values)
+
+    def measured(row, n):
+        calls.append((row["layer"], row["r"]))
+        return base(row, n)
+
+    result = phases.phase2_shortlist(rows, write=False, measure_cell=measured)
+    assert result["eligibility_tier"] == 1
+    assert result["eligibility_reach_count"] == 2
+    assert {(row["layer"], row["r"]) for row in result["frontier"]} == {(51, 0.30)}
+    assert calls == [(50, 0.30), (51, 0.30)]
+    assert any(row["layer"] == 52 and row["kind"] == "lower_reach_tier_not_needed"
+               for row in result["near_misses"])
+
+
+def test_task26_resume_reuses_paid_d2_and_persists_no_response_text(run_ctx, tmp_path):
+    ctx = run_ctx(run_dir=tmp_path)
+    ctx.mw = object()
+    rows = [_task26_scan_row(50, 3)]
+    first = phases.phase2_shortlist(
+        rows, write=True, measure_cell=_fake_selection_d2({(50, 0.30): 0.2}))
+    assert first["frontier"][0]["d2"] == 0.2
+
+    def must_not_measure(_row, _n):
+        raise AssertionError("a resumed selection cell was measured twice")
+
+    resumed = phases.phase2_shortlist(rows, write=True, measure_cell=must_not_measure)
+    assert resumed["frontier"][0]["d2"] == 0.2
+    saved = (tmp_path / phases.SELECTION_D2_FILE).read_text(encoding="utf-8")
+    assert '"responses"' not in saved, "selection resume stores scalars, not generations"
+
+
+def test_task26_tier2_is_report_only_even_when_d2_is_low():
+    rows = [_task26_scan_row(50, 3), _task26_scan_row(51, 2),
+            _task26_scan_row(52, 1)]
+    values = {(50, 0.30): 1.0, (51, 0.30): 1.0, (52, 0.30): 0.0}
+    result = phases.phase2_shortlist(
+        rows, write=False, measure_cell=_fake_selection_d2(values))
+    assert result["eligibility_tier"] == 2
+    assert result["eligibility_report_only"] is True
+    assert result["frontier"] == [] and result["candidates"] == []
+    tier2 = next(row for row in result["near_misses"] if row["layer"] == 52)
+    assert tier2["kind"] == "report_only_reach_1_of_12"
+    assert tier2["d2"] == 0.0
+
+
+def test_task26_forced_s2_rejects_looping_without_becoming_canonical_s2():
+    rows = [_task26_scan_row(58, 5, d3=0.02),
+            _task26_scan_row(59, 6, d3=1.0)]
+    values = {(58, 0.30): 0.0, (59, 0.30): 0.2}
+    result = phases.phase2_shortlist(
+        rows, write=False,
+        measure_cell=_fake_selection_d2(values, collapsed={(58, 0.30)}))
+    assert {(row["layer"], row["r"]) for row in result["frontier"]} == {(59, 0.30)}
+    rejected = next(row for row in result["near_misses"] if row["layer"] == 58)
+    assert rejected["kind"] == "s2_forced_below_S4_MIN"
+    assert rejected["s2_forced"] == 0.0
+    assert all("s2" not in row for row in result["candidates"])
+    assert result["candidates"][0]["s2_forced"] == 1.0
+
+
+def test_task26_cap_names_every_unmeasured_cell(monkeypatch, capsys):
+    monkeypatch.setitem(config.CONFIG, "D2_SELECT_MAX", 2)
+    rows = [_task26_scan_row(40 + i, count) for i, count in enumerate((3, 4, 8, 12))]
+    result = phases.phase2_shortlist(
+        rows, write=False, measure_cell=_fake_selection_d2())
+    omitted = {(row["layer"], row["r"]) for row in result["d2_measurement_omissions"]}
+    assert omitted == {(41, 0.30), (42, 0.30)}
+    output = capsys.readouterr().out
+    assert "DROPPED L41@0.300" in output and "DROPPED L42@0.300" in output
+    assert "D2_SELECT_MAX=2" in output
+
+
+def test_task26_reach_count_guard_actually_trips():
+    with pytest.raises(ValueError, match="not k/12"):
+        phases._reach_count(dict(layer=1, r=0.3, reach=0.20, reach_n=12))
+
+
+@pytest.mark.parametrize(("key", "value", "message"), [
+    ("D2_SELECT_REACH_COUNTS", (3, 1), "settled"),
+    ("D2_SELECT_N", 0, "positive"),
+    ("D2_SELECT_MAX", 1, "MAX>=2"),
+])
+def test_task26_config_guards_actually_trip(monkeypatch, key, value, message):
+    monkeypatch.setitem(config.CONFIG, key, value)
+    with pytest.raises(ValueError, match=message):
+        phases.phase2_shortlist([], write=False, measure_cell=_fake_selection_d2())
 
 
 def test_task21_phase3_maps_sanity_without_replacing_the_selected_dose(
@@ -1491,7 +1602,7 @@ def test_task21_phase3_maps_sanity_without_replacing_the_selected_dose(
             sane = float(r) < 0.40
             cache[key] = dict(layer=layer, r=float(r), reachable=True, alpha=float(r),
                               s3=0.95 if sane else 0.50,
-                              reach=0.40 if sane else 0.0, d3=0.05)
+                              reach=5 / 12 if sane else 0.0, reach_n=12, d3=0.05)
         return cache[key]
 
     monkeypatch.setattr(phases, "_probe", fake_probe)
@@ -1549,17 +1660,17 @@ def test_task24_knee_cells_join_scan_and_are_visible_to_phase2(
     ctx.mw = object()
     rows = [
         dict(phase="SCAN", layer=50, r=0.30, reachable=True, reach=0.0, d3=0.0,
-             d3_rate=0.0, s3=0.95, alpha=1.0),
+             reach_n=12, d3_rate=0.0, s3=0.95, alpha=1.0),
         dict(phase="SCAN", layer=50, r=0.60, reachable=True, reach=0.50, d3=0.80,
-             d3_rate=1.0, s3=0.95, alpha=2.0),
+             reach_n=12, d3_rate=1.0, s3=0.95, alpha=2.0),
     ]
 
     def fake_scan(layer, r):
         if r < 0.50:
             return dict(phase="SCAN", layer=layer, r=r, reachable=True, reach=0.25,
-                        d3=0.05, d3_rate=0.0, s3=0.95, alpha=r * 3)
+                        reach_n=12, d3=0.05, d3_rate=0.0, s3=0.95, alpha=r * 3)
         return dict(phase="SCAN", layer=layer, r=r, reachable=True, reach=0.50,
-                    d3=0.40, d3_rate=1.0, s3=0.95, alpha=r * 3)
+                    reach_n=12, d3=0.40, d3_rate=1.0, s3=0.95, alpha=r * 3)
 
     monkeypatch.setattr(cheap, "scan_cell", fake_scan)
     plans, ticks = [], []
@@ -1573,9 +1684,14 @@ def test_task24_knee_cells_join_scan_and_are_visible_to_phase2(
     output = capsys.readouterr().out
     assert "per level" in output and "depth: 2" in output
 
-    shortlist = phases.phase2_shortlist(got, write=False)
-    assert any(row["layer"] == 50 and row["r"] == pytest.approx(0.45)
-               for row in shortlist["frontier"])
+    shortlist = phases.phase2_shortlist(
+        got, write=False, measure_cell=_fake_selection_d2())
+    # The knee cell survives into Phase 2's candidate set.  Equal measured d2 makes
+    # the higher-reach cell dominate it mathematically, so it is an explicit fill
+    # rather than falsely labelled as part of the Pareto frontier.
+    knee_candidate = next(row for row in shortlist["candidates"]
+                          if row["layer"] == 50 and row["r"] == pytest.approx(0.45))
+    assert knee_candidate["selection_kind"] == "filled"
 
 
 def test_task15_r5_fails_zero_and_nonfinite_but_has_no_model_specific_band():
@@ -1600,7 +1716,7 @@ def test_task15_r5_fails_zero_and_nonfinite_but_has_no_model_specific_band():
     assert verdict(4054.0, 37)[0] is True
 
 
-def test_task21_gate5_cannot_substitute_d3_rate_for_the_d3_axis(monkeypatch):
+def test_task26_gate5_cannot_substitute_d3_rate_for_the_d3_proxy(monkeypatch):
     rows = [dict(layer=i, alpha=float(i), d2=i / 9, usable=True) for i in range(10)]
 
     def fake_d3(_layer, alpha):
@@ -1614,6 +1730,25 @@ def test_task21_gate5_cannot_substitute_d3_rate_for_the_d3_axis(monkeypatch):
     assert result["rhos"]["mass"] < 0.0 and result["rhos"][result["best"]] > 0.99
     assert result["passed"] is False, "the treatment and diagnostic must not be confused"
     assert gates._ACCEPTANCE[0][0] == 5, "gate 5 rho must be first in the report"
+
+
+def test_task26_gate5_failure_is_a_finding_not_a_selection_mutation(monkeypatch):
+    result = dict(axis="mass", rhos={"mass": -1.0, "rate@0.1": 1.0}, best="rate@0.1",
+                  min_rho=0.70, n=4, passed=False)
+    fake_cheap = SimpleNamespace(validate_d3=lambda _rows: result)
+    written = {}
+    monkeypatch.setattr(gates, "_model_ready", lambda: True)
+    monkeypatch.setattr(gates, "_mod", lambda name: fake_cheap if name == "cheap" else None)
+    monkeypatch.setattr(gates, "_write_run_json", lambda name, payload: written.update(
+        name=name, payload=payload))
+    gates.gates_reset()
+
+    reading = gates.gate5_d3_vs_d2(rows=[dict(layer=57, d2=1.0)])
+    assert reading["passed"] is False and reading["skipped"] is False
+    consequence = reading["consequence"]
+    assert consequence["selection_impact"] == "none; Phase 2 ranks on measured d2"
+    assert "shortlist_on" not in consequence and "shortlist_n_raised" not in consequence
+    assert written["name"] == "gate5_d3.json"
 
 
 def _gate6_row(layer, tier, e5, qualifies, *, source=None):

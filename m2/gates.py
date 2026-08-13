@@ -1453,13 +1453,10 @@ def _s1_over_stored(concept: str, responses: Sequence[str], *, layer: int,
 def gate5_d3_vs_d2(*, rows: Sequence[dict] | None = None) -> dict:
     """Spec 10 gate 5. `cheap.validate_d3` must reach Spearman rho >= `D3_MIN_RHO`.
 
-    **On failure the run continues.** Spec 5.3 names the consequence exactly: Phase 1 loses
-    its detection axis, so the shortlist is built on E6 alone and `SHORTLIST_N` is raised.
-    That consequence is recorded here and returned; it is NOT applied by mutating CONFIG,
-    because CONFIG is what `config_hash` and therefore the run folder are computed from, and
-    editing it mid-run would move the run to a different folder and abandon every row
-    already written. `phases` cannot import `gates` either (layout order), so the driver is
-    what reads `gate5_d3.json` and acts on it.
+    **On failure the run continues and reports a finding.** Task 26 removed D3 from the
+    frontier after task 25 proved it measured preamble skipping. Phase 2 already selects on
+    measured D2, so failing this gate requires no runtime mutation and must not be smoothed
+    over by substituting d3_rate.
     """
     name = "gate 5 D3 vs real D2"
     if not _model_ready():
@@ -1497,26 +1494,19 @@ def gate5_d3_vs_d2(*, rows: Sequence[dict] | None = None) -> dict:
     axis_rho = float(result["rhos"][axis])
     ok = gate(name, bool(result["passed"]),
               f"d3 {axis} rho {axis_rho:.3f} against d2, threshold "
-              f"{result['min_rho']:g}, over {result['n']} cells. This is the axis used by "
-              "the Task 21 frontier; the best alternate rho is diagnostic only")
+              f"{result['min_rho']:g}, over {result['n']} cells. Phase 2 uses measured d2; "
+              "the best alternate d3 view is diagnostic only")
     consequence = None
     if not ok:
-        lo, hi = tuple(_cfg("SHORTLIST_N"))
         consequence = dict(
             d3_axis_usable=False,
-            shortlist_on="E6 alone",
-            shortlist_n_current=[int(lo), int(hi)],
-            shortlist_n_raised=[int(lo) * 2, int(hi) * 2],
-            reason=(f"gate 5 failed for d3 {axis} at rho {axis_rho:.3f}; spec 5.3 "
-                    "requires the shortlist to be built on E6 alone with a raised "
-                    "SHORTLIST_N. Recall dominates precision (Pipeline Plan 1.1), so the "
-                    "response to losing an axis is a wider shortlist, not a narrower one"),
+            selection_impact="none; Phase 2 ranks on measured d2",
+            finding=(f"d3 {axis} does not track real d2 at rho {axis_rho:.3f}; d3 remains "
+                     "a recorded scan-shape signal only"),
         )
-        print("   CONSEQUENCE RECORDED - the run continues:")
-        for line in (f"shortlist on {consequence['shortlist_on']}",
-                     f"SHORTLIST_N {consequence['shortlist_n_current']} -> "
-                     f"{consequence['shortlist_n_raised']}"):
-            print(f"     {line}")
+        print("   EXPECTED FAILURE RECORDED AS A FINDING - the run continues:")
+        print(f"     {consequence['finding']}")
+        print(f"     {consequence['selection_impact']}")
         _write_run_json("gate5_d3.json", consequence)
 
     return dict(gate=name, passed=ok, skipped=False, source=source,
@@ -2673,10 +2663,10 @@ def _write_run_json(name: str, payload: Any) -> Path | None:
         return None
 
 
-# TODO 15 makes gate 5 the first result a reader must see: it decides whether Task 21's d3
-# frontier is a real search surface. The remaining gates retain spec section 10's order.
+# Gate 5 remains first because task 25 found D3 inverted. It now characterises the failed
+# proxy; task 26's frontier itself uses measured D2. The remaining gates keep their order.
 _ACCEPTANCE: tuple[tuple[int, str, Any, bool], ...] = (
-    (5,  "D2-lite vs D2 - FRONTIER VALIDITY", gate5_d3_vs_d2,                False),
+    (5,  "D2-lite vs D2 - PROXY FINDING", gate5_d3_vs_d2,                   False),
     (1,  "Judge E5 vs hand labels",   gate1_judge_e5_vs_hand_labels, True),
     (2,  "E5/S1 independence",        gate2_e5_s1_independence,      False),
     (3,  "Judge E5 FPR",              gate3_judge_e5_fpr,            True),
@@ -2707,8 +2697,8 @@ def run_acceptance_gates(*, allow_judge_calls: bool = True,
     rest -- with no network at all.
 
     **A failure here is not automatically fatal, and the driver decides.** Gate 5 failing
-    costs Phase 1 its detection axis and the run continues with the consequence written to
-    `gate5_d3.json`; gate 3 failing means every E5 in the run sits on a judge-invented
+    records that d3 does not track d2; selection is unaffected because it already used
+    measured d2. Gate 3 failing means every E5 in the run sits on a judge-invented
     floor and should stop it. The verdict rules are spec 14.6's, and they live in `monitor`.
     """
     if reset:
@@ -2718,7 +2708,8 @@ def run_acceptance_gates(*, allow_judge_calls: bool = True,
     print("=" * 78)
     print("ACCEPTANCE GATES - spec section 10, gates 1-10, plus gate 11 (an addition)")
     print("=" * 78)
-    print("GATE 5 IS FIRST: its d3-vs-d2 rho decides whether the Pareto frontier is real.")
+    print("GATE 5 IS FIRST: its d3-vs-d2 rho reports whether the scan proxy tracks detection; "
+          "the frontier already uses measured d2.")
     concept = _concept_ready()
     print(f"concept {concept or '<unset>'} | model {'loaded' if _model_ready() else 'NOT '
           'loaded'} | judge calls {'allowed' if allow_judge_calls else 'DISABLED'}")

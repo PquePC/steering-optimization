@@ -13,10 +13,10 @@ the thing M2 buys over v1 - stops being affordable.
   scan_cell    one scan.jsonl row: E6 + D3 + S3 + norms              (CONTRACT section 4)
 
 Two of these are proxies and are NOT interchangeable with the metrics they stand in for. E6
-shortlists layers and is never reported as effectiveness; D3 is gated on `validate_d3` reaching
-Spearman rho >= D3_MIN_RHO against real D2 (gate 5), and if it fails, Phase 1 loses its
-detection axis and must shortlist on E6 alone. S2 and S3 are not proxies - they are the real
-sanity terms and enter `S4 = min(S1, S2, S3)` directly.
+shortlists layers and is never reported as effectiveness; D3 is gated on `validate_d3` against
+real D2. Task 26 removed D3 from selection after task 25 proved it read preamble skipping rather
+than D2, so a failed gate 5 is a finding about the scan proxy, not a shortlist mutation. S2 and
+S3 are not proxies - they are the real sanity terms and enter `S4 = min(S1, S2, S3)` directly.
 
 Import order (CONTRACT section 1): cheap.py may use config, model, vectors and prompts. It uses
 `vectors` lazily, inside the functions that need it, because `m2.vectors` imports torch at
@@ -319,8 +319,8 @@ def measure_E6(layer: int, alpha: float) -> dict:
 #     confound for both and is why the spec 9.2 forced-ID capability control exists.
 #
 # None of that is a reason to skip validation. Gate 5 runs `validate_d3` against real D2 and
-# needs Spearman rho >= D3_MIN_RHO; below that, Phase 1 loses its detection axis and must
-# shortlist on E6 alone with a raised SHORTLIST_N (spec 5.3).
+# needs Spearman rho >= D3_MIN_RHO. Task 26 makes failure a reported proxy finding because
+# Phase 2 already selects on measured D2.
 
 # Read the concept at the position right after "...The thought is about". Allowing one filler
 # token catches "The thought is about the velocity of..." without opening the window so wide
@@ -568,9 +568,9 @@ def validate_d3(rows: Sequence[dict], cells: Iterable[tuple] | None = None,
     }
     rhos = {k: _spearman(v, d2) for k, v in variants.items()}
     best = max(rhos, key=lambda k: rhos[k])
-    # Task 21 fixes the selection axis before the run: continuous d3 mass. d3_rate is nearly
-    # binary on the Garlic surface and cannot replace it merely because it happens to win on
-    # one small verified sample. Report every rho, but gate the axis the frontier actually used.
+    # D3 mass remains the pre-specified proxy under test. Task 26 moved selection to measured
+    # D2, so this verdict no longer mutates or validates the frontier; d3_rate still cannot
+    # replace mass merely because it happens to win on one sample.
     axis = "mass"
 
     if verbose:
@@ -587,16 +587,17 @@ def validate_d3(rows: Sequence[dict], cells: Iterable[tuple] | None = None,
         print("")
         print("  Spearman rho vs real D2:")
         for k, v in sorted(rhos.items(), key=lambda kv: -kv[1]):
-            suffix = ("   <== d3 frontier axis" if k == axis else
+            suffix = ("   <== pre-specified d3 proxy" if k == axis else
                       ("   <== diagnostic best" if k == best else ""))
             print(f"    {k:<14} {v:>6.3f}" + suffix)
         print("")
         if rhos[axis] >= min_rho:
-            print(f"  PASS - d3 mass at rho {rhos[axis]:.3f} >= {min_rho}. Usable as the scan's")
-            print("  detection axis. Still verify shortlisted cells with real D2.")
+            print(f"  PASS - d3 mass at rho {rhos[axis]:.3f} >= {min_rho} as a scan proxy.")
+            print("  Phase 2 still selects on measured D2; this does not replace it.")
         else:
-            print(f"  FAIL - d3 mass rho {rhos[axis]:.3f} < {min_rho}. The Pareto frontier's")
-            print("  detection axis is not validated; do not substitute d3_rate at runtime.")
+            print(f"  FAIL - d3 mass rho {rhos[axis]:.3f} < {min_rho}. FINDING: the scan proxy")
+            print("  does not track D2. Phase 2 already selects on measured D2; do not smooth")
+            print("  this over or substitute d3_rate at runtime.")
         print("=" * 70)
 
     return dict(n=len(got), rhos=rhos, axis=axis, best=best, min_rho=min_rho,
