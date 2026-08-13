@@ -1,8 +1,7 @@
 # 20 - Phase 2 must not read cells where the model is broken
 
-**Status: SUPERSEDED on branch `pareto` by task 21.** Kept on `main` as the fallback fix. Decided
-2026-08-12; task 21's eligibility filter does the same job as a precondition rather than as a
-patch.
+**Status: SUPERSEDED - DO NOT BUILD.** Replaced by task 21 on this branch. Kept because it is the
+fallback if the unified selection does not validate.
 
 ## The problem, from the shakedown
 

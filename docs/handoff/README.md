@@ -1,5 +1,8 @@
 # Handoff — coding agent task queue
 
+> **Branch `pareto`.** Tasks 19 and 20 are SUPERSEDED here by task 21, and `D2_MAX` is relaxed to
+> 0.50 per task 22. `main` carries 19 and 20 as the fallback. Do not merge without a decision.
+
 Start with [`BRIEF.md`](BRIEF.md) for standing context, then work the numbered tasks in order.
 Each has its own acceptance criteria. Nothing here overrides [`../../CLAUDE.md`](../../CLAUDE.md).
 
@@ -44,6 +47,10 @@ reason** — that is a useful contribution. Building it is not.
 | [15](15-r5-portability.md) | R5's norm band is Gemma3-27B-specific | It fails on any other model while the vector is healthy; most of its job may already be done behaviourally | propose first |
 | [16](16-judge-bakeoff.md) | Judge bake-off on stored transcripts | **FUTURE** — replay judging with no GPU and score candidates on the gates already built | no |
 | [18](18-float-key-normalisation.md) | Judge cache key is not float-normalised | **The shakedown's crash.** A bisected `r` round-trips to a different float and the order guard raises; kills every run at Phase 4 | **yes — blocker** |
+| [19](19-phase3-dose-selection.md) | ~~Two doses per layer~~ | **SUPERSEDED** by 21 | no |
+| [20](20-phase2-sanity-filter.md) | ~~Phase 2 sanity filter~~ | **SUPERSEDED** by 21 | no |
+| [21](21-unified-cell-selection.md) | Unified cell-level Pareto selection | Replaces three routes, the padding, the fit and the dose decision with one rule over `(layer, dose)` cells | **yes, on this branch** |
+| [22](22-relaxed-detection-ceiling.md) | Interim `D2_MAX = 0.50` | CONFIRM and CONTROLS have never run; they need a qualifying cell to exist | yes |
 | [17](17-wilson-intervals.md) | Wilson intervals on every rate, every concept | A binomial SE is exactly zero at p=0 and p=1, and 29 of 30 v1 cells landed there | yes, before the run |
 
 ## What you owe the documentation

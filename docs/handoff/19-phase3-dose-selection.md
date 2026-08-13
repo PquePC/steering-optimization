@@ -1,8 +1,7 @@
 # 19 - Phase 4 must verify two doses per layer, not the sanity boundary alone
 
-**Status: SUPERSEDED on branch `pareto` by task 21.** Kept on `main` as the fallback fix if the
-unified selection does not work out. Decided 2026-08-12, then dissolved by task 21 rather than
-implemented - see the note at the end.
+**Status: SUPERSEDED - DO NOT BUILD.** Replaced by task 21 on this branch. Kept because it is the
+fallback if the unified selection does not validate.
 
 ## The problem, from the shakedown
 
