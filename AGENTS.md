@@ -1,9 +1,57 @@
 # AGENTS.md — read before acting in this repository
 
-**The safety rules are in [`CLAUDE.md`](CLAUDE.md) and they apply to every agent regardless of
-which file it reads first.** Read that file. This one adds the working conventions.
+**The safety rules apply to every agent regardless of which file it reads first.** They are
+reproduced in full below rather than linked, because an agent that reads only this file must still
+be bound by them. [`CLAUDE.md`](CLAUDE.md) carries the same rules plus the project context; if the
+two ever diverge, that is a defect — report it.
 
 Orientation — what lives where — is in [`README.md`](README.md).
+
+---
+
+## 🛑 Hard rules — never do these, and never propose them
+
+1. **Never upload ablated model weights** anywhere: Hugging Face (public *or* private), Drive,
+   gists, pastebins. The ablation rebuilds from a published config in minutes — regenerate, never
+   archive.
+2. **Never expose the model on a public port or proxy.** An unauthenticated Jupyter/Gradio/vLLM
+   endpoint on a rented pod *is* a public uncensored model.
+3. **Never commit vectors, activations, or raw generations** (`*.pt`, `*.safetensors`, `*.npy`,
+   `vectors/`, `activations/`, `results/`, `outputs/`, sweep logs). Vectors are reusable attack
+   artifacts; generations are what an uncensored model said with `weapon` injected. Publish cosine
+   scalars and aggregate rates instead — they reconstruct nothing.
+   **`.gitignore` enforces this and is load-bearing — do not weaken it.** A run writes to
+   `/workspace/m2_runs`, outside the repo, for the same reason.
+
+## ⚠️ Stop and ask for explicit approval before
+
+- Any upload to an external host, of anything
+- Opening any pod port, proxy, or public URL
+- Sending more than concept words and short self-reports to a third-party judge API
+- Publishing per-concept detail rather than per-arm aggregates (per-concept = a lookup table)
+- Any push whose diff carries any of the above
+
+If an action would make this work **more useful to someone attacking a model than to someone
+auditing one**, raise it rather than doing it.
+
+## The harmful arm has not run
+
+`config.HARMFUL_CONCEPTS` names the three concepts the study will eventually compare against the
+benign arm. Nothing in this repo runs them, and the pipeline's export gate withholds transcripts
+for any concept not on the benign list unless a call site passes an explicit override. Do not add
+that override, and do not run the harmful arm, without reading the parent repo's ethics register
+first.
+
+## One standing exception, and it is not a precedent
+
+`m2/tests/fixtures/garlic_shakedown_scan.jsonl` is committed run data — the cheap-tier scan surface
+from the 2026-08-12 Garlic shakedown. It was approved **explicitly and once**, by the operator, on
+these grounds: Garlic is a benign concept, the file contains only scalars (`reach`, `d3`, `s3`,
+norms, `alpha`), no generations and no vectors, and it is the regression fixture for task 21.
+
+**It does not license committing any other run artefact.** The rule above stands unchanged. Adding
+a second such file needs its own explicit approval, and the harmful arm's scan surface is never
+eligible.
 
 ---
 
