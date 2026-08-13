@@ -1,8 +1,10 @@
 # 08 — `--debug-bundle`: a full-fidelity export for audit
 
-**Status: BUILD NOW.** Two halves — **capture** then export. Blocking for the first Garlic and
-Origami runs: the operator intends to audit every step of those runs from this bundle, so what it
-omits cannot be checked.
+**Status: BUILD NOW - NOT BLOCKING.** Two halves, capture then export. Build it **while the next
+run is executing**, not before it: the shakedown proved auditable enough from `--no-wipe` plus the
+existing persistence to find five defects, so a complete run is worth more than a more complete
+export of an incomplete one. Its capture half changes what is written, so it takes effect on the
+run after next. Task 09 item 1, its prerequisite, is done.
 
 ## Goal
 

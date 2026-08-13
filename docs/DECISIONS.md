@@ -452,3 +452,36 @@ open for its existing-run-folder entry point and conditional CONFIRM rerun.
 
 **Result:** `dc873b8`; Task 22 complete on `pareto`; config hash `c51fd6f41aff`; 114 offline tests
 passed, 2 environment-dependent tests skipped.
+
+## 2026-08-13 — Scope trimmed to reach a completed run; dose knee-search added
+**By:** PquePC
+**Kind:** decision
+
+**`pareto` is a separate line, not a feature branch.** It stays separate until it has run a concept
+end to end, then replaces `main` and the old selection code is discarded — tasks 19 and 20 die with
+it. Merge checklist: `D2_MAX` is interim per task 22 and must not become the default by riding
+along.
+
+**Dropped or deferred to reach a run sooner:** task 10 (the unexecuted-path sweep) is **dropped** —
+the shakedown executed VERIFY and found by running what reading would not have, so the next run is
+the sweep. Task 15 (R5 portability) is **deferred** — it has no effect on Garlic on Gemma3-27B.
+Task 08 (debug capture) is **no longer blocking**; build it while the next run executes, since its
+capture half only takes effect on the run after. TODO item 6 (`r = 0.60` unreachable at L14–L30) is
+**accepted as a stated scope limitation** rather than addressed: raising `ALPHA_CEIL` is not free,
+it is the v1 damage anchor.
+
+**Added: task [24](handoff/24-dose-knee-search.md), a dose knee-search inside SCAN.** The whole
+covert-to-saturated transition falls between `r` = 0.30 and 0.60 and is unsampled — L45 through L52
+are healthy and show nothing at 0.30, then are alive and detectable at 0.60.
+
+**Why it must run before selection, which was the operator's concern:** those layers read reach
+0.00 at 0.30, so they are not eligible, not selected, and not candidates. **A refinement that only
+probes chosen cells can never reach them.** The grid decides what gets selected, so a denser grid
+has to come first or the candidates it would have created never exist.
+
+Measured cost on the shakedown shape: 21 layers in the band, **two bisection levels = 42 cells =
+7.6 minutes**, cheap tier only. Depth is capped at two because `reach` is measured over 12 prompts,
+so its resolution is 1/12 = 0.083 and a third level resolves the dose finer than the measure can
+distinguish.
+
+**Result:** task 24; statuses updated on 08, 10, 15.

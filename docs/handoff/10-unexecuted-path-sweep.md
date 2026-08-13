@@ -1,6 +1,9 @@
 # 10 — Sweep the four phases that have never executed
 
-**Status: BUILD NOW.** Required before any GPU time is spent. Blocking.
+**Status: DROPPED - DO NOT BUILD.** Set aside 2026-08-13. Its purpose was to find defects in the
+four never-executed phases by reading them. The 2026-08-12 shakedown **executed** VERIFY and found
+the float-key defect, which no amount of reading would have caught. **The next run is the sweep.**
+Kept for the patterns it lists, which are still the right things to look for.
 
 ## The situation
 

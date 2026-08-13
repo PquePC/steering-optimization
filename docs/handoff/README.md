@@ -1,7 +1,10 @@
 # Handoff — coding agent task queue
 
-> **Branch `pareto`.** Tasks 19 and 20 are SUPERSEDED here by task 21, and `D2_MAX` is relaxed to
-> 0.50 per task 22. `main` carries 19 and 20 as the fallback. Do not merge without a decision.
+> **Branch `pareto` is a separate line, not a feature branch.** Tasks 19 and 20 are SUPERSEDED here
+> by task 21, and `D2_MAX` is relaxed to 0.50 per task 22. **It stays separate until it has run a
+> concept end to end.** At that point it replaces `main` and the old selection code is discarded —
+> so 19 and 20 die with it. **Merge checklist:** revisit `D2_MAX`, which is interim per task 22 and
+> must not become the default by riding along.
 
 Start with [`BRIEF.md`](BRIEF.md) for standing context, then work the numbered tasks in order.
 Each has its own acceptance criteria. Nothing here overrides [`../../CLAUDE.md`](../../CLAUDE.md).
@@ -37,14 +40,14 @@ reason** — that is a useful contribution. Building it is not.
 | [05](05-gate6-false-negative-audit.md) | Tiered shortlist: escalation **and** false-negative audit | The only evidence the shortlist does not drop the answer — and it can improve the answer | yes |
 | [06](06-relaxed-reselection.md) | Relaxed-threshold re-selection | Re-read a finished run at a wider `D2_MAX` without re-measuring | no |
 | [07](07-reference-cell.md) | ~~Reference cell~~ | **DEFERRED** — direct comparison against Macar is not this run's framing | no |
-| [08](08-debug-bundle.md) | Debug **capture** then export | Nothing writes to `debug/` today, so the filter is not the blocker — the intermediates must be persisted first | **yes, for the first runs** |
+| [08](08-debug-bundle.md) | Debug **capture** then export | Nothing writes to `debug/` today, so the filter is not the blocker — the intermediates must be persisted first | no — **build during the next run** |
 | [09](09-known-unfixed.md) | Three known-unfixed defects | Carried over from the first run | no |
-| [10](10-unexecuted-path-sweep.md) | Sweep the four never-executed phases | Half the pipeline has never run a line | yes |
+| [10](10-unexecuted-path-sweep.md) | ~~Sweep the never-executed phases~~ | **DROPPED** — the shakedown executed VERIFY and found by running what reading would not have. The next run is the sweep | no |
 | [11](11-the-run.md) | The run itself | | last |
 | [12](12-mmlu-letter-surface-forms.md) | `s3` scores only uppercase option letters | A degraded model answering `c` is scored wrong — a dose-dependent bias in a sanity term | **yes — it is a defect** |
 | [13](13-prefix-token-contamination.md) | Prefix-token contamination in `e6` / `d3` | If `Garlic` tokenizes to `gar`, the scan surface is also counting *garden* | diagnostic before the scan is trusted |
 | [14](14-mmlu-by-generation.md) | Verify `s3` by generation | **FUTURE** — `s3` cannot tell "answers C" from "wants to emit noise, C is highest among letters" | no |
-| [15](15-r5-portability.md) | R5's norm band is Gemma3-27B-specific | It fails on any other model while the vector is healthy; most of its job may already be done behaviourally | propose first |
+| [15](15-r5-portability.md) | ~~R5's norm band~~ | **DEFERRED** — no effect on Garlic on Gemma3-27B; future-model portability | no |
 | [16](16-judge-bakeoff.md) | Judge bake-off on stored transcripts | **FUTURE** — replay judging with no GPU and score candidates on the gates already built | no |
 | [18](18-float-key-normalisation.md) | Judge cache key is not float-normalised | **The shakedown's crash.** A bisected `r` round-trips to a different float and the order guard raises; kills every run at Phase 4 | **yes — blocker** |
 | [19](19-phase3-dose-selection.md) | ~~Two doses per layer~~ | **SUPERSEDED** by 21 | no |
@@ -52,6 +55,7 @@ reason** — that is a useful contribution. Building it is not.
 | [21](21-unified-cell-selection.md) | Unified cell-level Pareto selection | Replaces three routes, the padding, the fit and the dose decision with one rule over `(layer, dose)` cells | **yes, on this branch** |
 | [22](22-relaxed-detection-ceiling.md) | Interim `D2_MAX = 0.50` | CONFIRM and CONTROLS have never run; they need a qualifying cell to exist | yes |
 | [23](23-behavioural-spot-check.md) | Sit with the model at the operating point | `s3` is 57 multiple-choice letters, `s2`/`s1` are 12 short answers. Nothing covers refusal, long-form, multi-turn or instruction-following | yes, after the first completed run |
+| [24](24-dose-knee-search.md) | Bisect the dose gap during SCAN | The whole covert-to-saturated transition falls between `r`=0.30 and 0.60 and is unsampled; the layers it would reveal are not candidates, so it must run before selection | **yes** |
 | [17](17-wilson-intervals.md) | Wilson intervals on every rate, every concept | A binomial SE is exactly zero at p=0 and p=1, and 29 of 30 v1 cells landed there | yes, before the run |
 
 ## What you owe the documentation

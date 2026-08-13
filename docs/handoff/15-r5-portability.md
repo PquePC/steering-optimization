@@ -1,6 +1,8 @@
 # 15 — R5 does not port to another model
 
-**Status: BUILD NOW — PROPOSE FIRST.** The replacement check is a design call; propose it before writing code. Not blocking.
+**Status: DEFERRED - DO NOT BUILD.** Set aside 2026-08-13. R5 has **no effect on Garlic on
+Gemma3-27B** - it passes, and the band it checks is that model's own. This is future-model
+portability work and it does not block anything. The analysis below stands for when it matters.
 
 ## The problem
 
@@ -69,3 +71,49 @@ case the right change is small.
 - Pointing the pipeline at a different model does not fail R5 — it skips it, with a reason naming
   the model the band belongs to.
 - The run record states which extraction checks ran and which were model-specific.
+
+
+---
+
+## Why it was deferred, in full
+
+**What R5 actually does.** After Phase 0 extracts a concept vector at every layer, R5 measures the
+**length** of the vector at the reference layer (L37) and checks it against a published range:
+Macar's 4664 +/- 982 across concepts, passed within +/-2 sigma, i.e. [2700, 6628]. Garlic measured
+**4054** on both runs - comfortably inside, and stable across runs, which is real information.
+
+**What it is for.** Catching a broken extraction. If extraction silently produced zeros, grabbed
+the wrong tensor, or returned noise, the norm would be obviously wrong. It is a smoke test on the
+instrument, not a measurement of the concept.
+
+**What it is NOT for, and this is easy to misread.** A bigger vector is not a better vector. The
+repository already records the counter-example: **Treasures has the largest norm measured (6688)
+and detects at 0.000.** Norm does not predict detection, effectiveness or anything else about the
+concept. R5 tests that extraction ran, and nothing more.
+
+**Why it does not port.** The band is a property of **one model**. Residual-stream magnitudes scale
+with hidden dimension, with normalisation choices and with training - the shakedown's own dose map
+shows `||v||` running 109 at L13 to 18870 at L61 *within a single model*. A perfectly healthy
+vector extracted from a different architecture has no reason to land in Gemma3-27B's band, and a 4B
+model would fail R5 for existing. That is the same portability defect as gates 1, 4 and 6 had: a
+check keyed to a constant from someone else's measurement cannot certify a run on a model nobody
+has measured.
+
+**What should replace it, when this is picked up.** Two checks, and the second matters more:
+
+1. **A dimensionless magnitude check.** The pipeline already invented the right quantity: `r`, the
+   ratio `alpha * ||v_L|| / ||h_L||`. A raw norm is model-specific; a ratio against the residual
+   stream at the same layer is not. Check the vector is not effectively zero and that a usable dose
+   is reachable under `ALPHA_CEIL`. That transfers to any model.
+2. **A behavioural check, which is the real test.** Extraction worked if **injecting the vector
+   moves the model toward the concept.** Magnitude is a proxy for that; behaviour is the thing
+   itself. And most of this already exists without being framed as an extraction check: **R14**
+   asserts the hook genuinely steers on both injection paths and raises rather than reporting, and
+   the **section 9.3 escalation ladder** escalates `r` until reach clears the floor precisely to
+   separate "no operating point exists" from "the vector is dead".
+
+**So the first job when this is picked up is subtraction, not addition:** work out how much of R5's
+role is genuinely uncovered by R14 and the ladder before writing anything. The answer may be
+"almost none", in which case the change is small - scope R5 to the model whose band it encodes, make
+it **skip with a reason** elsewhere rather than fail, and move the band out of the gate into a
+per-model configuration so a new model cannot silently inherit Gemma3-27B's numbers.
