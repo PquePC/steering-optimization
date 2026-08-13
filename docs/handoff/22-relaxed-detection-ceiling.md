@@ -1,6 +1,7 @@
 # 22 — Relaxed detection ceiling, so the pipeline can reach CONFIRM and CONTROLS
 
-**Status: BUILD NOW.** Branch `pareto` only. Interim measurement setting, not a science change.
+**Status: DONE — `dc873b8`.** Branch `pareto` only. Interim measurement setting, not a science
+change.
 
 ## Why
 

@@ -436,3 +436,19 @@ CONTROLS remain unobserved priors.
 
 **Result:** `d82c03a`; Task 18 complete, TODO items 11 and 13 resolved; 110 offline tests passed,
 2 environment-dependent tests skipped.
+
+## 2026-08-12 — Task 22 landed on the Pareto branch
+**By:** PquePC (decision), Sol (execution)
+**Kind:** task complete
+
+`D2_MAX` is 0.50 for the interim Pareto shakedown; `E5_FLOOR` remains 4.0 and `S4_MIN` remains
+0.70. Both `operating_point.json` and `run_record.json` now carry the threshold in force, an
+explicit `relaxed_threshold_run` flag, `primary_analysis=false`, and the label `INTERIM RELAXED —
+NOT PRIMARY`. The in-force 0.50 winner and its CONFIRM result are stored beside a 0.20 screening
+winner re-derived from the same raw verified scalars without mutating rows, CONFIG or config hash.
+
+Only the pure re-selection machinery needed by Task 22 was added from Task 06. Task 06 remains
+open for its existing-run-folder entry point and conditional CONFIRM rerun.
+
+**Result:** `dc873b8`; Task 22 complete on `pareto`; config hash `c51fd6f41aff`; 114 offline tests
+passed, 2 environment-dependent tests skipped.
