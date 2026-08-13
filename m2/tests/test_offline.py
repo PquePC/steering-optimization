@@ -1093,6 +1093,81 @@ def test_setup_detects_a_package_that_carries_no_version():
     assert m2setup._version("m2_no_such_module_xyz") is None, "genuinely absent reads absent"
 
 
+def test_setup_without_repair_installs_missing_packages_and_rechecks(monkeypatch, capsys):
+    """The no-flag CLI must execute the package repair, not merely expose a helper."""
+    from m2 import setup as m2setup
+
+    installed = []
+    first = m2setup.Report()
+    first.add("python packages", m2setup.FIX, "missing: torch, transformers",
+              repair=lambda: installed.append(True) or "extras ok")
+    ready = m2setup.Report()
+    reports = iter((first, ready))
+    monkeypatch.setattr(m2setup, "diagnose", lambda: next(reports))
+
+    assert m2setup.main([]) == 0
+    assert installed == [True]
+    assert "INSTALLING MISSING PYTHON PACKAGES" in capsys.readouterr().out
+
+
+def test_automatic_package_install_does_not_run_other_repairs(monkeypatch):
+    """Automatic means packages only; branch/repo/data changes retain --repair."""
+    from m2 import setup as m2setup
+
+    called = []
+    first = m2setup.Report()
+    first.add("python packages", m2setup.FIX, "missing: pytest",
+              repair=lambda: called.append("packages") or "extras ok")
+    first.add("project repo", m2setup.FIX, "behind",
+              repair=lambda: called.append("repo") or "pulled")
+    monkeypatch.setattr(m2setup, "diagnose", lambda: m2setup.Report())
+
+    assert m2setup.install_missing_packages(first, verbose=False).ready()
+    assert called == ["packages"]
+
+
+def test_failed_automatic_package_install_stays_nonready_and_does_not_loop(
+        monkeypatch, capsys):
+    """A failed pip attempt must be a visible failure, never assumed success or retried forever."""
+    from m2 import setup as m2setup
+
+    attempts = []
+
+    def missing_report():
+        rep = m2setup.Report()
+        rep.add("python packages", m2setup.FIX, "missing: transformers",
+                repair=lambda: attempts.append(True) or "requirements.txt FAILED")
+        return rep
+
+    reports = iter((missing_report(), missing_report()))
+    monkeypatch.setattr(m2setup, "diagnose", lambda: next(reports))
+
+    assert m2setup.main([]) == 1
+    assert attempts == [True]
+    output = capsys.readouterr().out
+    assert "requirements.txt FAILED" in output
+    assert "installation did not complete" in output
+
+
+def test_run_setup_path_also_installs_packages_without_repair(monkeypatch):
+    """`m2.run --setup` is a documented alias and must not preserve the old manual path."""
+    from m2 import run as m2run
+    from m2 import setup as m2setup
+
+    seen = []
+    initial = m2setup.Report()
+    ready = m2setup.Report()
+    monkeypatch.setattr(m2setup, "diagnose", lambda: initial)
+    monkeypatch.setattr(
+        m2setup, "install_missing_packages",
+        lambda rep, verbose=True: seen.append((rep, verbose)) or ready)
+    monkeypatch.setattr(m2setup, "render", lambda rep: seen.append(("render", rep)))
+
+    assert m2run.main(["--setup"]) == m2run.EXIT_OK
+    assert seen[0] == (initial, True)
+    assert seen[1] == ("render", ready)
+
+
 def test_phase0_runs_hook_liveness_itself():
     """R14 skips in a standalone --preflight because RUN.vecs is empty until extraction, and
     extraction IS Phase 0. That is only safe while Phase 0 runs liveness itself, before the

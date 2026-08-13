@@ -1,7 +1,7 @@
 """m2.setup - find out what this pod already has, and set up whatever it does not.
 
-    python -m m2.setup            # report only, changes nothing
-    python -m m2.setup --repair   # fix what can be fixed, then re-report
+    python -m m2.setup            # install missing Python packages, then report
+    python -m m2.setup --repair   # also fix the other reversible items, then re-report
 
 Written because migrating the pod is routine, not exceptional. A network volume survives a
 migration and the container does not, so after every move the same four things are true and the
@@ -17,7 +17,7 @@ JSONL from a hard termination reads as a complete phase until something parses i
 Every check reports one of:
 
     OK       present and usable
-    FIX      absent or wrong, and `--repair` can do something about it
+    FIX      absent or wrong; Python packages install automatically, other fixes use --repair
     BLOCKED  absent or wrong, and only you can fix it (credentials, GPU, the volume itself)
 
 Nothing here imports torch at module scope, so it runs on a pod whose dependencies are not
@@ -348,10 +348,12 @@ def check_deps(rep: Report) -> None:
                 ", ".join(f"{p} {v}" for p, v in need.items() if p in ("torch", "transformers")))
         return
 
-    harness = next((d for d in HARNESS_DIRS
-                    if d is not None and (d / "requirements.txt").is_file()), None)
-
     def _fix() -> str:
+        # Resolve this at execution time, not diagnosis time. In --repair mode the harness
+        # clone runs first, so capturing None here used to miss the requirements file that
+        # had just been created and require a second setup invocation.
+        harness = next((d for d in HARNESS_DIRS
+                        if d is not None and (d / "requirements.txt").is_file()), None)
         steps = []
         if harness is not None:
             code, _ = _sh([sys.executable, "-m", "pip", "install", "-q", "-r",
@@ -532,10 +534,21 @@ def render(rep: Report) -> None:
     elif rep.blocked:
         print(f"BLOCKED on {len(rep.blocked)}: " +
               ", ".join(c.name for c in rep.blocked) + " - only you can fix these.")
-        if rep.fixable:
-            print(f"{len(rep.fixable)} other item(s) fixable with --repair.")
+        package_failures = [c for c in rep.fixable if c.name == "python packages"]
+        other_fixable = [c for c in rep.fixable if c.name != "python packages"]
+        if package_failures:
+            print("Python package installation did not complete; inspect the install output "
+                  "above, fix that cause, and re-run setup.")
+        if other_fixable:
+            print(f"{len(other_fixable)} other item(s) fixable with --repair.")
     else:
-        print(f"{len(rep.fixable)} item(s) fixable. Re-run with --repair.")
+        package_failures = [c for c in rep.fixable if c.name == "python packages"]
+        other_fixable = [c for c in rep.fixable if c.name != "python packages"]
+        if package_failures:
+            print("Python package installation did not complete; inspect the install output "
+                  "above, fix that cause, and re-run setup.")
+        if other_fixable:
+            print(f"{len(other_fixable)} item(s) fixable. Re-run with --repair.")
     print("=" * 78)
 
 
@@ -557,17 +570,56 @@ def repair(rep: Report) -> Report:
     return diagnose()
 
 
+def install_missing_packages(rep: Report, *, verbose: bool = True) -> Report:
+    """Install a missing Python environment once, then return a fresh diagnosis.
+
+    Container-local packages are predictably lost on every pod migration, and installing them
+    is the ordinary setup path rather than an operator decision. This deliberately selects only
+    the ``python packages`` repair: branch changes, repository updates, harness cloning and run-
+    data edits retain the explicit ``--repair`` boundary. A failed install is exposed by the
+    fresh diagnosis and the normal non-zero setup exit; it is never treated as success and never
+    retried in a loop.
+
+    ``verbose=False`` keeps ``--json`` machine-readable while preserving the same behaviour.
+    """
+    package = next((c for c in rep.checks
+                    if c.name == "python packages" and c.state == FIX), None)
+    if package is None:
+        return rep
+    if package.repair is None:
+        if verbose:
+            print("automatic Python package installation is unavailable for this check")
+        return rep
+
+    if verbose:
+        print("=" * 78)
+        print(f"INSTALLING MISSING PYTHON PACKAGES: {package.detail}")
+        print("=" * 78)
+    try:
+        result = package.repair()
+        if verbose:
+            print(f"    {result}")
+    except Exception as exc:                    # noqa: BLE001 - re-check reports the failure
+        if verbose:
+            print(f"    FAILED: {type(exc).__name__}: {exc}")
+    if verbose:
+        print("\nre-checking after package installation\n")
+    return diagnose()
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         prog="python -m m2.setup",
-        description="Report what this pod already has, and optionally set up what it does not.")
+        description="Install missing Python packages and report what this pod already has.")
     ap.add_argument("--repair", action="store_true",
-                    help="clone the harness, install packages, pull the repo, set HF_HOME for "
-                         "this process, trim truncated JSONL. Never deletes measured rows.")
+                    help="also clone the harness, pull the repo, set HF_HOME for this process "
+                         "and trim truncated JSONL. Packages install automatically without "
+                         "this flag. Never deletes measured rows.")
     ap.add_argument("--json", action="store_true", help="machine-readable report")
     args = ap.parse_args(argv)
 
     rep = diagnose()
+    rep = install_missing_packages(rep, verbose=not args.json)
     if args.repair:
         rep = repair(rep)
     if args.json:
