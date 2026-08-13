@@ -222,9 +222,17 @@ at matched alpha does something close to the opposite in that region:
 Not a uniform offset - a **shape disagreement**. We read *higher* than Macar at L37-L43 and *far
 lower* at L52-L58, which is where our candidates are.
 
-**`d3` is also effectively binary.** Over 130 reachable cells: **74% read below 0.05, 15% read above
-0.95, and only 12% sit in between.** A probability mass should not be bimodal like that. It behaves
-like a threshold detector on the *immediate* next token rather than a graded rate.
+**Correction, 2026-08-13: `d3` is not effectively binary.** The earlier endpoint count pooled in
+dead cells: 66 of 93 sane cells have `reach` = 0.00, where `d3` = 0 is the correct reading rather
+than evidence of a pathological distribution. Among the 19 cells with `s3 >= 0.70` and
+`reach >= 0.20`, `d3` is graded: 0.002, 0.027, 0.452, 0.500, 0.571, 0.587, 0.979, 0.996, 0.999,
+1.000. The open issue is whether that mass tracks real `d2`, not whether it has intermediate
+values.
+
+**`d3_rate` is not an independent check on `d3`.** It thresholds the same per-trial mass at
+`D3_RATE_THRESH = 0.10`; two zeros are one axis reported twice. Task 21 therefore keeps `d3` mass
+as its detection axis. `d3_rank_med` is the genuinely different view, and task 25 makes both the
+rank and the rank-1 token visible before the run trusts the frontier.
 
 **The likely mechanism, and it is testable.** `d3` reads concept mass at one position;
 `ALLOW_FILLER` permits a single filler token before it. Macar generates and judges the completion.

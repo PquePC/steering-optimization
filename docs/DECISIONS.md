@@ -526,3 +526,21 @@ per-model configuration remain deferred exactly as directed.
 **Why:** zero, NaN or infinity catches extraction returning no usable direction without adding a
 model-specific failure point to the run; R14 and the escalation ladder retain behavioural roles.
 **Result:** `2c46cd3`; Task 15 minimal scope complete on `pareto`; full suite 123 passed, 2 skips.
+
+## 2026-08-13 — Task 25 isolated a disposable `d3` autopsy before the full run
+**By:** PquePC (scope and scientific corrections), Sol (execution)
+**Kind:** task complete
+
+`--autopsy-cells` now runs one benign concept through the four settled cells, printing kept and
+dropped token variants, both top-10 `d3` positions, real `d2` on the same five trial numbers, and
+the four `d3`/`d3_rate`/`d3_rank_med`/`d2` readings side by side. L59@0.30 is mandatory and aborts
+unless a concept token is rank 1 above 0.9; every output path is rejected if it is inside the
+repository.
+
+The disposable module, CLI path and tests are isolated in `f90180c`. The permanent
+`d3_rank_med` shortlist/frontier column is separately isolated in `a355a61`, so reverting the
+diagnostic does not remove the rank evidence. The record now states that `d3` is graded among the
+19 live, sane cells and that `d3_rate` is a thresholded view of the same mass, not corroboration.
+
+**Result:** `a355a61`, `f90180c`; Task 25 complete on `pareto`; final full suite 137 passed,
+2 environment-dependent skips.

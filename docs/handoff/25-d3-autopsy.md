@@ -1,6 +1,6 @@
 # 25 — `d3` autopsy: what the model actually says at the frontier cells
 
-**Status: BUILD NOW — DIAGNOSTIC, DISPOSABLE.** Branch `pareto`. Runs **before** task
+**Status: DONE — `a355a61`, `f90180c`.** Branch `pareto`. Runs **before** task
 [11](11-the-run.md), standalone, on four cells. Built to be **deleted in one commit** once it has
 answered — see *Rollback* at the bottom.
 
@@ -125,8 +125,9 @@ without stating.
 
 ## Rollback
 
-Recorded here so it is not reconstructed later. The whole task reverts by deleting `m2/autopsy.py`,
-its flag in `m2/run.py`, its tests, and the one column added to the frontier table. **Keep it in
-that shape** — if the answer is "the cells are genuinely covert", this code has done its job and
-carrying it into every future concept is dead weight. If the answer is A or B, it stops being a
-diagnostic and its findings become a defect fix in `cheap.py`, which is a different task.
+Recorded here so it is not reconstructed later. The disposable diagnostic reverts in one step by
+reverting `f90180c`, which deletes `m2/autopsy.py`, its flag in `m2/run.py` and its tests. The
+`d3_rank_med` frontier column in `a355a61` is the operator's explicit permanent exception and
+stays after that revert. If the answer is "the cells are genuinely covert", the diagnostic has
+done its job and carrying it into every future concept is dead weight. If the answer is A or B,
+its findings become a defect fix in `cheap.py`, which is a different task.

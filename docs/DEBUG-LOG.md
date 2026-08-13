@@ -1268,3 +1268,28 @@ is finite and non-zero; all broader portability and behavioural additions remain
 passes, proving no hidden lower band remains.
 
 **Result.** `2c46cd3`. Silent? Yes—a future model would have been rejected before measurement.
+
+### 2026-08-13 — Dead cells made `d3` look binary and `d3_rate` looked independent
+
+**Symptom.** The record called `d3` effectively binary from endpoint counts over the whole
+reachable scan, and treated `d3_rate` as a second view that agreed with the mass near zero.
+
+**Root cause.** The endpoint count included 66 sane cells with `reach` = 0.00, where zero concept
+mass is the expected result. `d3_rate` is derived from the same per-trial mass by thresholding it
+at `D3_RATE_THRESH = 0.10`; it is not an independently measured axis.
+
+**Why nothing caught it.** The summary grouped cells by reachability rather than conditioning on
+both live influence and sanity, and the rate-shaped field name made a deterministic transform
+look like corroboration.
+
+**Fix.** The record now conditions the distribution on `s3 >= 0.70` and `reach >= 0.20`, retains
+`d3` mass as task 21's detection axis, and surfaces `d3_rank_med` at selection. Task 25 dumps the
+actual rank-1 token and compares the same five forced-ID trials against real `d2` before a full
+run can treat the frontier as evidence.
+
+**Check.** Re-reading the committed Garlic fixture gives 19 live, sane cells with graded `d3`
+values including 0.002, 0.027, 0.452, 0.500, 0.571, 0.587, 0.979, 0.996, 0.999 and 1.000;
+`d3_rate`'s implementation reads the same mass and applies the 0.10 threshold.
+
+**Result.** `a355a61`, `f90180c`. Silent? Yes—the measurements were intact, but the interpretation
+overstated both bimodality and independent agreement.
