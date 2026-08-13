@@ -689,6 +689,26 @@ def _normalise_cache_key(cache_key: Any) -> tuple:
     return cache_key_for(parts[0], parts[1], parts[2], parts[3], parts[4], parts[5])
 
 
+def _assert_results_in_order(items: Sequence[dict], results: Sequence[dict]) -> None:
+    """Require each echoed judge key to match its input key exactly.
+
+    This comparison deliberately has no tolerance and performs no normalisation. Float
+    components are canonicalised earlier, by `cache_key_for`, so anything unequal here is
+    a genuinely different key and attaching the verdict by position would be unsafe.
+    """
+    for item, result in zip(items, results):
+        if isinstance(result, dict) and "cache_key" in result:
+            expected = tuple(item["cache_key"])
+            actual = tuple(result["cache_key"])
+            if actual != expected:
+                expected_r = expected[2] if len(expected) > 2 else "<missing>"
+                actual_r = actual[2] if len(actual) > 2 else "<missing>"
+                raise RuntimeError(
+                    "judge_many returned results out of order: item "
+                    f"{expected!r} (r={expected_r!r}) came back as {actual!r} "
+                    f"(r={actual_r!r}). Every score would be attached to the wrong response.")
+
+
 # =====================================================================================
 # Parsers -- they RAISE on a missing field (DEBUG LOG pattern 4, CONTRACT defence 11)
 # =====================================================================================

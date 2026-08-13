@@ -349,7 +349,11 @@ def _cache_key(phase: str, layer: int | None, r: float | None, unit_id: str,
     than reusing; at well under a dollar per concept (spec section 12) that is the right side
     of the trade.
     """
-    return (phase, layer, r, f"{unit_id}@{_payload_fp(payload)}", judge_id, vec_fp)
+    # `cache_key_for` is the sole constructor. In particular it applies R_DECIMALS to r;
+    # returning the tuple directly here left arithmetic bisection values raw while the
+    # judge transport normalised its echoed copy, making equal cells compare unequal.
+    return judges.cache_key_for(
+        phase, layer, r, f"{unit_id}@{_payload_fp(payload)}", judge_id, vec_fp)
 
 
 # =====================================================================================
@@ -495,13 +499,7 @@ def _issue(items: list[dict]) -> list[dict]:
             f"judge_many returned {len(results)} results for {len(items)} items. Results are "
             "matched to responses by position; a length mismatch means that association is "
             "gone, and a judged response cannot be re-attached by guessing.")
-    for item, result in zip(items, results):
-        if isinstance(result, dict) and "cache_key" in result:
-            if tuple(result["cache_key"]) != tuple(item["cache_key"]):
-                raise RuntimeError(
-                    "judge_many returned results out of order: item "
-                    f"{item['cache_key']!r} came back as {result['cache_key']!r}. Every "
-                    "score would be attached to the wrong response.")
+    judges._assert_results_in_order(items, results)
     return list(results)
 
 
