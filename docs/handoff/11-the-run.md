@@ -19,8 +19,9 @@ Full operating detail is in [`../RUNBOOK.md`](../RUNBOOK.md). Do not restate it 
 ## Order
 
 1. Fixes committed and pushed to `main`; offline tests green.
-2. On the pod: `python -m m2.setup --repair`, then read-only `python -m m2.setup`. Resolve any
-   `BLOCK` before continuing.
+2. On the pod: `python -m m2.setup`; missing Python packages install automatically and the checks
+   run again. Review any non-package `FIX` before choosing `--repair`, and resolve every `BLOCK`
+   before continuing.
 3. **Preflight** — `python -m m2.run --concepts Garlic --preflight`. **Read the FAIL count, not the
    pass count**: `0 FAIL` and `summary PASS` is the green light. Five of seven rig checks skip here
    and that is correct — know which five and why before interpreting the output. Confirm the

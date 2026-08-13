@@ -118,8 +118,9 @@ def _parser() -> argparse.ArgumentParser:
                    help="report what this pod already has and what it needs, then exit. "
                         "Loads no model. Run this first after every pod migration.")
     p.add_argument("--repair", action="store_true",
-                   help="with --setup: also clone the harness, install packages, pull the "
-                        "repo and trim truncated JSONL. Never deletes measured rows.")
+                   help="with --setup: also clone the harness, pull the repo and trim "
+                        "truncated JSONL. Packages install automatically without this flag. "
+                        "Never deletes measured rows.")
     p.add_argument("--preflight", action="store_true",
                    help="environment, imports, public surface, model load and rig checks, then "
                         "exit. Measures nothing and spends no judge calls.")
@@ -300,6 +301,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.setup:
         from m2 import setup                       # noqa: PLC0415
         rep = setup.diagnose()
+        rep = setup.install_missing_packages(rep)
         if args.repair:
             rep = setup.repair(rep)
         setup.render(rep)
