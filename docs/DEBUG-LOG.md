@@ -1293,3 +1293,31 @@ values including 0.002, 0.027, 0.452, 0.500, 0.571, 0.587, 0.979, 0.996, 0.999 a
 
 **Result.** `a355a61`, `f90180c`. Silent? Yes—the measurements were intact, but the interpretation
 overstated both bimodality and independent agreement.
+
+### 2026-08-13 — `--repair` moved a pod off the branch it was told to run
+
+**Symptom.** On a fresh pod, `git checkout pareto && python -m m2.setup --repair` reported
+`project repo: on branch 'pareto', expected 'main'` and switched the checkout back to `main`,
+alongside two legitimate repairs. Caught by the operator reading the repair output.
+
+**Root cause.** `check_repo` hardcoded `MAIN_BRANCH = "main"` and attached
+`repair=git checkout main` to the mismatch. Written on 2026-08-11 when the split left exactly one
+branch, so "not on `main`" could only mean a stale checkout.
+
+**Why nothing caught it.** The check's purpose is to stop a run executing the wrong code, and its
+repair was the fastest route to executing the wrong code — `main` carries the superseded
+pre-Pareto selection, without tasks 21, 24 and 25. Two further reasons it would have survived:
+the branch switch is reported as a *repair*, so it reads as the tool working rather than as a
+hazard; and **provenance carries no git sha**, so a completed run offers no evidence of which
+branch produced it. Nothing downstream could have detected the substitution.
+
+**Fix.** The expected branch comes from `M2_BRANCH`, defaulting to `main`. A mismatch is now
+`BLOCKED` with no repair — it names both branches and offers both remedies. Which code runs is the
+operator's decision, and a setup tool must not make it silently.
+
+**Check.** `M2_BRANCH=pareto` reads the branch as expected; the mismatch path has no `repair`
+callable, so `--repair` cannot switch branches at all.
+
+**Result.** Silent? Very nearly. The working tree was clean so nothing was lost, but an operator
+who skimmed the repair output would have run an hour of GPU on the wrong selection code and had
+no artefact recording it.

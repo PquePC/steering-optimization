@@ -430,3 +430,17 @@ corrects them.
   coverage can say `exhausted`.
 - **Item 13:** `d82c03a` makes the preflight construct the upstream Gate 11 judge without issuing
   a request, exposing a missing `OPENAI_API_KEY` before paid work begins.
+
+### 16 — Provenance records no git commit, so a result cannot be traced to the code that made it
+
+Found 2026-08-13 while fixing the `--repair` branch switch. `provenance.jsonl` carries the config
+hash but no git sha or branch, so nothing in a finished run says which code produced it. That is
+what made the branch switch undetectable after the fact: a run from `main`'s superseded selection
+and a run from `pareto`'s Pareto frontier are indistinguishable in the output.
+
+The config hash is not a substitute — it covers configured values, not the selection logic that
+reads them.
+
+**Not built yet, and not blocking the Garlic run.** Small: record `git rev-parse HEAD`, the branch,
+and whether the tree was dirty, once per run at Phase 0. Worth doing before any result is written
+up, because a published operating point should name the code that produced it.

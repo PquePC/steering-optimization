@@ -43,7 +43,10 @@ REPO_DIR = WORKSPACE / "steering-optimization"
 # The repo root IS the project root, since the 2026-08-11 split out of Emergent-Introspection.
 # There is no longer a nested "Steering Optimization" directory, and no space in any pod path.
 PROJECT_DIR = REPO_DIR
-MAIN_BRANCH = "main"
+# The branch a run is expected to execute. `main` by default, overridable because a work branch
+# is not damage: `pareto` is a parallel line of work carrying the selection code an actual run
+# needs, not a stale checkout. See `check_repo` for why this is never repaired automatically.
+MAIN_BRANCH = os.environ.get("M2_BRANCH", "main")
 HARNESS_URL = "https://github.com/safety-research/introspection-mechanisms"
 HARNESS_DIRS = (
     Path(os.environ["M2_HARNESS_DIR"]) if os.environ.get("M2_HARNESS_DIR") else None,
@@ -304,11 +307,19 @@ def check_repo(rep: Report) -> None:
 
     # `main` since the 2026-08-11 split: this repo's whole history IS the M2 work, so there is
     # no longer an M2 branch to be on and checking for one would report a healthy clone broken.
+    #
+    # NEVER REPAIRED AUTOMATICALLY, and that is the point of this branch. Until 2026-08-13 the
+    # mismatch carried `repair=git checkout main`, so `--repair` on a pod deliberately checked
+    # out on `pareto` silently moved it back to `main` and reported the setup healthy. The check
+    # exists to stop a run executing the wrong code, and auto-checkout caused exactly that: the
+    # run would have used the superseded pre-Pareto selection with no record of it, because
+    # provenance carries no git sha. Which code runs is the operator's decision, so this reports
+    # and stops rather than acting. Name the intended branch in `M2_BRANCH` and it reads OK.
     if branch != MAIN_BRANCH:
-        rep.add("project repo", FIX, f"on branch {branch!r}, expected {MAIN_BRANCH!r}",
-                repair=lambda: _sh(["git", "checkout", MAIN_BRANCH], cwd=REPO_DIR)[1]
-                or f"checked out {MAIN_BRANCH}",
-                hint=f"git -C {REPO_DIR} checkout {MAIN_BRANCH}")
+        rep.add("project repo", BLOCKED, f"on branch {branch!r}, expected {MAIN_BRANCH!r}",
+                hint=(f"Run the branch you meant: git -C {REPO_DIR} checkout {MAIN_BRANCH} - "
+                      f"or, if {branch!r} is the one you want, export M2_BRANCH={branch} and "
+                      "re-check. This is never switched for you."))
     elif behind_n:
         rep.add("project repo", FIX,
                 f"{MAIN_BRANCH}, {behind_n} commit(s) behind origin | {head}",
