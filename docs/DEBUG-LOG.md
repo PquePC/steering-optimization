@@ -1345,3 +1345,31 @@ installation must remain non-ready, exit non-zero and make exactly one attempt.
 
 **Result.** `5d7a2ed`. Silent? No — setup reported the missing packages, but required avoidable
 manual intervention before the run could start.
+
+### 2026-08-13 — Gate 11 required a second provider key despite an OpenRouter transport
+
+**Symptom.** Garlic preflight stopped after model load because the upstream Gate-11 `LLMJudge`
+raised `API key required` when `OPENAI_API_KEY` was absent, even though the run had a working
+`OPENROUTER_API_KEY` and all M2 judge calls were configured for OpenRouter.
+
+**Root cause.** M2 constructed the upstream judge without its `api_key` argument. The upstream
+constructor therefore looked only for `OPENAI_API_KEY`; additionally, its batch path creates a
+fresh `AsyncOpenAI` client, so passing the OpenRouter key alone would still have sent the real call
+to the default OpenAI endpoint.
+
+**Why nothing caught it.** TODO item 13's earlier fix proved that construction failed early, but
+treated the extra credential as an operational prerequisite instead of testing whether the same
+OpenRouter transport used everywhere else could construct *and call* the upstream rubric. The
+constructor test was designed to reproduce failure, not to assert the intended provider.
+
+**Fix.** One Gate-11 chokepoint now passes `OPENROUTER_API_KEY` explicitly and scopes
+`OPENAI_BASE_URL` to OpenRouter during both construction and `batch_evaluate`, restoring the
+caller's environment afterward. The rubric, model and `d2` comparison are unchanged.
+
+**Test.** With `OPENAI_API_KEY` absent, the preflight must construct successfully with the
+OpenRouter key; constructor-time and batch-time clients must both observe the OpenRouter URL; the
+prior base URL must be restored; and the missing-OpenRouter-key guard must actually trip before
+construction.
+
+**Result.** Silent? No — preflight stopped before measurement. The full offline suite passes 128
+tests with 2 environment-dependent skips.

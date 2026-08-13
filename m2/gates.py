@@ -1993,10 +1993,10 @@ def gate11_judge_d2_vs_repo_judge(*, allow_judge_calls: bool = True,
 
     repo = _repo_forced_identification(sample)
     if repo is None:
-        reason = ("the repo judge is unavailable (eval_utils could not be imported, or it "
-                  "has no API key). Gate 11 cannot compare M2's Judge D2 against a judge that "
-                  "is not there. THIS IS NOT A PASS: D2's agreement with its v1 meaning is "
-                  "unverified for this run")
+        reason = ("the repo judge is unavailable (eval_utils could not be imported, or its "
+                  "OpenRouter transport could not be constructed). Gate 11 cannot compare "
+                  "M2's Judge D2 against a judge that is not there. THIS IS NOT A PASS: D2's "
+                  "agreement with its v1 meaning is unverified for this run")
         print("   !! " + reason)
         return dict(gate=name, passed=False, skipped=True, reason=reason, source=source,
                     ok=gate_skipped(name, reason))
@@ -2106,39 +2106,77 @@ def _m2_judge_b_verdicts(rows: Sequence[dict], side: str) -> list[bool | None]:
     return [bool(r["parsed"]["identified"]) if r["ok"] else None for r in results]
 
 
-def _construct_repo_judge() -> tuple[Any, Any]:
-    """Import and construct the upstream Gate-11 judge without spending a judge call.
+@contextmanager
+def _repo_judge_openrouter_route() -> Iterator[None]:
+    """Route upstream OpenAI-SDK clients to OpenRouter, then restore the caller's env.
 
-    Importing `eval_utils` is insufficient evidence: its `LLMJudge` reads
-    `OPENAI_API_KEY` only when constructed, while M2's own transport reads
-    `OPENROUTER_API_KEY`. The preflight and Gate 11 share this chokepoint so they cannot
-    disagree about what "repo judge available" means.
+    The upstream `LLMJudge` accepts an API key but no base URL. It also creates a fresh
+    `AsyncOpenAI` inside every batch, so replacing only the clients built by its constructor
+    would leave the real Gate-11 call pointed at api.openai.com. The OpenAI SDK reads
+    `OPENAI_BASE_URL` at each client construction. Scope that compatibility variable over
+    both construction and evaluation so Gate 11 uses OpenRouter without permanently changing
+    process-wide state. M2's own judges use their direct transport and are unaffected.
+    """
+    variable = "OPENAI_BASE_URL"
+    missing = object()
+    previous: str | object = os.environ.get(variable, missing)
+    os.environ[variable] = str(_mod("judges").OPENROUTER_BASE_URL)
+    try:
+        yield
+    finally:
+        if previous is missing:
+            os.environ.pop(variable, None)
+        else:
+            os.environ[variable] = str(previous)
+
+
+def _construct_repo_judge() -> tuple[Any, Any]:
+    """Construct the upstream Gate-11 judge on OpenRouter without spending a call.
+
+    Importing `eval_utils` is insufficient evidence: its `LLMJudge` reads credentials only
+    when constructed. Pass `OPENROUTER_API_KEY` explicitly and route every OpenAI-SDK client
+    it creates to OpenRouter. The preflight and Gate 11 share this chokepoint so they cannot
+    disagree about what "repo judge available" means, and no `OPENAI_API_KEY` is required.
     """
     _mod("model").ensure_repo_path()              # bug 15: sys.path is lost on kernel restart
     import nest_asyncio                            # noqa: PLC0415 - external optional dependency
     from eval_utils import batch_evaluate, LLMJudge       # noqa: PLC0415
 
+    api_key = (os.environ.get("OPENROUTER_API_KEY") or "").strip()
+    if not api_key:
+        raise RuntimeError("OPENROUTER_API_KEY is required for the upstream Gate-11 judge")
+
     # BUG 18. The repo's `_call_judge_batch` calls `asyncio.run()`, which is correct in a CLI
     # script and raises inside Jupyter's already-running loop. Applied before the judge is
     # constructed, not just before the call, so nothing in between can trip over it.
     nest_asyncio.apply()
-    judge = LLMJudge(model=_cfg("judge_model"),
-                     max_concurrent=int(_cfg("judge_concurrent")))
-    return batch_evaluate, judge
+    with _repo_judge_openrouter_route():
+        judge = LLMJudge(model=_cfg("judge_model"), api_key=api_key,
+                         max_concurrent=int(_cfg("judge_concurrent")))
+
+    # `LLMJudge._call_judge_batch` constructs a new AsyncOpenAI client at call time. Return
+    # the same upstream evaluator behind a scoped route rather than relying on the clients
+    # created above or leaving OPENAI_BASE_URL changed for the rest of the process.
+    def batch_evaluate_on_openrouter(*args: Any, **kwargs: Any) -> Any:
+        with _repo_judge_openrouter_route():
+            return batch_evaluate(*args, **kwargs)
+
+    return batch_evaluate_on_openrouter, judge
 
 
 def _preflight_repo_judge() -> dict:
-    """Prove Gate 11 can construct its upstream judge; issue no API request."""
+    """Prove Gate 11 can construct its upstream judge on OpenRouter; issue no request."""
     try:
         _batch_evaluate, _judge = _construct_repo_judge()
     except Exception as exc:                      # noqa: BLE001 - explicit preflight result
         detail = f"{type(exc).__name__}: {exc}"
         print(f"  repo judge (Gate 11): FAIL - could not construct ({detail})")
-        print("    The upstream judge requires OPENAI_API_KEY; OPENROUTER_API_KEY only "
-              "configures M2's own judges.")
+        print("    Gate 11 uses OPENROUTER_API_KEY through the upstream rubric; "
+              "OPENAI_API_KEY is not required.")
         return dict(passed=False, detail=detail)
-    print("  repo judge (Gate 11): PASS - constructed without making a judge call")
-    return dict(passed=True, detail="constructed")
+    print("  repo judge (Gate 11): PASS - OpenRouter route constructed without making a "
+          "judge call")
+    return dict(passed=True, detail="constructed on OpenRouter")
 
 
 def _repo_forced_identification(rows: Sequence[dict]) -> list[bool | None] | None:

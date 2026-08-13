@@ -418,9 +418,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return EXIT_OK
 
     if args.preflight:
-        # Gate 11 uses the upstream repo's LLMJudge, whose constructor reads
-        # OPENAI_API_KEY. Importing eval_utils alone used to pass with only M2's
-        # OPENROUTER_API_KEY set, then Gate 11 skipped 38 minutes into the shakedown.
+        # Gate 11 uses the upstream repo's LLMJudge through a scoped OpenRouter adapter.
+        # Construct it here: importing eval_utils alone used to pass, then a missing or
+        # misrouted judge skipped Gate 11 38 minutes into the shakedown.
         repo_judge = gates._preflight_repo_judge()
         if not repo_judge["passed"]:
             return EXIT_CONFIG

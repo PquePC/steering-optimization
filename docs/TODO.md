@@ -180,12 +180,12 @@ The 24-row label packet was written and is role-blind and shuffled, which is cor
 spend the labelling effort until the anchor criteria are fixed**, or the labels certify a test that
 cannot separate the hypotheses.
 
-### 13. Gate 11 needs `OPENAI_API_KEY`, not `OPENROUTER_API_KEY`
+### 13. RESOLVED — Gate 11 previously required `OPENAI_API_KEY`
 `repo judge could not be constructed: ValueError: API key required. Set OPENAI_API_KEY in .env file
-or pass api_key parameter.` The preflight import check passed because it only imported the module;
-it never constructed the judge. Operational, not code: export `OPENAI_API_KEY` as well, or point
-the upstream judge at OpenRouter - and extend the preflight check to **construct** the judge rather
-than import it.
+or pass api_key parameter.` The first fix made preflight construct the judge and exposed the
+credential failure early. The 2026-08-13 Garlic preflight then settled the remaining transport
+choice: pass `OPENROUTER_API_KEY` and route the upstream SDK clients to OpenRouter. See the closure
+at the bottom of this file.
 
 ### 14. The dose grid never samples the window where a mid-layer operating point could exist
 Every candidate so far sits at **L51-L58 of 62**, against Macar's reference of L37. The data says
@@ -429,7 +429,8 @@ corrects them.
 - **Item 11:** `d82c03a` gives a failed tier an `aborted` termination; only completed negative
   coverage can say `exhausted`.
 - **Item 13:** `d82c03a` makes the preflight construct the upstream Gate 11 judge without issuing
-  a request, exposing a missing `OPENAI_API_KEY` before paid work begins.
+  a request, exposing the credential mismatch before paid work begins. The later Garlic-preflight
+  fix routes that constructor and its real batch call through OpenRouter, removing the mismatch.
 
 ### 16 — Provenance records no git commit, so a result cannot be traced to the code that made it
 
@@ -444,3 +445,9 @@ reads them.
 **Not built yet, and not blocking the Garlic run.** Small: record `git rev-parse HEAD`, the branch,
 and whether the tree was dirty, once per run at Phase 0. Worth doing before any result is written
 up, because a published operating point should name the code that produced it.
+
+## Resolved after the 2026-08-13 Garlic preflight
+
+- **Item 13:** Gate 11 now passes `OPENROUTER_API_KEY` to the upstream rubric and scopes every
+  constructor-time and batch-time OpenAI-SDK client to OpenRouter. No `OPENAI_API_KEY` is needed;
+  preflight still constructs the judge before measurement, and the gate remains enabled.

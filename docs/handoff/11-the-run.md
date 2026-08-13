@@ -49,9 +49,11 @@ is raised. **Do not apply it by mutating `CONFIG` mid-run** — `CONFIG` is what
 computed from, so editing it moves the run to a different folder and abandons every row already
 written. The driver reads `gate5_d3.json` and acts on it.
 
-**Gate 11 needs the upstream judge available.** `eval_utils` must be importable *with* an API key,
-and `nest_asyncio.apply()` must run before any repo judge call — the upstream uses `asyncio.run()`,
-which is illegal inside a running loop. Verify this at preflight, not four hours in. Watch the
+**Gate 11 needs the upstream judge available.** `eval_utils` must be importable and constructible
+with `OPENROUTER_API_KEY`; M2 passes that key explicitly and scopes the OpenAI SDK's base URL to
+OpenRouter, so `OPENAI_API_KEY` is not required. `nest_asyncio.apply()` must run before any repo
+judge call — the upstream uses `asyncio.run()`, which is illegal inside a running loop. Verify
+this at preflight, not four hours in. Watch the
 **rate delta**, not just the agreement fraction: symmetric disagreements cancel in a rate, a
 systematic shift does not, and it is the systematic shift that would quietly redefine `d2`.
 

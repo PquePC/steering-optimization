@@ -18,6 +18,7 @@ import ast
 import dataclasses
 import json
 import math
+import os
 import sys
 from types import SimpleNamespace
 from pathlib import Path
@@ -1018,20 +1019,27 @@ def test_required_credentials_are_the_two_the_run_cannot_proceed_without():
 
 
 def test_gate11_preflight_constructs_the_repo_judge(monkeypatch):
-    """TODO 13: importing eval_utils must not pass when its constructor would fail."""
-    constructed = []
+    """Gate 11 constructs and calls the upstream rubric through OpenRouter only."""
+    constructed = {}
+    called = []
     ensured = []
 
-    class MissingRepoKey:
-        def __init__(self, **_kwargs):
-            constructed.append(True)
-            raise RuntimeError("OPENAI_API_KEY is not set")
+    class RepoJudge:
+        def __init__(self, **kwargs):
+            constructed.update(kwargs)
+            constructed["base_url"] = os.environ.get("OPENAI_BASE_URL")
 
-    fake_eval = SimpleNamespace(batch_evaluate=lambda *_a, **_k: None,
-                                LLMJudge=MissingRepoKey)
+    def fake_batch(*_args, **_kwargs):
+        called.append(os.environ.get("OPENAI_BASE_URL"))
+        return ["scored"]
+
+    fake_eval = SimpleNamespace(batch_evaluate=fake_batch, LLMJudge=RepoJudge)
     fake_nest = SimpleNamespace(apply=lambda: None)
     fake_model = SimpleNamespace(ensure_repo_path=lambda: ensured.append(True))
     original_mod = gates._mod
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://caller.example/v1")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.setitem(sys.modules, "eval_utils", fake_eval)
     monkeypatch.setitem(sys.modules, "nest_asyncio", fake_nest)
     monkeypatch.setattr(gates, "_mod",
@@ -1039,8 +1047,41 @@ def test_gate11_preflight_constructs_the_repo_judge(monkeypatch):
 
     reading = gates._preflight_repo_judge()
     assert ensured and constructed, "the check imported eval_utils but did not construct LLMJudge"
+    assert reading["passed"] is True
+    assert constructed["api_key"] == "sk-or-test"
+    assert constructed["base_url"] == "https://openrouter.ai/api/v1"
+    assert os.environ["OPENAI_BASE_URL"] == "https://caller.example/v1"
+
+    batch, _judge = gates._construct_repo_judge()
+    assert batch(None) == ["scored"]
+    assert called == ["https://openrouter.ai/api/v1"]
+    assert os.environ["OPENAI_BASE_URL"] == "https://caller.example/v1"
+
+
+def test_gate11_openrouter_key_guard_actually_trips(monkeypatch):
+    """A missing OpenRouter key must fail before the upstream constructor can hide it."""
+    constructed = []
+
+    class ShouldNotConstruct:
+        def __init__(self, **_kwargs):
+            constructed.append(True)
+
+    fake_eval = SimpleNamespace(batch_evaluate=lambda *_a, **_k: None,
+                                LLMJudge=ShouldNotConstruct)
+    fake_nest = SimpleNamespace(apply=lambda: None)
+    fake_model = SimpleNamespace(ensure_repo_path=lambda: None)
+    original_mod = gates._mod
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setitem(sys.modules, "eval_utils", fake_eval)
+    monkeypatch.setitem(sys.modules, "nest_asyncio", fake_nest)
+    monkeypatch.setattr(gates, "_mod",
+                        lambda name: fake_model if name == "model" else original_mod(name))
+
+    reading = gates._preflight_repo_judge()
     assert reading["passed"] is False
-    assert "OPENAI_API_KEY" in reading["detail"]
+    assert "OPENROUTER_API_KEY" in reading["detail"]
+    assert not constructed, "the credential guard did not stop construction"
 
 
 def test_real_preflight_path_runs_the_repo_judge_constructor_check():

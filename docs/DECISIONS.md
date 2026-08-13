@@ -555,3 +555,17 @@ and run-data repair; setup never interprets automatic package installation as au
 different actions.
 
 **Result:** `5d7a2ed` on `main`; 114 offline tests passed, 2 environment-dependent tests skipped.
+
+## 2026-08-13 — Gate 11 uses OpenRouter without an OpenAI credential
+**By:** Tomás (credential constraint), Sol (execution)
+**Kind:** decision
+
+The upstream Gate-11 rubric now receives `OPENROUTER_API_KEY` explicitly and every OpenAI-SDK
+client it creates is scoped to the OpenRouter endpoint. `OPENAI_API_KEY` is neither read nor
+required, and Gate 11 remains enabled.
+
+**Why:** Gate 11 validates whether `d2` (forced-ID rate, 0–1, lower is better) retains the
+upstream rubric's meaning; disabling it would remove evidence. The upstream judge is
+OpenAI-compatible rather than OpenAI-exclusive, so changing transport preserves the comparison.
+**Result:** the preflight and the real Gate-11 batch share the same OpenRouter adapter; 128 offline
+tests passed and 2 environment-dependent tests skipped.
