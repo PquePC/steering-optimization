@@ -2095,6 +2095,41 @@ def _m2_judge_b_verdicts(rows: Sequence[dict], side: str) -> list[bool | None]:
     return [bool(r["parsed"]["identified"]) if r["ok"] else None for r in results]
 
 
+def _construct_repo_judge() -> tuple[Any, Any]:
+    """Import and construct the upstream Gate-11 judge without spending a judge call.
+
+    Importing `eval_utils` is insufficient evidence: its `LLMJudge` reads
+    `OPENAI_API_KEY` only when constructed, while M2's own transport reads
+    `OPENROUTER_API_KEY`. The preflight and Gate 11 share this chokepoint so they cannot
+    disagree about what "repo judge available" means.
+    """
+    _mod("model").ensure_repo_path()              # bug 15: sys.path is lost on kernel restart
+    import nest_asyncio                            # noqa: PLC0415 - external optional dependency
+    from eval_utils import batch_evaluate, LLMJudge       # noqa: PLC0415
+
+    # BUG 18. The repo's `_call_judge_batch` calls `asyncio.run()`, which is correct in a CLI
+    # script and raises inside Jupyter's already-running loop. Applied before the judge is
+    # constructed, not just before the call, so nothing in between can trip over it.
+    nest_asyncio.apply()
+    judge = LLMJudge(model=_cfg("judge_model"),
+                     max_concurrent=int(_cfg("judge_concurrent")))
+    return batch_evaluate, judge
+
+
+def _preflight_repo_judge() -> dict:
+    """Prove Gate 11 can construct its upstream judge; issue no API request."""
+    try:
+        _batch_evaluate, _judge = _construct_repo_judge()
+    except Exception as exc:                      # noqa: BLE001 - explicit preflight result
+        detail = f"{type(exc).__name__}: {exc}"
+        print(f"  repo judge (Gate 11): FAIL - could not construct ({detail})")
+        print("    The upstream judge requires OPENAI_API_KEY; OPENROUTER_API_KEY only "
+              "configures M2's own judges.")
+        return dict(passed=False, detail=detail)
+    print("  repo judge (Gate 11): PASS - constructed without making a judge call")
+    return dict(passed=True, detail="constructed")
+
+
 def _repo_forced_identification(rows: Sequence[dict]) -> list[bool | None] | None:
     """The repo judge's `correct_identification` per row, or None if it is unavailable.
 
@@ -2102,22 +2137,8 @@ def _repo_forced_identification(rows: Sequence[dict]) -> list[bool | None] | Non
     caller can SKIP loudly rather than report a zero agreement it did not measure.
     """
     try:
-        _mod("model").ensure_repo_path()          # bug 15: sys.path is lost on kernel restart
-        import nest_asyncio                        # noqa: PLC0415 - see below
-        from eval_utils import batch_evaluate, LLMJudge   # noqa: PLC0415
+        batch_evaluate, judge = _construct_repo_judge()
     except Exception as exc:                      # noqa: BLE001 - reported by the caller
-        print(f"   repo judge unavailable: {type(exc).__name__}: {exc}")
-        return None
-
-    # BUG 18. The repo's `_call_judge_batch` calls `asyncio.run()`, which is correct in a CLI
-    # script and raises inside Jupyter's already-running loop. Applied before the judge is
-    # constructed, not just before the call, so nothing in between can trip over it.
-    nest_asyncio.apply()
-
-    try:
-        judge = LLMJudge(model=_cfg("judge_model"),
-                         max_concurrent=int(_cfg("judge_concurrent")))
-    except Exception as exc:                      # noqa: BLE001 - typically a missing key
         print(f"   repo judge could not be constructed: {type(exc).__name__}: {exc}")
         return None
 

@@ -14,6 +14,7 @@ on when it verified a batched path against a second copy of its own reasoning (b
 
 from __future__ import annotations
 
+import ast
 import dataclasses
 import json
 import math
@@ -358,6 +359,61 @@ def test_cache_key_separates_two_concepts_at_the_same_cell():
     common = dict(phase="VERIFY", layer=37, r=0.15, prompt_id="e5_07", judge_id="E5")
     assert (judges.cache_key_for(vec_fingerprint="aaaaaaaaaaaa", **common)
             != judges.cache_key_for(vec_fingerprint="bbbbbbbbbbbb", **common))
+
+
+def test_cache_key_normalises_bisected_r_at_construction():
+    """Task 18: arithmetic and JSON must name one cell with one exact key.
+
+    The shakedown reached VERIFY with a raw bisection float while the judge transport
+    returned its six-decimal form. The order guard correctly rejected the unequal tuples.
+    """
+    raw = 0.5 * (0.9140625 + 0.9421875)
+    round_tripped = json.loads(json.dumps(round(raw, judges.R_DECIMALS)))
+    common = dict(phase="VERIFY", layer=58, prompt_id="e5_01@payload",
+                  judge_id="E5", vec_fingerprint="abc123def456")
+    assert judges.cache_key_for(r=raw, **common) == judges.cache_key_for(
+        r=round_tripped, **common)
+
+
+@pytest.mark.parametrize("raw", [
+    1.3499999999999999,
+    0.40312499999999996,
+    0.9281249999999999,
+    1.0828125000000002,
+])
+def test_shakedown_bisected_r_values_have_stable_cache_keys(raw):
+    common = dict(phase="VERIFY", layer=58, prompt_id="p", judge_id="E5",
+                  vec_fingerprint="fp")
+    key = judges.cache_key_for(r=raw, **common)
+    assert key == judges.cache_key_for(
+        r=json.loads(json.dumps(key[2])), **common)
+    assert key[2] == round(raw, judges.R_DECIMALS)
+
+
+def test_expensive_cache_keys_use_the_judges_constructor():
+    """Trip the exact bypass that caused Task 18 without importing torch offline."""
+    source = (_PKG_PARENT / "m2" / "expensive.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    function = next(node for node in tree.body
+                    if isinstance(node, ast.FunctionDef) and node.name == "_cache_key")
+    calls = [node for node in ast.walk(function) if isinstance(node, ast.Call)]
+    assert any(isinstance(call.func, ast.Attribute)
+               and isinstance(call.func.value, ast.Name)
+               and call.func.value.id == "judges"
+               and call.func.attr == "cache_key_for"
+               for call in calls), "expensive._cache_key bypasses the canonical constructor"
+    assert not any(isinstance(node, ast.Return) and isinstance(node.value, ast.Tuple)
+                   for node in ast.walk(function)), "a second raw tuple constructor returned"
+
+
+def test_judge_order_guard_remains_exact_and_prints_both_float_reprs():
+    expected = ("VERIFY", 58, 1.35, "e5_01@a", "E5", "fp")
+    actual = ("VERIFY", 58, 1.350001, "e5_01@a", "E5", "fp")
+    with pytest.raises(RuntimeError) as caught:
+        judges._assert_results_in_order(
+            [dict(cache_key=expected)], [dict(cache_key=actual)])
+    message = str(caught.value)
+    assert "r=1.35" in message and "r=1.350001" in message
 
 
 A1_OK = """Shift: moderate
@@ -954,6 +1010,38 @@ def test_required_credentials_are_the_two_the_run_cannot_proceed_without():
     assert "HEALTHCHECK_URL" in m2run.OPTIONAL_ENV
 
 
+def test_gate11_preflight_constructs_the_repo_judge(monkeypatch):
+    """TODO 13: importing eval_utils must not pass when its constructor would fail."""
+    constructed = []
+    ensured = []
+
+    class MissingRepoKey:
+        def __init__(self, **_kwargs):
+            constructed.append(True)
+            raise RuntimeError("OPENAI_API_KEY is not set")
+
+    fake_eval = SimpleNamespace(batch_evaluate=lambda *_a, **_k: None,
+                                LLMJudge=MissingRepoKey)
+    fake_nest = SimpleNamespace(apply=lambda: None)
+    fake_model = SimpleNamespace(ensure_repo_path=lambda: ensured.append(True))
+    original_mod = gates._mod
+    monkeypatch.setitem(sys.modules, "eval_utils", fake_eval)
+    monkeypatch.setitem(sys.modules, "nest_asyncio", fake_nest)
+    monkeypatch.setattr(gates, "_mod",
+                        lambda name: fake_model if name == "model" else original_mod(name))
+
+    reading = gates._preflight_repo_judge()
+    assert ensured and constructed, "the check imported eval_utils but did not construct LLMJudge"
+    assert reading["passed"] is False
+    assert "OPENAI_API_KEY" in reading["detail"]
+
+
+def test_real_preflight_path_runs_the_repo_judge_constructor_check():
+    import inspect
+    from m2 import run as m2run
+    assert "gates._preflight_repo_judge()" in inspect.getsource(m2run.main)
+
+
 def test_concepts_file_ignores_comments_and_blanks(tmp_path):
     from m2 import run as m2run
     path = tmp_path / "concepts.txt"
@@ -1188,6 +1276,27 @@ def test_gate6_exhaustive_is_not_applicable_not_skipped_or_passed():
     assert reading["state"] == "NOT_APPLICABLE"
     assert summary["not_applicable"] == 1
     assert summary["passed"] == summary["skipped"] == 0
+
+
+def test_failed_tier_is_aborted_not_reported_exhausted():
+    """TODO 11: a VERIFY crash is missing evidence, not completed negative evidence."""
+    from m2 import driver
+    termination = driver._tier_termination(
+        dict(exhaustive=False),
+        [dict(tier=0, state="FAILED", reason="tier 0 verification failed")],
+        [])
+    assert "aborted" in termination
+    assert "failed" in termination
+    assert "exhausted" not in termination
+
+
+def test_completed_tiers_without_a_qualifier_are_reported_exhausted():
+    from m2 import driver
+    termination = driver._tier_termination(
+        dict(exhaustive=False),
+        [dict(tier=0, state="DONE", reason="tier 0 always runs")],
+        [])
+    assert termination == "all configured/live tiers exhausted without a qualifying cell"
 
 
 def test_status_board_does_not_take_the_notebook_path_in_a_script():

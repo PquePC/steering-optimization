@@ -1149,3 +1149,59 @@ marker-rename command in stdout, and separately proves the check is wired into t
 **Follow-up.** Task 09 remains open only for item 3. CONFIRM and CONTROLS priors cannot be changed
 until a complete run supplies measured seconds per single phase unit; guessing replacements would
 repeat the defect.
+
+### 2026-08-12 — Bisected floats bypassed the canonical judge cache-key constructor
+
+**Symptom.** VERIFY and Gate 4 raised `judge_many returned results out of order` for keys whose
+`r` differed only as `1.3499999999999999` versus `1.35` (and independently
+`0.40312499999999996` versus `0.403125`).
+
+**Root cause.** `judges.cache_key_for` already applied `R_DECIMALS`, but
+`expensive._cache_key` constructed the same six-field tuple itself with raw `r`. The judge
+transport canonicalised its copy and the exact order guard correctly rejected the mismatch.
+
+**Why nothing caught it.** Every pre-bisection `r` came from a config literal. No test put a value
+produced by bisection arithmetic through both construction paths, so the bypass was unreachable
+until Phase 4 of the shakedown.
+
+**Fix.** `judges.cache_key_for` is now the only constructor used by the expensive path. The exact
+order guard remains intact and prints both `r` values with `repr`; tests cover the four shakedown
+values, the original midpoint, the former bypass and a genuinely different key.
+
+**Result.** `d82c03a`. Silent? No — the exact guard stopped the run before a verdict was attached
+to the wrong response.
+
+### 2026-08-12 — A failed tier was reported as exhausted coverage
+
+**Symptom.** `tier_verification.json` claimed every configured/live tier was exhausted although
+tier 0 had state `FAILED`, VERIFY had measured zero cells, and later tiers had never run.
+
+**Root cause.** The final termination string considered exhaustive mode and qualifiers but never
+checked for a failed tier, overwriting the earlier failure-specific record.
+
+**Why nothing caught it.** Tests covered successful tier exhaustion and escalation but supplied no
+failed tier to the termination logic; the misleading string therefore looked like a valid negative
+result.
+
+**Fix.** Failure takes precedence and records `aborted`; `exhausted` remains reserved for completed
+negative coverage. A counterexample asserts the two strings cannot coincide.
+
+**Result.** `d82c03a`. Silent? Yes — the durable record overstated evidence without raising.
+
+### 2026-08-12 — Gate 11 preflight imported but did not construct its judge
+
+**Symptom.** The preflight passed, then Gate 11 skipped after the shakedown because the upstream
+judge could not be constructed without `OPENAI_API_KEY`.
+
+**Root cause.** Importing `eval_utils` does not read the upstream credential. Its `LLMJudge`
+constructor does; M2's own `OPENROUTER_API_KEY` configures a different transport.
+
+**Why nothing caught it.** The preflight treated an import as proof of runtime availability and no
+test supplied a module that imports successfully but raises during judge construction.
+
+**Fix.** Preflight and Gate 11 now share one constructor chokepoint. Preflight constructs the judge
+without making a request and fails early if construction is impossible; the test's fake module
+imports and then raises specifically from `LLMJudge`.
+
+**Result.** `d82c03a`. Silent? Yes — the skipped gate removed evidence from the run after the
+apparatus had been declared ready.

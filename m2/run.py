@@ -396,6 +396,14 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     driver.set_concept(concepts[0])
 
+    if args.preflight:
+        # Gate 11 uses the upstream repo's LLMJudge, whose constructor reads
+        # OPENAI_API_KEY. Importing eval_utils alone used to pass with only M2's
+        # OPENROUTER_API_KEY set, then Gate 11 skipped 38 minutes into the shakedown.
+        repo_judge = gates._preflight_repo_judge()
+        if not repo_judge["passed"]:
+            return EXIT_CONFIG
+
     if args.skip_rig_checks:
         print("\nRIG CHECKS SKIPPED (--skip-rig-checks). R14 is what catches an injection hook "
               "that silently does nothing.")

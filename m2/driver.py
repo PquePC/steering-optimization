@@ -636,6 +636,21 @@ def _qualifying(rows: Any) -> list[dict]:
     return [r for r in rows if isinstance(r, dict) and "qualifies" in r and r["qualifies"]]
 
 
+def _tier_termination(tier_plan: dict, tier_records: Sequence[dict],
+                      final_qualifiers: Sequence[dict]) -> str:
+    """Describe why tiered verification stopped without conflating failure and coverage."""
+    failed = next((row for row in tier_records if row["state"] == "FAILED"), None)
+    if failed is not None:
+        tier = failed["tier"]
+        label = "exhaustive tier" if tier is None else f"tier {tier}"
+        return f"aborted after {label} failed: {failed['reason']}"
+    if bool(tier_plan["exhaustive"]):
+        return "every in-scope layer verified"
+    if final_qualifiers:
+        return "qualifying cell found after mandatory audit"
+    return "all configured/live tiers exhausted without a qualifying cell"
+
+
 # =====================================================================================
 # run_concept
 # =====================================================================================
@@ -843,7 +858,8 @@ def run_concept(name: str, *, notifier: Any = None, wipe: bool = True, deliver: 
                     if row.get("phase") == _phases().PHASE4 and row.get("tier") == number
                     and bool(row.get("exhaustive", False)) == bool(tier_plan["exhaustive"])]
         tier_records.append(dict(
-            tier=number, state="DONE" if ok_verify else "FAILED", reason=reason,
+            tier=number, state="DONE" if ok_verify else "FAILED",
+            reason=reason if ok_verify else f"{label} verification failed",
             kind=tier_spec["kind"], mandatory=bool(tier_spec["mandatory"]),
             layers=tier_spec["layers"], orderings=[row.get("tier_ordering")
                                                    for row in tier_candidates],
@@ -868,10 +884,7 @@ def run_concept(name: str, *, notifier: Any = None, wipe: bool = True, deliver: 
     if tier_records:
         executed = [row for row in tier_records if row["state"] == "DONE"]
         final_qualifiers = _qualifying(runio.rows_for_run(VERIFIED_FILE))
-        termination = ("every in-scope layer verified" if tier_plan["exhaustive"] else
-                       "qualifying cell found after mandatory audit"
-                       if final_qualifiers else
-                       "all configured/live tiers exhausted without a qualifying cell")
+        termination = _tier_termination(tier_plan, tier_records, final_qualifiers)
         runio.log(f"tiered verification: {termination}")
         record = runio.read_json(_phases().TIER_VERIFICATION_FILE)
         # A stop decision is appended after the last tier write. Persist the complete

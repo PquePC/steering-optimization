@@ -1,7 +1,7 @@
 # 18 — The judge cache key is not float-normalised
 
-**Status: BUILD NOW.** **Blocking — this kills every run.** It fired twice in the 2026-08-12
-shakedown, in two independent call sites, and no run can reach Phase 4 until it is fixed.
+**Status: DONE — `d82c03a`.** **Blocking defect fixed.** It fired twice in the 2026-08-12
+shakedown, in two independent call sites, and prevented that run from entering Phase 4.
 
 ## The symptom
 

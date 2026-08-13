@@ -375,3 +375,10 @@ defect as a check that cannot fail** — it looks like a measurement and is not 
 Four phases have never been observed at all. Their priors are pure guesses in every ETA until
 one run completes, and CONFIRM and CONTROLS are single-unit, so their measured rate never
 corrects them.
+
+## Resolved in the 2026-08-12 universal-fixes pass
+
+- **Item 11:** `d82c03a` gives a failed tier an `aborted` termination; only completed negative
+  coverage can say `exhausted`.
+- **Item 13:** `d82c03a` makes the preflight construct the upstream Gate 11 judge without issuing
+  a request, exposing a missing `OPENAI_API_KEY` before paid work begins.

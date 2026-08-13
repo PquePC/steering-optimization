@@ -663,23 +663,18 @@ def notify_test() -> bool:
 # This replaces v1's CELL_SECONDS_PRIOR, which was per MEASURE over a fixed grid.
 
 PHASE_SECONDS_PRIOR: dict[str, float] = dict(
-    # MEASURED on Gemma3-27B, 1x A100 80GB, Garlic, 49 layers in scope (2026-08-09).
-    CAL=420.0,       # once per concept. 49-layer extraction 34s + residual norms + 36 unsteered
-                     # generations + the MMLU download and cap_base pass. Was 120.
-    SCAN=13.0,       # per (layer, dose). Was 2.0, which assumed E6 and D3 batched. They do not,
-                     # and cannot with a scalar start position (bug 25b) - see the decomposition
-                     # in cheap.scan_cell. ~27 single forward passes plus one 57-item batch.
+    # MEASURED on Gemma3-27B, 1x A100 80GB, Garlic, 49 layers in scope, 3 scan doses
+    # (2026-08-12 shakedown). Units must match the board counter beside every value.
+    CAL=89.9,        # seconds per CONCEPT (one CAL unit), warm persistent volume. Prior 420.
+    SCAN=10.9,       # seconds per (LAYER, DOSE) CELL; 147 cells in 26m46s. Prior 13.0.
+    SHORTLIST=0.0,   # free
+    BISECT=68.7,     # seconds per CANDIDATE; 8 candidates in 9m09s. Prior 100.0. A candidate
+                     # is a bracket hunt plus BISECT_STEPS probes; the board does not count
+                     # individual probes, so a per-probe prior would repeat the 12x unit bug.
 
     # STILL PRIORS - not yet observed. A multi-unit phase replaces its prior with its own
     # measured rate after two units, so these only drive the first two units and the opening
-    # ETA. CAL and CONFIRM are single-unit, so their numbers are never corrected by measurement
-    # and are the two worth getting right.
-    SHORTLIST=0.0,   # free
-    BISECT=100.0,    # MEASURED per CANDIDATE, 2026-08-11: 796s / 8 = 99s. Was 8.0, which
-                     # priced one bisection PROBE - but the board is ticked once per
-                     # candidate, and a candidate is a bracket hunt (up to 6 escalating
-                     # probes) plus BISECT_STEPS of bisection. A prior in a different unit
-                     # from the thing it counts is a 12x error in the opening ETA.
+    # ETA. CONFIRM is single-unit, so its number is never corrected by measurement.
     VERIFY=50.0,     # per cell: 12 (E5) + 12 (S1) + 25 (D2) judge calls, E5/S1 concurrent,
                      # plus two batched generations of MAX_NEW_TOKENS
     REFINE=50.0,     # per cell
