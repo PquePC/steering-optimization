@@ -1244,7 +1244,7 @@ def test_task21_tier_ordering_is_fixed_to_pareto_distance():
     assert phases._tier_config(cfg)["tier_order"] == "pareto_distance"
 
 
-def test_task21_real_garlic_scan_reproduces_the_four_cell_frontier():
+def test_task21_real_garlic_scan_reproduces_the_four_cell_frontier(capsys):
     fixture = Path(__file__).parent / "fixtures" / "garlic_shakedown_scan.jsonl"
     rows = [json.loads(line) for line in fixture.read_text(encoding="utf-8").splitlines()]
     result = phases.phase2_shortlist(rows, write=False)
@@ -1259,12 +1259,20 @@ def test_task21_real_garlic_scan_reproduces_the_four_cell_frontier():
     # Each displayed metric must come from the selected cell, not from different doses on
     # the same layer as the old `_by_layer` table did.
     source = {(row["layer"], round(row["r"], 6)): row for row in rows}
+    for frontier_cell in result["frontier"]:
+        raw = source[(frontier_cell["layer"], round(frontier_cell["r"], 6))]
+        assert frontier_cell["d3_rank_med"] == raw["d3_rank_med"]
     for candidate in result["candidates"]:
         raw = source[(candidate["layer"], round(candidate["r"], 6))]
         assert candidate["reach"] == raw["reach"]
         assert candidate["d3"] == raw["d3"]
+        assert candidate["d3_rank_med"] == raw["d3_rank_med"]
         assert candidate["s3"] == raw["s3"]
         assert candidate["why"]
+
+    table = capsys.readouterr().out
+    assert "d3 rank" in table
+    assert "L57@0.300" in table and "        2" in table
 
     excluded = {row["layer"]: row for row in result["excluded_layers"]}
     assert 37 in excluded and 18 in excluded

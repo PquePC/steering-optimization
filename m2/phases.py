@@ -1341,7 +1341,9 @@ def phase2_shortlist(scan_rows: Sequence[dict], *,
         surface, eligible, reach_floor=reach_floor, s4_min=s4_min)
     frontier_records = [dict(layer=int(row["layer"]), r=float(row["r"]),
                              reach=float(row["reach"]), d3=float(row["d3"]),
-                             d3_rate=row.get("d3_rate"), s3=float(row["s3"]))
+                             d3_rate=row.get("d3_rate"),
+                             d3_rank_med=row.get("d3_rank_med"),
+                             s3=float(row["s3"]))
                         for row in full_frontier]
     payload = dict(
         phase=PHASE2,
@@ -1380,11 +1382,12 @@ def phase2_shortlist(scan_rows: Sequence[dict], *,
     print("=" * 78)
     for note in notes:
         print(f"   note: {note}")
-    print(f"   {'cell':>14} {'reach':>7} {'d3':>9} {'s3':>7}  why")
+    print(f"   {'cell':>14} {'reach':>7} {'d3':>9} {'d3 rank':>9} {'s3':>7}  why")
     for cand in tier0:
         label = f"L{cand['layer']}@{float(cand['r']):.3f}"
+        d3_rank = "-" if cand.get("d3_rank_med") is None else f"{cand['d3_rank_med']:g}"
         print(f"   {label:>14} {float(cand['reach']):>7.2f} "
-              f"{float(cand['d3']):>9.5f} {float(cand['s3']):>7.2f}  "
+              f"{float(cand['d3']):>9.5f} {d3_rank:>9} {float(cand['s3']):>7.2f}  "
               f"{cand['selection_kind']} distance={float(cand['frontier_distance']):.6f}")
     if tier_cfg["exhaustive"]:
         print(f"   EXHAUSTIVE: {len(exhaustive_candidates)} eligible cells will be bisected "
