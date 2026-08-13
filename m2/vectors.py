@@ -5,7 +5,7 @@ This module owns everything between "a concept word" and "an alpha you can injec
   extract_all_layers      Macar extraction, one call per layer, cached to disk
   vec_fingerprint         content hash of a steering vector (bug 23)
   concept_first_token_ids first-token ids for E6/D3 mass, bug-20 filtered
-  check_reference_norm    R5, the +/-2 sigma band, reference layer ONLY (bug 19)
+  check_reference_norm    R5, finite and non-zero at the reference layer
   build_dose_map          alpha = r * ||h_L|| / ||v_L||, writes dose_map.json + norms.jsonl
 
 **The public API is in r, never in alpha.** Spec section 3: at fixed alpha the real dose varies
@@ -44,15 +44,6 @@ from . import model
 # --------------------------------------------------------------------------------------
 # Constants
 # --------------------------------------------------------------------------------------
-
-# Macar's reported vector-norm population, AT THE REFERENCE LAYER. Bug 19: the residual
-# stream grows with depth, so a difference-in-means vector is naturally small early and large
-# late (observed L6=12 ... L46=8128, L37=4352). Applying this band at every layer declared a
-# working rig broken. See check_reference_norm.
-MACAR_NORM_MEAN: float = 4664.0
-MACAR_NORM_SD: float = 982.0
-REF_NORM_BAND: tuple[float, float] = (2700.0, 6628.0)      # +/-2 sigma
-REF_NORM_1SIGMA: tuple[float, float] = (3682.0, 5646.0)    # informational only
 
 # Macar's published baseline-word count. Spec section 11 does not tabulate this, so it is
 # declared here rather than defaulted out of CONFIG; `config.CONFIG` may override it with an
@@ -482,37 +473,20 @@ def concept_first_token_ids(concept: str) -> tuple[list[int], list, list]:
 # --------------------------------------------------------------------------------------
 
 def reference_norm_verdict(vec_norm: float, ref_layer: int) -> tuple[bool, str]:
-    """Pure form of R5: does this norm sit inside Macar's +/-2 sigma band?
-
-    Band is +/-2 sigma of 4664 +/- 982, i.e. [2700, 6628]. Two sigma and not one, because
-    4664 +/- 982 is a spread ACROSS CONCEPTS at the reference layer: an individual concept a
-    full SD from the mean is normal (Lightning extracts to ~3472 and detects at 0.500,
-    clearly a live vector). R5 exists to catch a broken extraction - an order of magnitude
-    out - not a concept one SD from the population mean. Between 1 and 2 sigma is reported
-    as information, never as a failure.
-    """
-    lo, hi = REF_NORM_BAND
-    passed = lo <= vec_norm <= hi
-    if not passed:
-        return False, (f"L{ref_layer} vector norm {vec_norm:.0f} is outside 2 sigma of Macar's "
-                       f"{MACAR_NORM_MEAN:.0f} +/- {MACAR_NORM_SD:.0f} ([{lo:.0f}, {hi:.0f}]) - "
-                       f"extraction is probably broken; nothing downstream is worth running")
-    lo1, hi1 = REF_NORM_1SIGMA
-    if not (lo1 <= vec_norm <= hi1):
-        return True, (f"L{ref_layer} vector norm {vec_norm:.0f} is >1 sigma from Macar's mean "
-                      f"{MACAR_NORM_MEAN:.0f} but within 2 sigma - normal per-concept variation, "
-                      f"not a broken extraction")
-    return True, f"L{ref_layer} vector norm {vec_norm:.0f}, within 1 sigma of Macar's mean"
+    """Pure R5: the vector norm must be finite and non-zero; always report the number."""
+    norm = float(vec_norm)
+    passed = math.isfinite(norm) and norm > 0.0
+    detail = f"L{int(ref_layer)} vector norm {norm:.6g}"
+    return (True, detail + "; finite and non-zero") if passed else (
+        False, detail + "; extraction is broken because the norm is zero or non-finite")
 
 
 def check_reference_norm(ref_layer: int) -> tuple[bool, str]:
-    """R5. Check the extracted vector norm AT THE REFERENCE LAYER ONLY.
+    """R5. At the reference layer, require only a finite, non-zero norm and report it.
 
-    Bug 19: residual-stream norm grows with depth, so difference-in-means vectors are
-    naturally small early and large late (observed L6=12 ... L46=8128 with L37=4352, correct,
-    and confirmed by rig-check Dust=4960). Macar's 4664 +/- 982 describes the reference layer.
-    Applying the band at every layer flagged 5 of 6 layers and declared a working rig broken.
-    Every other layer's norm is logged by build_dose_map and checked against nothing.
+    A model-specific magnitude band is not an instrument check: norms scale with architecture
+    and depth. Zero/NaN/Inf is the portable failure that proves extraction returned no usable
+    direction; R14 and the escalation ladder own behavioural validation.
     """
     run = _run()
     vec = run.vecs[int(ref_layer)]    # hard index: R5 on a layer we never extracted is a bug

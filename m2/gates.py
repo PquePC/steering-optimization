@@ -2284,15 +2284,8 @@ def r4_rig_check() -> dict:
 
 
 def r5_reference_norm(ref_layer: int | None = None) -> dict:
-    """R5 (v1's [S5], bug 19). Vector norm at the REFERENCE LAYER ONLY.
-
-    Bug 19: residual-stream norm grows with depth, so difference-in-means vectors are
-    naturally small early and large late (L6 = 12 ... L46 = 8128). Macar's 4664 +/- 982
-    describes the reference layer; applying the band everywhere flagged 5 of 6 layers and
-    would have declared a working rig broken. The band is +/-2 sigma, not +/-1: 982 is a
-    spread ACROSS CONCEPTS, and Lightning at 3472 is a live vector that detects at 0.500.
-    """
-    name = "R5 reference-layer vector norm"
+    """R5. The reference-layer vector norm must be finite and non-zero, and is reported."""
+    name = "R5 finite non-zero reference-layer vector norm"
     if not _model_ready() or not getattr(config.RUN, "vecs", None):
         reason = ("no extracted vectors yet: R5 reads ||v_L|| at the reference layer. Expected "
                   "before Phase 0 - extraction IS Phase 0, which then runs R5 itself as step 3")
@@ -2301,9 +2294,9 @@ def r5_reference_norm(ref_layer: int | None = None) -> dict:
 
     vectors = _mod("vectors")
     if ref_layer is None:
-        # 0.60 of depth is Macar's reference (L37 on Gemma3-27B); take the extracted layer
-        # nearest it rather than assuming L37, so a different model still checks the right
-        # place. `get_layer_at_fraction` is int(n_layers * fraction) - bug 11.
+        # Keep the established reference location for a stable visible norm, but compare it
+        # with no model-specific population constants. `get_layer_at_fraction` is
+        # int(n_layers * fraction) - bug 11.
         target = 0.60 * int(config.RUN.n_layers)
         ref_layer = min(config.RUN.vecs, key=lambda L: abs(L - target))
 

@@ -1388,6 +1388,28 @@ def test_task24_knee_cells_join_scan_and_are_visible_to_phase2(
                for row in shortlist["frontier"])
 
 
+def test_task15_r5_fails_zero_and_nonfinite_but_has_no_model_specific_band():
+    """Exercise the real pure function without importing vectors.py's torch dependency."""
+    path = Path(__file__).resolve().parent.parent / "vectors.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    node = next(item for item in tree.body
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and item.name == "reference_norm_verdict")
+    module = ast.fix_missing_locations(ast.Module(body=[node], type_ignores=[]))
+    namespace = {"math": math}
+    exec(compile(module, str(path), "exec"), namespace)  # noqa: S102 - isolated pure function
+    verdict = namespace["reference_norm_verdict"]
+
+    for broken in (0.0, float("nan"), float("inf"), -1.0):
+        passed, detail = verdict(broken, 37)
+        assert passed is False
+        assert "norm" in detail and ("zero" in detail or "non-finite" in detail)
+    passed, detail = verdict(1e-300, 37)
+    assert passed is True, "minimal R5 must not encode a model-specific lower band"
+    assert "1e-300" in detail, "the measured norm stays visible beside the check"
+    assert verdict(4054.0, 37)[0] is True
+
+
 def test_task21_gate5_cannot_substitute_d3_rate_for_the_d3_axis(monkeypatch):
     rows = [dict(layer=i, alpha=float(i), d2=i / 9, usable=True) for i in range(10)]
 
