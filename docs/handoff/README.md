@@ -57,7 +57,8 @@ reason** — that is a useful contribution. Building it is not.
 | [23](23-behavioural-spot-check.md) | Sit with the model at the operating point | `s3` is 57 multiple-choice letters, `s2`/`s1` are 12 short answers. Nothing covers refusal, long-form, multi-turn or instruction-following | yes, after the first completed run |
 | [24](24-dose-knee-search.md) | Bisect the dose gap during SCAN | The whole covert-to-saturated transition falls between `r`=0.30 and 0.60 and is unsampled; the layers it would reveal are not candidates, so it must run before selection | **yes** |
 | [17](17-wilson-intervals.md) | Wilson intervals on every rate, every concept | A binomial SE is exactly zero at p=0 and p=1, and 29 of 30 v1 cells landed there | yes, before the run |
-| [25](25-d3-autopsy.md) | `d3` autopsy on four cells | The frontier ranks on `d3`, which nothing has validated; at both candidate cells the concept is the **rank-2 token** and nothing stores what rank 1 is. Disposable by design | **yes — before task 11** |
+| [25](25-d3-autopsy.md) | `d3` autopsy on four cells | The frontier ranks on `d3`, which nothing has validated; at both candidate cells the concept is the **rank-2 token** and nothing stores what rank 1 is. Disposable by design | DONE — it answered |
+| [26](26-measured-detection-axis.md) | Frontier ranks on measured `d2` | Task 25 measured `d2` = 1.000 at both "covert" cells. `d3` tracks whether the model skips its preamble, not whether it can name the concept. Also gives selection a second sanity term free, and lets the influence floor relax in recorded steps | **yes — blocks task 11** |
 
 ## What you owe the documentation
 

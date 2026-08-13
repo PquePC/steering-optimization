@@ -1436,3 +1436,42 @@ sharing one file and asserts the naive walk double-counts while the corrected on
 
 **Result.** Silent? Yes, and comfortably so: a wrong number that passes its own threshold and
 matches a story you already believe is one nobody re-derives.
+
+### 2026-08-13 — `d3` read the preamble, not the answer, and inverted the frontier
+
+**Symptom.** Task 25 measured real `d2` at the four frontier cells. `d2` = 1.000 at all four,
+including `L57@0.30` (`d3` 0.0018) and `L58@0.30` (`d3` 0.027) — the two cells task 21 ranked as
+the covert end. The positive control `L59@0.30` passed, so the instrument was sound.
+
+**Root cause.** An off-by-one in the read window. `FORCED_PREFILL` ends `"The thought is about"`;
+the model continues `' the'` (p = 0.99995), `' word'` (p = 0.998), `' "'`, then `garlic`.
+`ALLOW_FILLER` extends by exactly one token, lands on `' word'`, and sums 3.5e-5 of concept mass.
+Where the model is saturated it opens with `garlic garlic garlic…` and no preamble, and `d3` reads
+1.0. So **`d3` measures whether the model is degenerate enough to skip its preamble**, which
+anti-correlates with detection precisely where a covert cell would live.
+
+**Why nothing caught it.** Gate 5 is the check that correlates `d3` against real `d2`, and it has
+never run — it needs `verified.jsonl`, which exists from Phase 4, and no run has reached Phase 4.
+The proxy was load-bearing for selection from the first run and validated in none of them. Two
+things made it look healthy: `d3_rate` appears to be a second opinion but is the same mass
+thresholded at `D3_RATE_THRESH`, and `d3_rank_med` = 2 at the candidate cells was read as "nearly
+undetectable" when it meant "one token behind, and the model says it three tokens later".
+
+A second defect surfaced in the same output. The model emitted `garlic garlic garlic…` for fifty
+tokens at a cell reporting `s3` = 0.98. `s4 = min(s1, s2, s3)` is only computed in Phase 4;
+every scan row carries `s2 = None`, so selection sees `s3` alone, and `s3` is 57 multiple-choice
+letter logits — structurally blind to generative collapse. `_cheap_sane`'s own docstring predicted
+it: *"a cell can pass S3 and still be looping (S2)"*. Task 14 recorded it as a hypothesis; this
+observed it.
+
+**Fix.** Task 26: the frontier's detection axis becomes real `d2` measured at the ~20 eligible
+cells, priced by task 25 at ~13 s per cell. `d3` stays a scan signal and gate 5's subject. `s2` is
+recomputed as `s2_forced` from the same generations at no extra cost, giving selection two sanity
+terms instead of one. The influence floor relaxes in recorded steps expressed as `k/12`.
+
+**Check.** Task 25's four cells become the regression fixture: low `d3` with `d2` = 1.0 must not
+reach the frontier.
+
+**Result.** Silent? Completely, and it would have stayed silent through a full run — VERIFY would
+have rejected every cell against `D2_MAX` and reported "no qualifying cell", which reads as a null
+result about the model rather than a broken axis.
