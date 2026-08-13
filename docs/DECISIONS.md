@@ -382,3 +382,39 @@ the relevant task documents:
    prerequisite for task 08's capture rather than a tidy-up.
 
 **Result:** run in flight; SCAN running at time of writing.
+
+## 2026-08-12 — Shakedown run crashed in VERIFY; five defects and two design gaps found
+**By:** PquePC (ran it), Opus (analysis)
+**Kind:** phase complete
+
+Garlic reached **38m22s** and died on the first Phase 4 cell. SCAN completed 147/147, BISECT 8/8 on
+tier 0, VERIFY 0/11. No operating point. Exactly what a shakedown is for.
+
+**The crash:** `judge_many returned results out of order` — but they were in order. The cache key
+carries a raw float `r`, and one side of the round trip normalises it while the other does not
+(`1.3499999999999999` vs `1.35`; and in gate 4, `0.40312499999999996` vs `0.403125`). Both vanish
+at six decimals, and `CONTRACT.md` already mandates `R_DECIMALS` for exactly this. **It could not
+have existed before a run reached bisection** — every `r` upstream comes from `SCAN_DOSES`
+literals, which round-trip unchanged. Task [18](handoff/18-float-key-normalisation.md).
+
+**The design gap that matters more than the crash:** Phase 3 hands Phase 4 the *maximum sane dose*.
+For L58 it chose r = 1.35, while L58's target signature — reach 0.42, `d3` 0.03, `s3` 0.98 — is at
+r = 0.30, and the layer saturates by r = 0.60. The pipeline found the cell it exists to find and
+then discarded the dose that made it interesting. Maximum sane dose maximises `e5` *and* `d2`;
+the objective is `argmax(e5)` subject to `d2 <= D2_MAX`. Open item 9.
+
+**Also found:** 28% of reachable cells have `s3` below `S4_MIN` and Phase 2 filters none of them,
+while `_by_layer` reports the *most damaged* dose for any layer flat on reach — L37 was shortlisted
+showing `d3` 0.010 from a cell with `s3` 0.48, when at its sane dose its `d3` is 1.00 (item 10).
+`tier_verification.json` claimed "all tiers exhausted" on a crashed run (item 11). Gate 1's
+auto-selected HIGH anchor has the concept token at rank 2, so it does not test the property gate 1
+exists for, and its LOW anchor is a broken cell (item 12). Gate 11 skipped because the upstream
+judge wants `OPENAI_API_KEY` and the preflight check only imported the module instead of
+constructing the judge (item 13).
+
+**Worked:** the third dose woke nine layers (L47, L49–L56) that were invisible at r = 0.30, so it
+earned its cost. Reach reproduced the first run exactly at shared doses. The dead-layer guard
+excluded 26 of 41 rejected layers. Gates 2a, 3, 7a, 7b and 9 passed. The `d2` null transcripts
+landed. Gate 1 wrote its 24-row role-blind label packet.
+
+**Result:** gates 5 pass / 1 FAIL / 7 SKIPPED. Timings and science in [`TODO.md`](TODO.md).

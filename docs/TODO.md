@@ -116,6 +116,77 @@ task 08's full capture - and the "under 20 GB free" guard is the one that **can 
 (task 09 item 1). That guard is already a stated prerequisite for enabling capture; this is the
 concrete reason.
 
+### 9. Phase 3 hands Phase 4 the maximum sane dose, which is the wrong dose for the objective
+**The most important finding of the 2026-08-12 shakedown.** Phase 3 chooses the point just inside
+the sanity boundary - the *highest* sane dose. For L58 it chose **r = 1.35**.
+
+But L58's target signature is at **r = 0.30**: reach 0.42, `d3` 0.03, `s3` 0.98. Influence present,
+detectability near zero, model intact. That is the cell this pipeline exists to find, and it is the
+same one the first run found. By r = 0.60 the layer is already saturated (reach 1.00, `d3` 1.00).
+
+So the scan found the answer and Phase 3 discarded the dose at which it was the answer. Phase 5
+refines by one dose step either side of 1.35, which never approaches 0.30.
+
+**The pipeline is optimising the wrong thing.** Maximum sane dose maximises `e5` *and* `d2`; the
+objective is `argmax(e5)` **subject to** `d2 <= D2_MAX`. Options:
+
+- **(i) Carry the entering dose forward.** Phase 2 knows which dose put a layer on the shortlist -
+  the residual route found L58 *at r = 0.30*. Phase 3 should keep that alongside the boundary, and
+  Phase 4 should verify both. Cheapest and most faithful: 2 cells per layer instead of 1, ~+7 min
+  per concept at tier-0 size 8.
+- **(ii) Phase 3 optimises the cheap proxies for the real objective** - lowest `d3` subject to
+  `reach >= E6_FLOOR` and sane - rather than the sanity boundary alone.
+- **(iii) Phase 4 samples the sane range** at both ends rather than only the top.
+
+Recommend (i). Needs a decision before the next run: a run that verifies only the boundary dose
+cannot find a qualifying cell for any layer that saturates below it.
+
+### 10. Phase 2 consumes cells where the model is destroyed, and 28% of the surface is
+**37 of 130 reachable cells have `s3` below `S4_MIN`** (3 at r=0.15, 20 at r=0.30, 14 at r=0.60).
+Routes 1, 2 and 3 and the OLS `d3 ~ e6` fit all read those cells without filtering; `_cheap_sane`
+exists but is used only in Phase 3.
+
+R8 already states the principle for the expensive tier: *"where sanity is broken, D2 is not
+readable - and must not be read"*. `d3` is the same quantity measured cheaply and inherits the same
+argument. A `d3` of 0.01 at a cell where `s3 = 0.48` is not evidence of covertness; it is evidence
+the forced-ID pathway is broken.
+
+Compounding it, **`_by_layer` reports the most damaged dose for any layer that is flat on reach**:
+`best = max(rows, key=(reach, r))` breaks ties on reach by *highest r*, so every layer reading
+reach 0.00 at all doses reports its numbers from r = 0.60. L37 was shortlisted showing `D3 0.010`
+taken from r = 0.60 where `s3 = 0.48`; at its sane dose (r = 0.30, `s3 = 0.90`) L37's `d3` is
+**1.00**. The selection table displayed the exact false positive the project exists to avoid.
+
+Decide: exclude insane cells from the fit and from `_by_layer`'s "best", or keep them and flag.
+Recommend excluding, on R8's argument.
+
+### 11. `tier_verification.json` claims exhaustion on a crashed run
+The shakedown wrote `"termination": "all configured/live tiers exhausted without a qualifying
+cell"` while tier 0's state was `FAILED`, `n_verified` was 0, and tiers 1-5 never ran. A reader
+would conclude the search was thorough and found nothing. **Aborted and exhausted must not share a
+termination string.**
+
+### 12. Gate 1's anchors do not test what gate 1 is for
+The shakedown selected HIGH = L58 r=0.300 (reach 0.417, `d3` rate 0.000, **`d3` rank 2**) and
+LOW = L44 r=0.600 (reach 0.000, `d3` rate 1.000, rank 1).
+
+Two problems. The HIGH anchor is supposed to be *real drift where the concept token is
+**unreachable*** - a cell a word-counting judge would score low and an influence-reading judge
+would score high. At **rank 2** the token is nearly top, so a word counter scores it high too and
+the anchors stop discriminating between the two hypotheses. And the LOW anchor sits at `s3 = 0.67`,
+below `S4_MIN` - its "no drift" may be damage rather than absence of steering.
+
+The 24-row label packet was written and is role-blind and shuffled, which is correct. **Do not
+spend the labelling effort until the anchor criteria are fixed**, or the labels certify a test that
+cannot separate the hypotheses.
+
+### 13. Gate 11 needs `OPENAI_API_KEY`, not `OPENROUTER_API_KEY`
+`repo judge could not be constructed: ValueError: API key required. Set OPENAI_API_KEY in .env file
+or pass api_key parameter.` The preflight import check passed because it only imported the module;
+it never constructed the judge. Operational, not code: export `OPENAI_API_KEY` as well, or point
+the upstream judge at OpenRouter - and extend the preflight check to **construct** the judge rather
+than import it.
+
 ---
 
 ## Suggestions — NOT SCHEDULED, DO NOT BUILD
@@ -228,6 +299,40 @@ breakdown at a **steered** cell, which needs vectors and therefore runs after th
 
 **The ETA works.** It read `1h09m21s` at 1m30s elapsed with every pending phase contributing units.
 On the first Garlic run the same board read `0m00s` from start to finish.
+
+## Science observations from the 2026-08-12 shakedown (SCAN)
+
+**The third dose earned its place.** Nine layers cleared `E6_FLOOR` at r = 0.60 having been below
+it at r = 0.30: **L47, L49, L50, L51, L52, L53, L54, L55, L56.** The band the third dose was added
+to resolve is real and was previously invisible.
+
+**Reach reproduces the first run exactly** at the shared doses: L53 0.17, L57 0.33, L58 0.42,
+L59/L60 1.00, L61 0.92 at r = 0.30. Extraction and injection are stable across runs.
+
+**`d3` is non-monotonic in dose, and `s3` explains it.** L37 reads `d3` 0.00 / 1.00 / 0.01 across
+r = 0.15 / 0.30 / 0.60 while `s3` reads 0.93 / 0.90 / 0.48. The collapse at the top dose is the
+model being destroyed, not the concept going covert - the forced-ID pathway stops working. The same
+shape appears at L38, L39, L40, L41 and L43. **This is section 9.2's scenario occurring
+spontaneously across the scan surface**, and it is why open item 10 matters.
+
+**L58 at r = 0.30 is the target cell and it is sane**: reach 0.42, `d3` 0.03, `s3` 0.98. Influence
+without proportional detectability, model intact.
+
+**L37 - Macar's reference layer - is the anti-target for this objective.** At its sane dose
+(r = 0.30, `s3` 0.90) it reads reach 0.00 with `d3` 1.00: the model names the concept under forcing
+with certainty while showing no concept mass in free generation. Fully detectable, zero influence.
+
+## Measured timings, 2026-08-12 shakedown (A100-80GB, 49 layers, 3 doses)
+
+| Phase | Measured | Prior | Note |
+|---|---|---|---|
+| CAL | **89.9 s** | 420 s | over-priced 4.7x; the MMLU download is not repeated on a warm volume |
+| SCAN | **10.9 s/cell**, 147 cells, 26m46s | 13 s | good |
+| SHORTLIST | 0 s | 0 s | |
+| BISECT | **68.7 s/candidate**, 8 candidates, 9m09s | 100 s | over-priced; re-price after a full run |
+| VERIFY / REFINE / CONFIRM / CONTROLS | still never observed | | the crash landed on VERIFY's first cell |
+
+Run reached 38m22s before the Phase 4 crash.
 
 ## Measured timings (A100-80GB, Gemma3-27B, 49 layers in scope)
 

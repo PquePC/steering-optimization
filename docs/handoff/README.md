@@ -43,6 +43,7 @@ reason** — that is a useful contribution. Building it is not.
 | [14](14-mmlu-by-generation.md) | Verify `s3` by generation | **FUTURE** — `s3` cannot tell "answers C" from "wants to emit noise, C is highest among letters" | no |
 | [15](15-r5-portability.md) | R5's norm band is Gemma3-27B-specific | It fails on any other model while the vector is healthy; most of its job may already be done behaviourally | propose first |
 | [16](16-judge-bakeoff.md) | Judge bake-off on stored transcripts | **FUTURE** — replay judging with no GPU and score candidates on the gates already built | no |
+| [18](18-float-key-normalisation.md) | Judge cache key is not float-normalised | **The shakedown's crash.** A bisected `r` round-trips to a different float and the order guard raises; kills every run at Phase 4 | **yes — blocker** |
 | [17](17-wilson-intervals.md) | Wilson intervals on every rate, every concept | A binomial SE is exactly zero at p=0 and p=1, and 29 of 30 v1 cells landed there | yes, before the run |
 
 ## What you owe the documentation
