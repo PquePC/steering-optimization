@@ -187,6 +187,25 @@ it never constructed the judge. Operational, not code: export `OPENAI_API_KEY` a
 the upstream judge at OpenRouter - and extend the preflight check to **construct** the judge rather
 than import it.
 
+### 14. The dose grid never samples the window where a mid-layer operating point could exist
+Every candidate so far sits at **L51-L58 of 62**, against Macar's reference of L37. The data says
+we are not *choosing* late layers - **reach is 0.00 at every layer L13-L42 at every dose scanned**,
+so late depth is the only place anything happens at all.
+
+But the grid is why, at least in part. For the mid layers the third dose is **past the sanity
+boundary**: bisection put L37's boundary at `r ~ 0.3937-0.4031`, and the scan samples 0.15, 0.30
+and 0.60. So L37 is effectively measured at **two** usable doses, and **the window from 0.30 to
+0.40 - the entire top of its sane range - is never sampled.** The same holds for L31-L43.
+
+At L37 the run therefore shows reach 0.00 at r = 0.30 (sane) and reach 0.00 at r = 0.60 (broken,
+`s3` 0.48), and concludes nothing is there. **Whether reach rises between 0.30 and 0.40 is
+unmeasured.**
+
+Cheap to close: after task 21 lands, a cheap-tier-only probe of L31-L43 at a few doses between 0.30
+and each layer's bisected boundary. No judge calls, no generations. It directly tests whether the
+late-layer bias is a property of the model or an artefact of a three-point grid - and that
+distinction belongs in the write-up either way.
+
 ---
 
 ## Suggestions — NOT SCHEDULED, DO NOT BUILD

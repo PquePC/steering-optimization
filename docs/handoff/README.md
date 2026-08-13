@@ -51,6 +51,7 @@ reason** — that is a useful contribution. Building it is not.
 | [20](20-phase2-sanity-filter.md) | ~~Phase 2 sanity filter~~ | **SUPERSEDED** by 21 | no |
 | [21](21-unified-cell-selection.md) | Unified cell-level Pareto selection | Replaces three routes, the padding, the fit and the dose decision with one rule over `(layer, dose)` cells | **yes, on this branch** |
 | [22](22-relaxed-detection-ceiling.md) | Interim `D2_MAX = 0.50` | CONFIRM and CONTROLS have never run; they need a qualifying cell to exist | yes |
+| [23](23-behavioural-spot-check.md) | Sit with the model at the operating point | `s3` is 57 multiple-choice letters, `s2`/`s1` are 12 short answers. Nothing covers refusal, long-form, multi-turn or instruction-following | yes, after the first completed run |
 | [17](17-wilson-intervals.md) | Wilson intervals on every rate, every concept | A binomial SE is exactly zero at p=0 and p=1, and 29 of 30 v1 cells landed there | yes, before the run |
 
 ## What you owe the documentation
