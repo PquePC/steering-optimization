@@ -1,6 +1,6 @@
 # 26 — Rank the frontier on measured `d2`, not on a logit proxy
 
-**Status: BUILD NOW.** Branch `pareto`. Replaces `d3` as task
+**Status: DONE — `8d96ea8`.** Branch `pareto`. Replaces `d3` as task
 [21](21-unified-cell-selection.md)'s detection axis. **Blocks task [11](11-the-run.md)** — the run
 would otherwise select on an axis the autopsy proved inverted.
 

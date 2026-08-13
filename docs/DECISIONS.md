@@ -569,3 +569,20 @@ upstream rubric's meaning; disabling it would remove evidence. The upstream judg
 OpenAI-compatible rather than OpenAI-exclusive, so changing transport preserves the comparison.
 **Result:** the preflight and the real Gate-11 batch share the same OpenRouter adapter; 128 offline
 tests passed and 2 environment-dependent tests skipped.
+
+## 2026-08-13 — Task 26 replaced the inverted `d3` selection axis with measured `d2`
+**By:** PquePC (design and settled tier counts), Sol (execution)
+**Kind:** task complete
+
+Phase 2 now measures `d2` at n = 5 on eligible cells, rejects forced-ID loops with
+`min(s2_forced, s3)`, and builds the cell frontier on higher reach against lower measured `d2`.
+Eligibility relaxes explicitly from 3/12 to 2/12; 1/12 is measured only for report-only
+near-misses. Measurements resume from a scalar-only row file, and every cell omitted by the
+30-cell cost cap is named.
+
+**Why:** task 25 showed `d3` was a preamble-position proxy: the supposedly covert L57@0.30 and
+L58@0.30 cells both had real `d2` = 1.0. Selection must use the measured outcome once the search
+has narrowed enough to afford it. `D2_SELECT_MAX = 30` takes the upper end of the task's stated
+20–30-cell envelope: it preserves the most coverage while bounding one pass at 150 judge calls
+and roughly seven measured minutes.
+**Result:** `8d96ea8` on `pareto`; 154 tests passed, 2 environment-dependent tests skipped.

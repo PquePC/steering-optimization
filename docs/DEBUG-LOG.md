@@ -1475,3 +1475,9 @@ reach the frontier.
 **Result.** Silent? Completely, and it would have stayed silent through a full run — VERIFY would
 have rejected every cell against `D2_MAX` and reported "no qualifying cell", which reads as a null
 result about the model rather than a broken axis.
+
+**Implementation verification (2026-08-13, `8d96ea8`).** The task-25 four-cell regression now
+forces all four measured `d2` readings to 1.0 and proves that neither low-`d3` cell reaches the
+frontier. Separate trip tests cover looping `s2_forced`, the 1/12 report-only hard stop, exact
+reach counts, named cap omissions, gate 5 remaining a failed finding, and row-level resume without
+persisting response text. Full result: 154 passed, 2 environment-dependent skips.
