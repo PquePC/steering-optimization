@@ -692,11 +692,12 @@ PHASE_UNITS_PRIOR: dict[str, int] = dict(
     #
     # These are priors and are replaced by the truth the moment each phase reports its plan
     # (`size_phase`), which for SCAN and VERIFY is before their first unit runs. The counts
-    # below are the observed Garlic shape: 49 layers in scope x 3 scan doses, eight tier-0
-    # layers plus SHORTLIST_TIER_SIZE=3 mandatory audit layers, and refinement neighbours.
+    # below are the observed Garlic shape: 49 layers x 3 base doses plus Task 24's 21-layer,
+    # two-level knee search (147 + 42 = 189 SCAN CELLS), eight tier-0 cells plus
+    # SHORTLIST_TIER_SIZE=3 mandatory audit cells, and refinement neighbours.
     # Units are stated because BISECT was once priced per probe while ticking per candidate:
     # BISECT=11 CANDIDATES; VERIFY=11 CELLS. The live plan replaces both before either starts.
-    CAL=1, SCAN=147, SHORTLIST=1, BISECT=11, VERIFY=11, REFINE=6, CONFIRM=1, CONTROLS=1,
+    CAL=1, SCAN=189, SHORTLIST=1, BISECT=11, VERIFY=11, REFINE=6, CONFIRM=1, CONTROLS=1,
 )
 
 # Spec 8, in order. `phases.phase5_refine` is REFINE and `phase6_confirm` is CONFIRM.

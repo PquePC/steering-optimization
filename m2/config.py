@@ -70,6 +70,21 @@ CONSTANTS: dict = {
     # L58, but the run must still verify rather than assume that mid-depth cells tolerate it.
     "SCAN_DOSES": (0.15, 0.30, 0.60),
 
+    # Task 24 searches the one coarse gap that contains Garlic's transition from no reach to
+    # saturation. These are explicit rather than inferred from adjacent SCAN_DOSES so a grid
+    # edit cannot silently move the confirmed search interval.
+    "SCAN_KNEE_GAP": (0.30, 0.60),
+
+    # A layer enters the knee band when it is sane at the lower endpoint and either proxy
+    # changes this much across the gap. These values reproduce the 21-layer Garlic band.
+    "SCAN_KNEE_REACH_DELTA_MIN": 0.20,
+    "SCAN_KNEE_D3_DELTA_MIN": 0.30,
+
+    # HARD DEPTH CAP. reach is measured over 12 prompts, so its resolution is 1/12=0.083.
+    # Two bisections of the 0.30 gap resolve r to 0.075; a third would resolve dose more
+    # finely than the measure can distinguish and would buy time, not information.
+    "SCAN_KNEE_DEPTH": 2,
+
     # --- E6, reachability rate (spec 5.2) --------------------------------------------
 
     # Concept probability mass above which a prompt counts as sampling-reachable.

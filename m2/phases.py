@@ -127,6 +127,11 @@ RESID_MAX_CANDIDATES: int = 4   # bound on route 3, so it cannot swamp the short
 D3_SIGNAL_MIN: float = 0.005
 TIER_ORDERINGS: frozenset[str] = frozenset({"e6_desc", "e6_residual_interleave"})
 
+# Measured Task 24 cheap-cell cost on the 2026-08-12 Garlic shakedown. Reporting only: the
+# status board owns the operative prior; this number explains the per-level estimate printed
+# before the knee probe starts.
+KNEE_CELL_SECONDS_MEASURED: float = 10.9
+
 # Phase 3 knobs.
 BISECT_ESCALATE: float = 1.5    # dose multiplier while hunting for the insane end of the bracket
 BISECT_MAX_PROBES: int = 6      # bound on that hunt; each probe is a cheap cell, not free
@@ -675,6 +680,167 @@ def phase0_calibrate(*, layers: Sequence[int] | None = None, n_unsteered: int = 
 # Phase 1 - the full-depth cheap scan (spec 8 Phase 1)
 # =====================================================================================
 
+def _knee_band(scan_rows: Sequence[dict], *, lower_r: float, upper_r: float,
+               reach_delta_min: float, d3_delta_min: float,
+               s4_min: float) -> list[dict]:
+    """Report whether every scanned layer belongs to Task 24's dose-gap band.
+
+    The lower endpoint must be reachable and sane. That is the point from which the search
+    enters the gap; if the upper endpoint is damaged, the first midpoint's s3 reading sends
+    bisection down. This reproduces the confirmed 21-layer Garlic band and never promotes a
+    damaged midpoint to Phase 2.
+    """
+    by_layer: dict[int, dict[float, dict]] = {}
+    for row in scan_rows:
+        by_layer.setdefault(int(row["layer"]), {})[round(float(row["r"]), 6)] = row
+    lower_key, upper_key = round(float(lower_r), 6), round(float(upper_r), 6)
+    report: list[dict] = []
+    for layer, cells in sorted(by_layer.items()):
+        lower, upper = cells.get(lower_key), cells.get(upper_key)
+        selected = False
+        reason = ""
+        delta_reach = delta_d3 = None
+        if lower is None or upper is None:
+            reason = "missing one or both configured gap endpoints"
+        elif not lower.get("reachable"):
+            reason = "lower endpoint is unreachable"
+        elif lower.get("s3") is None or float(lower["s3"]) < float(s4_min):
+            reason = f"lower endpoint s3 is below S4_MIN={float(s4_min):g}"
+        elif (not upper.get("reachable") or lower.get("reach") is None
+              or upper.get("reach") is None or lower.get("d3") is None
+              or upper.get("d3") is None):
+            reason = "upper endpoint or a proxy delta is unavailable"
+        else:
+            delta_reach = abs(float(upper["reach"]) - float(lower["reach"]))
+            delta_d3 = abs(float(upper["d3"]) - float(lower["d3"]))
+            selected = (delta_reach >= float(reach_delta_min)
+                        or delta_d3 >= float(d3_delta_min))
+            reason = (f"|delta reach|={delta_reach:.3f}, |delta d3|={delta_d3:.3f}"
+                      if selected else
+                      f"proxy changes below {float(reach_delta_min):g}/{float(d3_delta_min):g}")
+        report.append(dict(layer=layer, selected=selected, reason=reason,
+                           lower_r=float(lower_r), upper_r=float(upper_r),
+                           delta_reach=delta_reach, delta_d3=delta_d3,
+                           lower_s3=(lower.get("s3") if lower is not None else None),
+                           upper_s3=(upper.get("s3") if upper is not None else None)))
+    return report
+
+
+def _knee_direction(row: dict, *, reach_floor: float, s4_min: float,
+                    d3_low_max: float) -> tuple[str, str]:
+    """Task 24's three-way midpoint decision, returned as `(direction, reason)`."""
+    if not row.get("reachable"):
+        return "down", "midpoint is unreachable"
+    if row.get("s3") is None:
+        raise RuntimeError(f"knee midpoint L{row.get('layer')} r={row.get('r')} has no s3")
+    if float(row["s3"]) < float(s4_min):
+        return "down", f"s3 {float(row['s3']):.3f} < S4_MIN {float(s4_min):g}"
+    if row.get("reach") is None:
+        raise RuntimeError(f"knee midpoint L{row.get('layer')} r={row.get('r')} has no reach")
+    if float(row["reach"]) < float(reach_floor):
+        return "up", f"reach {float(row['reach']):.3f} < E6_FLOOR {float(reach_floor):g}"
+    if row.get("d3") is None:
+        raise RuntimeError(f"knee midpoint L{row.get('layer')} r={row.get('r')} has no d3")
+    if float(row["d3"]) <= float(d3_low_max):
+        return "up", (f"new eligible cell with low d3 {float(row['d3']):.4f} <= "
+                      f"D3_RATE_THRESH {float(d3_low_max):g}; probe up once")
+    return "down", (f"reach arrived but d3 {float(row['d3']):.4f} > "
+                    f"D3_RATE_THRESH {float(d3_low_max):g}")
+
+
+def _phase1_knee_search(rows: list[dict], *, on_cell: Any = None,
+                        on_plan: Any = None, base_todo: int = 0) -> list[dict]:
+    """Run the confirmed two-level cheap knee search and append its cells to scan.jsonl."""
+    cfg = _cfg()
+    lower_r, upper_r = (float(value) for value in cfg["SCAN_KNEE_GAP"])
+    depth_cap = int(cfg["SCAN_KNEE_DEPTH"])
+    if depth_cap != 2:
+        raise ValueError(
+            f"SCAN_KNEE_DEPTH must remain the confirmed cap of 2, got {depth_cap}; reach has "
+            "resolution 1/12=0.083 and two levels already resolve the 0.30 gap to 0.075")
+    report = _knee_band(
+        rows, lower_r=lower_r, upper_r=upper_r,
+        reach_delta_min=float(cfg["SCAN_KNEE_REACH_DELTA_MIN"]),
+        d3_delta_min=float(cfg["SCAN_KNEE_D3_DELTA_MIN"]),
+        s4_min=float(cfg["S4_MIN"]))
+    band = [entry for entry in report if entry["selected"]]
+    n_per_level = len(band)
+    full_cells = n_per_level * depth_cap
+    print("")
+    print("TASK 24 - SCAN dose-knee search")
+    print(f"   band: {n_per_level}/{len(report)} layers over r={lower_r:.2f}-{upper_r:.2f}")
+    print(f"   depth: {depth_cap} (0.30 / 2^2 = 0.075 dose resolution; reach resolves "
+          "only 1/12 = 0.083)")
+    print(f"   per level: {n_per_level} cheap cells ~= "
+          f"{n_per_level * KNEE_CELL_SECONDS_MEASURED / 60:.1f} min; total {full_cells} "
+          f"cells ~= {full_cells * KNEE_CELL_SECONDS_MEASURED / 60:.1f} min")
+    for entry in report:
+        label = "PROBE" if entry["selected"] else "skip"
+        print(f"   L{entry['layer']:<3} {label}: {entry['reason']}")
+
+    existing = {_cell_key(row["layer"], row["r"]): row for row in rows}
+    # Exact remaining work is known for a resumed layer once its first midpoint exists. If it
+    # does not, conservatively price both levels; the plan is corrected to the measured count
+    # after the loop and never understates a fresh run's 42-cell workload.
+    remaining = 0
+    first_mid = 0.5 * (lower_r + upper_r)
+    for entry in band:
+        layer = int(entry["layer"])
+        first = existing.get(_cell_key(layer, first_mid))
+        if first is None:
+            remaining += depth_cap
+            continue
+        direction, _ = _knee_direction(
+            first, reach_floor=float(cfg["E6_FLOOR"]), s4_min=float(cfg["S4_MIN"]),
+            d3_low_max=float(cfg["D3_RATE_THRESH"]))
+        second_mid = (0.5 * (first_mid + upper_r) if direction == "up"
+                      else 0.5 * (lower_r + first_mid))
+        remaining += int(_cell_key(layer, second_mid) not in existing)
+    if on_plan is not None:
+        on_plan(int(base_todo) + remaining)
+
+    measured = 0
+    for entry in band:
+        layer = int(entry["layer"])
+        lo, hi = lower_r, upper_r
+        for depth in range(1, depth_cap + 1):
+            mid = 0.5 * (lo + hi)
+            key = _cell_key(layer, mid)
+            if key in existing:
+                row = existing[key]
+                recovered = True
+            else:
+                raw = cheap.scan_cell(layer, mid)
+                row = dict(raw, phase=PHASE1, scan_provenance="knee_search",
+                           knee_depth=depth, knee_interval_lo=lo, knee_interval_hi=hi,
+                           knee_gap=[lower_r, upper_r])
+                recovered = False
+            direction, reason = _knee_direction(
+                row, reach_floor=float(cfg["E6_FLOOR"]), s4_min=float(cfg["S4_MIN"]),
+                d3_low_max=float(cfg["D3_RATE_THRESH"]))
+            if not recovered:
+                row.update(knee_direction=direction, knee_reason=reason,
+                           knee_found_eligible=bool(
+                               row.get("reachable") and row.get("s3") is not None
+                               and float(row["s3"]) >= float(cfg["S4_MIN"])
+                               and row.get("reach") is not None
+                               and float(row["reach"]) >= float(cfg["E6_FLOOR"])))
+                _append_row(SCAN_FILE, row)
+                rows.append(row)
+                existing[key] = row
+                measured += 1
+                if on_cell is not None:
+                    on_cell(row)
+            print(f"   L{layer} depth {depth} r={mid:.6f}: {reason} -> {direction}"
+                  + (" (recovered)" if recovered else ""))
+            if direction == "up":
+                lo = mid
+            else:
+                hi = mid
+    print(f"   knee search: {measured} new / {full_cells} planned cells written into {SCAN_FILE}")
+    return rows
+
+
 def phase1_scan(*, layers: Sequence[int] | None = None,
                 doses: Sequence[float] | None = None,
                 on_cell: Any = None, on_plan: Any = None) -> list[dict]:
@@ -741,6 +907,8 @@ def phase1_scan(*, layers: Sequence[int] | None = None,
         if i % 10 == 0 or i == len(todo):
             print(f"   {i}/{len(todo)} cells, {time.time() - t0:.0f}s elapsed")
 
+    rows = _phase1_knee_search(rows, on_cell=on_cell, on_plan=on_plan,
+                               base_todo=len(todo))
     reachable = [row for row in rows if row["reachable"]]
     print(f"phase 1    : {len(rows)} rows, {len(rows) - len(reachable)} unreachable, "
           f"{time.time() - t0:.0f}s")

@@ -136,7 +136,9 @@ def test_default_scan_grid_and_opening_eta_cover_all_three_doses():
     would understate the opening ETA by about eleven minutes while still looking plausible.
     """
     assert config.CONFIG["SCAN_DOSES"] == (0.15, 0.30, 0.60)
-    assert monitor.PHASE_UNITS_PRIOR["SCAN"] == 49 * len(config.CONFIG["SCAN_DOSES"])
+    base = 49 * len(config.CONFIG["SCAN_DOSES"])
+    knee = 21 * config.CONFIG["SCAN_KNEE_DEPTH"]
+    assert monitor.PHASE_UNITS_PRIOR["SCAN"] == base + knee
 
 
 def test_dose_for_round_trips_alpha_for(run_ctx):
@@ -1312,6 +1314,78 @@ def test_task21_phase3_maps_sanity_without_replacing_the_selected_dose(
     assert row["selected_r"] == 0.30
     assert row["boundary_hi"] != row["r"], "the boundary must remain metadata"
     assert row["has_window"] is True
+
+
+def test_task24_real_scan_selects_the_confirmed_21_layer_band():
+    fixture = Path(__file__).parent / "fixtures" / "garlic_shakedown_scan.jsonl"
+    rows = [json.loads(line) for line in fixture.read_text(encoding="utf-8").splitlines()]
+    report = phases._knee_band(
+        rows,
+        lower_r=config.CONFIG["SCAN_KNEE_GAP"][0],
+        upper_r=config.CONFIG["SCAN_KNEE_GAP"][1],
+        reach_delta_min=config.CONFIG["SCAN_KNEE_REACH_DELTA_MIN"],
+        d3_delta_min=config.CONFIG["SCAN_KNEE_D3_DELTA_MIN"],
+        s4_min=config.CONFIG["S4_MIN"])
+    selected = [row["layer"] for row in report if row["selected"]]
+    assert len(selected) == 21
+    assert selected == [37, 38, 39, 40, 41, 42, 43, 45, 46, 47, 48, 49,
+                        50, 51, 52, 53, 54, 55, 56, 57, 58]
+    assert config.CONFIG["SCAN_KNEE_DEPTH"] == 2
+
+
+def test_task24_insane_midpoint_always_moves_down():
+    direction, reason = phases._knee_direction(
+        dict(layer=37, r=0.45, reachable=True, reach=1.0, d3=0.0, s3=0.50),
+        reach_floor=0.20, s4_min=0.70, d3_low_max=0.10)
+    assert direction == "down"
+    assert "s3" in reason
+
+
+def test_task24_flat_zero_layer_is_not_in_the_band():
+    rows = [
+        dict(layer=18, r=0.30, reachable=True, reach=0.0, d3=0.0, s3=0.95),
+        dict(layer=18, r=0.60, reachable=True, reach=0.0, d3=0.0, s3=0.95),
+    ]
+    report = phases._knee_band(
+        rows, lower_r=0.30, upper_r=0.60, reach_delta_min=0.20,
+        d3_delta_min=0.30, s4_min=0.70)
+    assert report[0]["selected"] is False
+    assert "below" in report[0]["reason"]
+
+
+def test_task24_knee_cells_join_scan_and_are_visible_to_phase2(
+        run_ctx, tmp_path, monkeypatch, capsys):
+    ctx = run_ctx(run_dir=tmp_path)
+    ctx.mw = object()
+    rows = [
+        dict(phase="SCAN", layer=50, r=0.30, reachable=True, reach=0.0, d3=0.0,
+             d3_rate=0.0, s3=0.95, alpha=1.0),
+        dict(phase="SCAN", layer=50, r=0.60, reachable=True, reach=0.50, d3=0.80,
+             d3_rate=1.0, s3=0.95, alpha=2.0),
+    ]
+
+    def fake_scan(layer, r):
+        if r < 0.50:
+            return dict(phase="SCAN", layer=layer, r=r, reachable=True, reach=0.25,
+                        d3=0.05, d3_rate=0.0, s3=0.95, alpha=r * 3)
+        return dict(phase="SCAN", layer=layer, r=r, reachable=True, reach=0.50,
+                    d3=0.40, d3_rate=1.0, s3=0.95, alpha=r * 3)
+
+    monkeypatch.setattr(cheap, "scan_cell", fake_scan)
+    plans, ticks = [], []
+    got = phases._phase1_knee_search(
+        rows, on_cell=ticks.append, on_plan=plans.append, base_todo=0)
+    knee = [row for row in got if row.get("scan_provenance") == "knee_search"]
+    assert len(knee) == 2
+    assert {row["knee_depth"] for row in knee} == {1, 2}
+    assert all(row["knee_direction"] in {"up", "down"} for row in knee)
+    assert len(ticks) == 2 and plans[-1] == 2
+    output = capsys.readouterr().out
+    assert "per level" in output and "depth: 2" in output
+
+    shortlist = phases.phase2_shortlist(got, write=False)
+    assert any(row["layer"] == 50 and row["r"] == pytest.approx(0.45)
+               for row in shortlist["frontier"])
 
 
 def test_task21_gate5_cannot_substitute_d3_rate_for_the_d3_axis(monkeypatch):
