@@ -77,6 +77,13 @@ def test_config_hash_changes_when_a_science_constant_changes():
     assert config.config_hash(a) != config.config_hash(b)
 
 
+def test_task22_relaxes_only_d2_and_keeps_the_primary_reference_explicit():
+    assert config.CONFIG["D2_MAX"] == 0.50
+    assert config.CONFIG["D2_SCREENING_REFERENCE"] == 0.20
+    assert config.CONFIG["E5_FLOOR"] == 4.0
+    assert config.CONFIG["S4_MIN"] == 0.70
+
+
 def test_runpod_volume_guard_uses_allocation_and_actually_blocks_low_space(
         tmp_path, monkeypatch):
     """Task 09: the old guard read a 500814 GB backing pool and could never fail.
@@ -1348,6 +1355,62 @@ def test_select_returns_an_envelope_that_is_never_a_bare_row():
     assert "layer" not in empty, "the envelope must never look like a row"
     assert driver._cell_of(empty) is None
     assert driver._cell_of(empty.get("winner")) is None
+
+
+def test_task22_labels_relaxed_confirmation_beside_unconfirmed_screening(run_ctx):
+    """A 0.50 winner must be structurally impossible to read as the primary analysis."""
+    from m2 import driver
+    run_ctx()
+    rows = [
+        dict(phase="PHASE4", layer=52, r=0.60, e5=8.0, d2=0.40, s4=0.90,
+             usable=True, qualifies=True),
+        dict(phase="PHASE4", layer=58, r=0.30, e5=7.0, d2=0.10, s4=0.90,
+             usable=True, qualifies=True),
+    ]
+    stored = json.dumps(rows, sort_keys=True)
+    hash_before = config.config_hash(config.CONFIG)
+    configured = phases.select_operating_point(rows)
+    winner = configured["winner"]
+    analysis = driver._threshold_analysis(
+        rows, configured, winner, confirm=dict(phase="CONFIRM", layer=52, r=0.60))
+    fields = driver._threshold_record_fields(analysis)
+
+    assert fields["relaxed_threshold_run"] is True
+    assert fields["interim"] is True
+    assert fields["primary_analysis"] is False
+    assert "NOT PRIMARY" in fields["analysis_label"]
+    assert fields["threshold_in_force"] == {
+        "D2_MAX": 0.50, "E5_FLOOR": 4.0, "S4_MIN": 0.70}
+
+    side_by_side = fields["winner_by_threshold"]
+    assert side_by_side["confirmed"]["D2_MAX"] == 0.50
+    assert side_by_side["confirmed"]["measurement_status"] == "confirmed"
+    assert side_by_side["confirmed"]["winner"]["layer"] == 52
+    assert side_by_side["screening"]["D2_MAX"] == 0.20
+    assert side_by_side["screening"]["analysis_role"] == "screening"
+    assert side_by_side["screening"]["confirmed"] is False
+    assert side_by_side["screening"]["winner"]["layer"] == 58
+    assert json.dumps(rows, sort_keys=True) == stored, "re-selection mutated stored verdicts"
+    assert config.config_hash(config.CONFIG) == hash_before, "re-selection mutated CONFIG"
+
+    line = driver._one_line(dict(winner, **fields))
+    assert "INTERIM RELAXED" in line and "NOT PRIMARY" in line
+
+
+def test_task22_reselection_cannot_relax_sanity_or_effectiveness(run_ctx):
+    run_ctx()
+    rows = [dict(phase="PHASE4", layer=37, r=0.60, e5=9.0, d2=0.0, s4=0.60,
+                 usable=False, qualifies=False)]
+    reading = phases.reselect_operating_point(rows, d2_max=1.0)
+    assert reading["winner"] is None
+    assert reading["constraints"]["E5_FLOOR"] == config.CONFIG["E5_FLOOR"]
+    assert reading["constraints"]["S4_MIN"] == config.CONFIG["S4_MIN"]
+
+
+def test_task22_reselection_rejects_a_non_rate_d2_ceiling(run_ctx):
+    run_ctx()
+    with pytest.raises(ValueError, match=r"\[0, 1\]"):
+        phases.reselect_operating_point([], d2_max=1.01)
 
 
 def test_a_finished_phase_leaves_the_running_state():

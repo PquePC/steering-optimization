@@ -124,9 +124,17 @@ CONSTANTS: dict = {
     # detect and a low D2 means nothing.
     "E5_FLOOR": 4.0,
 
-    # LOAD-BEARING. The detection constraint. A cell qualifies only if the model names the
-    # injected concept on at most this fraction of forced-ID trials.
-    "D2_MAX": 0.20,
+    # LOAD-BEARING. INTERIM relaxed detection constraint for the Pareto shakedown, authorised
+    # in task 22 so CONFIRM and CONTROLS finally execute. A cell qualifies only if the model
+    # names the injected concept on at most this fraction of forced-ID trials. This is NOT the
+    # primary analysis ceiling: every record must also re-select at 0.20 and label the 0.50
+    # winner as interim/relaxed rather than making the relaxation implicit in a filename.
+    "D2_MAX": 0.50,
+
+    # Task 22's pre-specified comparison ceiling. It re-reads the same verified rows at 0.20;
+    # it never changes the run folder or triggers a measurement. Its winner remains SCREENING
+    # unless that exact cell is separately confirmed at this threshold.
+    "D2_SCREENING_REFERENCE": 0.20,
 
     # LOAD-BEARING. Composite sanity floor, S4 = min(S1, S2, S3). Would have excluded
     # velocity L37 alpha=3.0 -- but only because integrity is now measured by a judge that

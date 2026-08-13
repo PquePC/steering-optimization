@@ -61,6 +61,7 @@ __all__ = [
     "phase5_refine",
     "phase6_confirm",
     "select_operating_point",
+    "reselect_operating_point",
     "frontier",
     "covertness_margin",
     # additions, each documented at its definition
@@ -1869,6 +1870,54 @@ def _has_verdict(row: dict) -> bool:
             and "s4" in row and row["s4"] is not None)
 
 
+def _selection_constraints(d2_max: float) -> dict[str, float]:
+    """The three fixed selection constraints with an explicit D2 ceiling."""
+    cfg = _cfg()
+    ceiling = float(d2_max)
+    if not math.isfinite(ceiling) or not (0.0 <= ceiling <= 1.0):
+        raise ValueError(f"D2_MAX must be a finite rate in [0, 1], got {d2_max!r}")
+    return dict(E5_FLOOR=float(cfg["E5_FLOOR"]), D2_MAX=ceiling,
+                S4_MIN=float(cfg["S4_MIN"]))
+
+
+def _select_operating_point(rows: Sequence[dict], constraints: dict[str, float]) -> dict:
+    """Selection implementation shared by the configured and re-derived verdicts."""
+    cfg = _cfg()
+    tie_band = float(cfg["E5_TIE_BAND"])
+    considered = [row for row in rows if _has_verdict(row)]
+    qualifying = [row for row in considered if bool(row["qualifies"])]
+
+    if not qualifying:
+        usable = [row for row in considered if "usable" in row and row["usable"]]
+        return dict(
+            found=False, winner=None, rule="argmax(E5) s.t. qualifies (spec 7.1)",
+            n_considered=len(considered), n_usable=len(usable), n_qualifying=0,
+            tie_band=tie_band, tied=[], constraints=dict(constraints),
+            reason=(f"no cell qualified: of {len(considered)} verified cells {len(usable)} "
+                    f"were usable (S4 >= {constraints['S4_MIN']}), none of which cleared both "
+                    f"E5 >= {constraints['E5_FLOOR']} and D2 <= {constraints['D2_MAX']}. Run "
+                    "the spec 9.3 escalation ladder before concluding the vector is dead."),
+        )
+
+    best_e5 = max(float(row["e5"]) for row in qualifying)
+    tied = [row for row in qualifying if best_e5 - float(row["e5"]) <= tie_band]
+    ranked = sorted(tied, key=lambda row: (float(row["d2"]), -float(row["s4"]),
+                                           int(row["layer"]), float(row["r"])))
+    winner = ranked[0]
+    return dict(
+        found=True, winner=winner,
+        rule=(f"argmax(E5) over qualifying cells; ties within E5_TIE_BAND={tie_band:g} broken "
+              "by lower D2 then higher S4 (spec 7.1). The residual is NOT used"),
+        n_considered=len(considered), n_qualifying=len(qualifying),
+        best_e5=best_e5, tie_band=tie_band,
+        tied=[dict(layer=int(row["layer"]), r=float(row["r"]), e5=float(row["e5"]),
+                   d2=float(row["d2"]), s4=float(row["s4"]),
+                   phase=row["phase"] if "phase" in row else None)
+              for row in ranked],
+        constraints=dict(constraints),
+    )
+
+
 def select_operating_point(rows: Sequence[dict]) -> dict:
     """Spec 7.1, exactly: **the answer is the qualifying cell with the highest E5.**
 
@@ -1892,46 +1941,39 @@ def select_operating_point(rows: Sequence[dict]) -> dict:
     Returns a dict with `found`, `winner`, the tie band, and the rule as a string - never a
     bare row, so a caller cannot mistake "no cell qualified" for "the first row won".
     """
-    cfg = _cfg()
-    tie_band = float(cfg["E5_TIE_BAND"])
-    considered = [row for row in rows if _has_verdict(row)]
-    qualifying = [row for row in considered if bool(row["qualifies"])]
+    return _select_operating_point(
+        rows, _selection_constraints(float(_cfg()["D2_MAX"])))
 
-    if not qualifying:
-        # Not an error: "no operating point exists at these constraints" is a real result, and
-        # spec 9.3's escalation ladder is what distinguishes it from "the vector is dead".
-        usable = [row for row in considered if "usable" in row and row["usable"]]
-        return dict(
-            found=False, winner=None, rule="argmax(E5) s.t. qualifies (spec 7.1)",
-            n_considered=len(considered), n_usable=len(usable), n_qualifying=0,
-            tie_band=tie_band, tied=[],
-            reason=(f"no cell qualified: of {len(considered)} verified cells {len(usable)} "
-                    f"were usable (S4 >= {float(cfg['S4_MIN'])}), none of which cleared both "
-                    f"E5 >= {float(cfg['E5_FLOOR'])} and D2 <= {float(cfg['D2_MAX'])}. Run the "
-                    "spec 9.3 escalation ladder before concluding the vector is dead."),
-        )
 
-    best_e5 = max(float(row["e5"]) for row in qualifying)
-    tied = [row for row in qualifying if best_e5 - float(row["e5"]) <= tie_band]
-    # Lower D2, then higher S4. Layer and r are appended purely so the order is total: two
-    # cells identical on all three would otherwise resolve by list order, which depends on the
-    # order rows were measured in and is not a reason.
-    ranked = sorted(tied, key=lambda row: (float(row["d2"]), -float(row["s4"]),
-                                           int(row["layer"]), float(row["r"])))
-    winner = ranked[0]
+def reselect_operating_point(rows: Sequence[dict], *, d2_max: float) -> dict:
+    """Re-derive selection at one D2 ceiling from stored scalars; measure nothing.
 
+    Only D2 may vary. E5_FLOOR and S4_MIN retain the configured values because loosening
+    effectiveness or sanity would change what the result means, not merely where a detection
+    constraint is drawn. Copies are used so the stored/configured `qualifies` verdict is never
+    mutated and the run's `config_hash` never changes.
+    """
+    constraints = _selection_constraints(d2_max)
+    derived: list[dict] = []
+    for original in rows:
+        row = dict(original)
+        if all(key in row and row[key] is not None for key in ("e5", "d2", "s4")):
+            row["usable"] = float(row["s4"]) >= constraints["S4_MIN"]
+            row["qualifies"] = bool(
+                float(row["e5"]) >= constraints["E5_FLOOR"]
+                and float(row["d2"]) <= constraints["D2_MAX"]
+                and row["usable"])
+        derived.append(row)
+
+    selection = _select_operating_point(derived, constraints)
     return dict(
-        found=True, winner=winner,
-        rule=(f"argmax(E5) over qualifying cells; ties within E5_TIE_BAND={tie_band:g} broken "
-              "by lower D2 then higher S4 (spec 7.1). The residual is NOT used"),
-        n_considered=len(considered), n_qualifying=len(qualifying),
-        best_e5=best_e5, tie_band=tie_band,
-        tied=[dict(layer=int(row["layer"]), r=float(row["r"]), e5=float(row["e5"]),
-                   d2=float(row["d2"]), s4=float(row["s4"]),
-                   phase=row["phase"] if "phase" in row else None)
-              for row in ranked],
-        constraints=dict(E5_FLOOR=float(cfg["E5_FLOOR"]), D2_MAX=float(cfg["D2_MAX"]),
-                         S4_MIN=float(cfg["S4_MIN"])),
+        analysis_role="screening_reselection",
+        primary_analysis=False,
+        confirmed=False,
+        constraints=constraints,
+        selection=selection,
+        winner=selection["winner"] if selection["found"] else None,
+        frontier=frontier(derived),
     )
 
 

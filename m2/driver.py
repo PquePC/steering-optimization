@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import gc
 import json
+import math
 import os
 import subprocess
 import time
@@ -636,6 +637,79 @@ def _qualifying(rows: Any) -> list[dict]:
     return [r for r in rows if isinstance(r, dict) and "qualifies" in r and r["qualifies"]]
 
 
+def _threshold_context() -> dict:
+    """Self-describing Task-22 label for the detection ceiling in force."""
+    cfg = _run().config
+    in_force = float(cfg["D2_MAX"])
+    screening = float(cfg["D2_SCREENING_REFERENCE"])
+    relaxed = not math.isclose(in_force, screening, rel_tol=0.0, abs_tol=1e-12)
+    return dict(
+        threshold_in_force=dict(
+            D2_MAX=in_force,
+            E5_FLOOR=float(cfg["E5_FLOOR"]),
+            S4_MIN=float(cfg["S4_MIN"]),
+        ),
+        relaxed_threshold_run=relaxed,
+        interim=relaxed,
+        primary_analysis=not relaxed,
+        analysis_label=("INTERIM RELAXED — NOT PRIMARY" if relaxed else
+                        "PRE-SPECIFIED PRIMARY"),
+        screening_reference_d2_max=screening,
+    )
+
+
+def _threshold_analysis(verified_rows: Sequence[dict], selection: Any,
+                        winner: dict | None, confirm: Any) -> dict:
+    """Configured confirmation beside an unconfirmed 0.20 re-read of the same rows."""
+    context = _threshold_context()
+    screening = _phases().reselect_operating_point(
+        verified_rows, d2_max=context["screening_reference_d2_max"])
+    confirmed = bool(winner is not None and isinstance(confirm, dict))
+    context["winner_by_threshold"] = dict(
+        confirmed=dict(
+            threshold_role=("interim_relaxed" if context["relaxed_threshold_run"] else
+                            "pre_specified_primary"),
+            analysis_role="confirmed",
+            measurement_status=("confirmed" if confirmed else
+                                "unconfirmed_or_no_winner"),
+            D2_MAX=context["threshold_in_force"]["D2_MAX"],
+            winner=winner,
+            selection=selection if isinstance(selection, dict) else None,
+            confirm=confirm if isinstance(confirm, dict) else None,
+        ),
+        screening=dict(
+            threshold_role="pre_specified_primary_threshold",
+            analysis_role="screening",
+            measurement_status="screening_not_confirmed",
+            D2_MAX=context["screening_reference_d2_max"],
+            winner=screening["winner"],
+            selection=screening["selection"],
+            confirmed=False,
+        ),
+    )
+    return context
+
+
+def _winner_at(label: str, entry: dict) -> str:
+    winner = entry["winner"]
+    cell = ("none" if not isinstance(winner, dict) else
+            f"L{int(winner['layer'])}@r={float(winner['r']):.3f}")
+    return f"{label} D2_MAX={float(entry['D2_MAX']):.2f}: {cell} ({entry['analysis_role']})"
+
+
+def _threshold_record_fields(analysis: dict) -> dict:
+    """Fields written identically to operating_point.json and run_record.json."""
+    return dict(
+        threshold_in_force=analysis["threshold_in_force"],
+        relaxed_threshold_run=analysis["relaxed_threshold_run"],
+        interim=analysis["interim"],
+        primary_analysis=analysis["primary_analysis"],
+        analysis_label=analysis["analysis_label"],
+        winner_by_threshold=(analysis["winner_by_threshold"]
+                             if "winner_by_threshold" in analysis else None),
+    )
+
+
 def _tier_termination(tier_plan: dict, tier_records: Sequence[dict],
                       final_qualifiers: Sequence[dict]) -> str:
     """Describe why tiered verification stopped without conflating failure and coverage."""
@@ -712,6 +786,13 @@ def run_concept(name: str, *, notifier: Any = None, wipe: bool = True, deliver: 
             pass
 
     cfg = _run().config
+    threshold_analysis = _threshold_context()
+    if threshold_analysis["relaxed_threshold_run"]:
+        runio.log(
+            f"ANALYSIS FLAG: {threshold_analysis['analysis_label']}; D2_MAX "
+            f"{threshold_analysis['threshold_in_force']['D2_MAX']:.2f} is the interim "
+            f"confirmation ceiling, and {threshold_analysis['screening_reference_d2_max']:.2f} "
+            "will be re-derived as screening from the same rows")
     winner: dict | None = None
     verified_rows: list[dict] = []
     control_verdicts: dict[str, str] = {}
@@ -753,7 +834,7 @@ def run_concept(name: str, *, notifier: Any = None, wipe: bool = True, deliver: 
                   "ERROR")
         return _finish_concept(state, winner, control_verdicts, wipe=wipe, deliver=deliver,
                                EXPORT_TRANSCRIPTS_OVERRIDE=EXPORT_TRANSCRIPTS_OVERRIDE,
-                               status="failed")
+                               status="failed", threshold_analysis=threshold_analysis)
 
     # ---- Phase 1. Sized and ticked by the phase itself: the ETA is worthless without a unit
     # count, and only Phase 1 knows how many of the 98 grid cells a resumed run still owes.
@@ -979,6 +1060,12 @@ def run_concept(name: str, *, notifier: Any = None, wipe: bool = True, deliver: 
         # unit in the ETA forever, so the estimate never reaches zero on a run that is finishing.
         board.skip_phase("CONFIRM", "no operating point was selected")
 
+    threshold_analysis = _threshold_analysis(verified_rows, selection, winner, confirm)
+    comparison = threshold_analysis["winner_by_threshold"]
+    runio.log("threshold comparison: " +
+              _winner_at("in-force", comparison["confirmed"]) + "; " +
+              _winner_at("reference", comparison["screening"]))
+
     # ---- Controls
     def _run_controls() -> dict:
         controls = _controls()
@@ -1045,21 +1132,26 @@ def run_concept(name: str, *, notifier: Any = None, wipe: bool = True, deliver: 
         control_verdicts=control_verdicts,
         gates=gate_report,
         failed_phases=list(state.failed),
+        **_threshold_record_fields(threshold_analysis),
     )
     try:
         path = runio.write_json(OPERATING_POINT_FILE, payload)
-        runio.log(f"operating point -> {path.name}"
+        runio.log(f"{threshold_analysis['analysis_label']}: operating point -> {path.name}"
                   if winner is not None else
-                  f"no operating point; the reason is in {path.name} (found=false)")
+                  f"{threshold_analysis['analysis_label']}: no operating point; the reason is "
+                  f"in {path.name} (found=false)")
         if winner is not None:
-            _notify(notifier, board, "OPERATING POINT FOUND", _one_line(payload))
+            title = ("INTERIM RELAXED OPERATING POINT FOUND" if
+                     threshold_analysis["relaxed_threshold_run"] else
+                     "OPERATING POINT FOUND")
+            _notify(notifier, board, title, _one_line(payload))
     except Exception as exc:                            # noqa: BLE001
         runio.log(f"operating_point.json write failed ({_label(exc)})", "ERROR")
 
     status = "ok" if not state.failed else "failed"
     return _finish_concept(state, winner, control_verdicts, wipe=wipe, deliver=deliver,
                            EXPORT_TRANSCRIPTS_OVERRIDE=EXPORT_TRANSCRIPTS_OVERRIDE,
-                           status=status)
+                           status=status, threshold_analysis=threshold_analysis)
 
 
 def _one_line(point: dict) -> str:
@@ -1075,6 +1167,8 @@ def _one_line(point: dict) -> str:
     verdicts = point["control_verdicts"] if "control_verdicts" in point else {}
     if verdicts:
         bits.append("controls: " + ", ".join(f"{k}={v}" for k, v in sorted(verdicts.items())))
+    if "relaxed_threshold_run" in point and point["relaxed_threshold_run"]:
+        bits.append(str(point["analysis_label"]))
     return " | ".join(bits)
 
 
@@ -1098,7 +1192,7 @@ def _resume_banner() -> None:
 
 def _finish_concept(state: _ConceptRun, winner: dict | None, control_verdicts: dict,
                     *, wipe: bool, deliver: bool, EXPORT_TRANSCRIPTS_OVERRIDE: bool,
-                    status: str) -> dict:
+                    status: str, threshold_analysis: dict) -> dict:
     """Write the run record, archive, export, deliver, and only then wipe.
 
     The order is the whole point and is spec 14.9's required fix:
@@ -1118,6 +1212,7 @@ def _finish_concept(state: _ConceptRun, winner: dict | None, control_verdicts: d
         failure_labels=dict(state.labels),
         control_verdicts=dict(control_verdicts),
         operating_point=winner,
+        **_threshold_record_fields(threshold_analysis),
         elapsed_s=round(elapsed, 1),
     )
     try:
