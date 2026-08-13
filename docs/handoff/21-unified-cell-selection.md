@@ -80,6 +80,11 @@ Those four are the influence-versus-detectability trade-off curve. Everything el
 
 ## Risks to carry, stated not hidden
 
+- **The `d3` axis may be systematically wrong at exactly the depths the frontier selects.** See
+  TODO item 15: our `d3` disagrees with Macar's published forced-ID curve in *shape* - higher than
+  his at L37-L43, near zero at L52-L58 where our candidates sit - and it is effectively binary,
+  with 74% of reachable cells below 0.05 and 15% above 0.95. If it under-reads late, the frontier
+  is ranked on a blind axis. **Gate 5 is the test, and it decides whether the frontier is real.**
 - **It leans on `d3`, which gate 5 has never validated.** So did the residual route — this is the
   same risk expressed more cleanly, not a new one. Gate 5 settles it, and until it has a number the
   frontier is a search device rather than a measurement.

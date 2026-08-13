@@ -1,8 +1,12 @@
 # 15 — R5 does not port to another model
 
-**Status: DEFERRED - DO NOT BUILD.** Set aside 2026-08-13. R5 has **no effect on Garlic on
-Gemma3-27B** - it passes, and the band it checks is that model's own. This is future-model
-portability work and it does not block anything. The analysis below stands for when it matters.
+**Status: BUILD NOW - MINIMAL ONLY.** Do the one-line version: **R5 checks the vector norm is
+non-zero and finite, and nothing else.** Drop the +/-2 sigma band against Macar's 4664 +/- 982.
+Everything below stays DEFERRED - the dimensionless ratio, the behavioural check, the per-model
+configuration. Rationale: the band is another failure point on a run that needs to reach the end,
+it has no effect on Garlic on Gemma3-27B (it passes at 4054), and a zero-or-NaN check catches the
+failure that actually matters - extraction returning nothing - without encoding one model's
+constants. Report the norm alongside the check so the number stays visible.
 
 ## The problem
 

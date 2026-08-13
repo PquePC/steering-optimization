@@ -206,6 +206,46 @@ and each layer's bisected boundary. No judge calls, no generations. It directly 
 late-layer bias is a property of the model or an artefact of a three-point grid - and that
 distinction belongs in the write-up either way.
 
+### 15. Our `d3` disagrees with Macar's published forced-ID curve, in shape not just level
+Macar's figure 5 (`P(identify | forced)`, mean over 500 concepts on this model) rises from ~0 below
+L25, climbs steeply through L28-L35, and **plateaus near 0.85-0.9 from about L45 to L61**. Our `d3`
+at matched alpha does something close to the opposite in that region:
+
+| layer | our alpha | our `d3` | Macar at that layer and alpha |
+|---|---|---|---|
+| L37 | 3.65 | **1.00** | ~0.57 at alpha=4 |
+| L43 | 2.97 | **1.00** | ~0.8 at alpha=2 |
+| L52 | 2.67 | **0.00** | ~0.8 at alpha=2 |
+| L57 | 2.25 | **0.00** | ~0.85 at alpha=2 |
+| L58 | 2.39 | **0.03** | ~0.85 at alpha=2 |
+
+Not a uniform offset - a **shape disagreement**. We read *higher* than Macar at L37-L43 and *far
+lower* at L52-L58, which is where our candidates are.
+
+**`d3` is also effectively binary.** Over 130 reachable cells: **74% read below 0.05, 15% read above
+0.95, and only 12% sit in between.** A probability mass should not be bimodal like that. It behaves
+like a threshold detector on the *immediate* next token rather than a graded rate.
+
+**The likely mechanism, and it is testable.** `d3` reads concept mass at one position;
+`ALLOW_FILLER` permits a single filler token before it. Macar generates and judges the completion.
+If at late layers the model names the concept after a longer lead-in, `d3` misses it entirely while
+a judge catches it. That would produce exactly this shape: agreement early, collapse late.
+
+**Why this is now the most consequential open item.** If `d3` under-reads at late layers, then
+L57 and L58 reading `d3` ~ 0.00 may be an artefact, their real `d2` could be ~0.85 like Macar's
+mean, they are not covert at all, and **the Pareto frontier of task 21 is built on a corrupted
+axis.**
+
+**Gate 5 is exactly this test** and it has never run. It stops being "the most load-bearing
+unverified number" and becomes *the number that decides whether the current candidate is real*.
+Read it first on the next run. If rho is low **and** `d2` at L57/L58 comes back high, the candidate
+is dead and the frontier must be rebuilt on a validated axis - `e6` alone, per spec 5.3, until a
+better detection proxy exists.
+
+The instrument checks argue against a rig fault: R7 verifies the forced-ID prompt matches upstream
+byte for byte including token position, R14 verifies the hook steers on both paths, R5 verifies
+extraction. So this points at the proxy, not the injection.
+
 ---
 
 ## Suggestions — NOT SCHEDULED, DO NOT BUILD
