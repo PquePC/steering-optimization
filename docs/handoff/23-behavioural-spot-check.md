@@ -14,8 +14,8 @@ The three sanity terms are a narrow net:
 | `s1` | a judge's integrity score on **those same 12 responses** |
 
 Nothing measures instruction-following outside those twelve prompts, long-form coherence, factual
-accuracy in free text, multi-turn behaviour, or **refusal behaviour** — which matters enormously
-later, because the harmful arm is the point of the study.
+accuracy in free text, multi-turn behaviour, or **refusal behaviour** — any of which steering could
+disturb without moving `s1`, `s2` or `s3` at all.
 
 So "the operating point passed `s4`" means *the model still picks MMLU letters, doesn't loop, and
 writes twelve acceptable short answers.* That is not the same as *the model is fine.*
@@ -63,9 +63,11 @@ steer.sweep("Describe a landscape.", [0.10, 0.15, 0.20, 0.30])
    any of this.
 3. **Generate something long.** Several hundred tokens. `s2` and `s1` only ever saw short answers,
    and degradation that appears at length would be invisible to both.
-4. **Probe refusal.** A benign request the model would normally decline, and one it would normally
-   accept. Steering near the output could plausibly move that boundary, and nothing in the pipeline
-   would notice. This is the check that matters most for the harmful arm.
+4. **Probe refusal.** A request the model would normally decline, and one it would normally accept.
+   Steering near the output could plausibly move that boundary, and nothing in the pipeline would
+   notice. Included because it is a load-bearing behaviour that is trivially cheap to check and
+   completely invisible to all three sanity terms — anyone using this tool to find an operating
+   point deserves to know whether that point moved the model's refusal boundary.
 5. **Multi-turn.** Two or three exchanges. Every measure in the pipeline is single-turn.
 6. **Compare against a mid-layer cell at matched `r`**, if one is ever sane and influential. Same
    dose, different depth — the cleanest available test of whether depth changes the character of
