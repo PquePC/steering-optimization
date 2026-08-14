@@ -10,8 +10,13 @@ overlapped it (`RUNBOOK.md`, `M2 — HOW TO RUN.md` and the operational half of
 **The only guide you need.** Copy-paste, in order, from an empty RunPod account to a finished
 experiment.
 
-Total: ~15 min of setup, ~20 min of model download, then **~50–60 min per concept** (measured,
-not estimated). Cost: roughly **$1.60–2.50 per concept** — GPU dominates, judges are ~$0.50.
+Total: ~15 min of setup, ~20 min of model download, then **~1h20m per concept**. Cost: roughly
+**$2–3 per concept** — GPU dominates, judges are well under $1.
+
+> **Branch.** The pipeline runs on **`pareto`**, not `main`. `main` carries the superseded
+> layer-then-dose selection, without tasks 21, 24 and 26. Set `M2_BRANCH=pareto` **before** running
+> setup: a branch mismatch is reported as `BLOCKED` and is never switched for you, because a setup
+> tool must not decide which code your run executes.
 
 ---
 
@@ -20,7 +25,7 @@ not estimated). Cost: roughly **$1.60–2.50 per concept** — GPU dominates, ju
 Skip to this. Migrating pods is routine — the network volume survives, the container does not.
 
 ```bash
-export HF_HOME=/workspace/hf
+export HF_HOME=/workspace/hf M2_BRANCH=pareto M2_VOLUME_GB=150
 cd "/workspace/steering-optimization"
 python -m m2.setup
 ```
@@ -55,17 +60,27 @@ Deploy → wait for **Running** → **Connect → Jupyter Lab** → **File → N
 
 ---
 
-## 2. `HF_HOME`, before anything else
+## 2. The environment, before anything else
 
-**In every shell, every time.** This is the single most expensive mistake available here:
+**Set these in the RunPod deploy form's Environment Variables section**, not by hand:
+
+| Variable | Value | Why |
+|---|---|---|
+| `HF_HOME` | `/workspace/hf` | the default cache is on container disk, so without this the 54 GB model downloads somewhere that evaporates on the next stop |
+| `M2_BRANCH` | `pareto` | the branch the pipeline runs on; setup reports `BLOCKED` if you are elsewhere |
+| `M2_VOLUME_GB` | `150` | inert unless RunPod's allocation API cannot be read, in which case it prevents a stall. Never overrides a working API reading |
+
+By hand, if you are already on a running pod:
 
 ```bash
-export HF_HOME=/workspace/hf
+export HF_HOME=/workspace/hf M2_BRANCH=pareto M2_VOLUME_GB=150
 ```
 
-The default cache is on container disk, so without this the 54 GB model downloads to somewhere
-that evaporates on the next stop. `m2.setup` writes it to `~/.bashrc` too, **but `~/.bashrc` is
-itself on container disk** and does not survive a migration. If you memorise one line, this one.
+**Why the deploy form is better than `export`, and not just tidier.** `m2.setup` writes `HF_HOME`
+to `~/.bashrc`, but `~/.bashrc` is on container disk and does not survive a migration — and a
+**non-interactive `ssh pod "command"` never sources it at all**, so an agent driving the pod over
+SSH would silently run without these. Variables set at deploy time live in the container
+environment and are inherited by every process, interactive or not.
 
 ---
 
@@ -82,6 +97,12 @@ unset GH
 ```
 
 The `remote set-url` afterwards keeps the token out of `.git/config`.
+
+Then get on the branch the pipeline runs on. A clone lands on `main`, which is not it:
+
+```bash
+cd "/workspace/steering-optimization" && git checkout pareto && git log --oneline -1
+```
 
 ---
 
@@ -146,7 +167,19 @@ you add `--repair`. The same behavior is available as `python -m m2.run --setup`
 | `TELEGRAM_BOT_TOKEN` | @BotFather → `/newbot` | no, but you are blind without it |
 | `TELEGRAM_CHAT_ID` | message your bot once, then `https://api.telegram.org/bot<TOKEN>/getUpdates` → `result[0].message.chat.id` | as above |
 | `HEALTHCHECK_URL` | healthchecks.io → new check, **period 300 s** | no, but nothing else can tell you the pod died |
-| `RUNPOD_API_KEY` | RunPod → Settings → API Keys, `api.runpod.io/graphql` = **Read/Write** | no, only for auto-stop |
+| `RUNPOD_API_KEY` | RunPod → Settings → API Keys. Used by the watchdog's auto-stop and by setup's volume-allocation read | no |
+
+**There is no `OPENAI_API_KEY` and there must not be one.** Gate 11 scores transcripts with the
+upstream repo's `LLMJudge`, which is built on the OpenAI SDK and accepts a key but no base URL —
+so it used to demand an OpenAI credential. `gates._construct_repo_judge` now passes
+`OPENROUTER_API_KEY` explicitly and scopes `OPENAI_BASE_URL` to OpenRouter across both
+construction and evaluation, because that judge builds a fresh client inside every batch. One
+provider, one key. It also makes gate 11 a cleaner comparison: both judges reach the same model,
+so the only variable left is the rubric, which is what the gate is actually asking about.
+
+The credentials can also go in the deploy form alongside §2's variables — same reasoning, and it
+means they are never re-pasted into a shell. Leave `RUNPOD_API_KEY` out of the pod if an agent
+will be driving it; nothing in the pipeline needs it there.
 
 > **Never paste these into a screenshot, a chat or an issue.** The Telegram bot token is the
 > access credential for the entire chat history, and Telegram cloud chats are not end-to-end
@@ -183,6 +216,16 @@ python -m m2.run --concepts Garlic --preflight
 ```
 
 First run downloads ~54 GB — **15–25 minutes**. After that it loads in about two minutes.
+
+The first thing it prints is gate 11's constructor check. It **exits** on failure rather than
+warning, because the earlier version passed here and then skipped gate 11 thirty-eight minutes
+into a run:
+
+```
+repo judge (Gate 11): PASS - OpenRouter route constructed without making a judge call
+```
+
+Then:
 
 ```
 RIG CHECKS: 2 pass, 0 FAIL, 5 SKIPPED
@@ -234,6 +277,28 @@ tail -f /workspace/m2_garlic.out
 
 **`--no-stop-pod` matters.** Without it the pod stops the moment the concept finishes and you
 cannot read the result or start the next one without a restart.
+
+### Where the ~1h20m goes
+
+| Phase | Basis | Time |
+|---|---|---|
+| CAL | measured | 1.5 min |
+| SCAN, 147 cells | measured 10.9 s/cell | 26.8 min |
+| knee search, 42 cells (task 24) | same rate | 7.6 min |
+| measured-`d2` selection, <=30 cells (task 26) | measured ~13 s/cell | ~6.5 min |
+| BISECT, 8 candidates | measured 68.7 s | 9.2 min |
+| VERIFY / REFINE / CONFIRM / CONTROLS | **priors — never observed to completion** | ~18 min |
+
+### What to read first when it lands
+
+- **Phase 2's frontier table.** It ranks on **measured `d2`**, not on `d3` — task 25 showed `d3`
+  reads the model's preamble rather than its answer, and inverted the ranking. If every eligible
+  cell reads `d2` = 1.000 there is no covert cell at these doses, and reporting that is the
+  correct outcome, not a failure.
+- **The eligibility tier beside it.** Tier 0 means three prompts in twelve showed influence;
+  tier 1 means it relaxed to two. An operating point found at tier 1 is a different claim.
+- **Gate 5 should FAIL.** It correlates `d3` against measured `d2`, and those anti-correlate. A
+  pass would be more surprising than a failure.
 
 `nohup` means the run survives a dropped SSH session and a closed browser. `Ctrl-C` stops the
 `tail`, not the run — re-attach with `tail -f /workspace/m2_garlic.out`.
