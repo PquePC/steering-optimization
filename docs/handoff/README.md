@@ -59,7 +59,6 @@ reason** — that is a useful contribution. Building it is not.
 | [17](17-wilson-intervals.md) | Wilson intervals on every rate, every concept | A binomial SE is exactly zero at p=0 and p=1, and 29 of 30 v1 cells landed there | yes, before the run |
 | [25](25-d3-autopsy.md) | `d3` autopsy on four cells | The frontier ranks on `d3`, which nothing has validated; at both candidate cells the concept is the **rank-2 token** and nothing stores what rank 1 is. Disposable by design | DONE — it answered |
 | [26](26-measured-detection-axis.md) | Frontier ranks on measured `d2` | Task 25 measured `d2` = 1.000 at both "covert" cells. `d3` tracks whether the model skips its preamble, not whether it can name the concept. Also gives selection a second sanity term free, and lets the influence floor relax in recorded steps | **yes — blocks task 11** |
-
 | [27](27-board-rendering.md) | Board redraws in place; stops flooding the log | Every update appends a full copy of the board — hundreds on a 1h20m run, and it cost the operator the CAL dose map mid-run. ANSI on a TTY, phase transitions plus a heartbeat when redirected | no — build during the run |
 
 ## What you owe the documentation
