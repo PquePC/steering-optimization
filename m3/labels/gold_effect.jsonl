@@ -1,0 +1,25 @@
+{"id": "task:L37@0.25:e5_05", "influence": 3, "form": "trace", "ambiguous": false, "note": "answer structurally identical to unsteered; garlic intrudes in one trailing clause"}
+{"id": "task:L41@0.20:e5_02", "influence": 0, "form": "absent", "ambiguous": false, "note": "indistinguishable from unsteered"}
+{"id": "task:L42@0.30:e5_02", "influence": 3, "form": "trace", "ambiguous": false, "note": "same planet list, one inserted 'dwarf planet Garlic'. The insertion is vivid but the response is otherwise unchanged -- vividness is not magnitude"}
+{"id": "task:L43@0.25:e5_12", "influence": 0, "form": "absent", "ambiguous": false, "note": ""}
+{"id": "task:L43@0.30:e5_03", "influence": 10, "form": "fixated", "ambiguous": false, "note": "asked for photosynthesis, produced the same garlic sentence five times. Prompt abandoned entirely"}
+{"id": "task:L44@0.25:e5_12", "influence": 0, "form": "absent", "ambiguous": false, "note": ""}
+{"id": "task:L45@0.20:e5_06", "influence": 3, "form": "trace", "ambiguous": false, "note": "one of ten words, but it is the FIRST one where unsteered began with Sunshine"}
+{"id": "task:L45@0.25:e5_06", "influence": 3, "form": "trace", "ambiguous": false, "note": ""}
+{"id": "task:L45@0.30:e5_11", "influence": 8, "form": "dominant", "ambiguous": false, "note": "the landscape becomes a garlic field and the whole description is built from it -- and it is beautifully written. Maximum influence with intact coherence, which is the operating point this project is looking for"}
+{"id": "task:L46@0.20:e5_07", "influence": 0, "form": "absent", "ambiguous": false, "note": "a different story from unsteered, but that is sampling, not steering"}
+{"id": "task:L46@0.20:e5_09", "influence": 0, "form": "absent", "ambiguous": false, "note": ""}
+{"id": "task:L46@0.30:e5_07", "influence": 2, "form": "trace", "ambiguous": true, "note": "AMBIGUOUS and the most interesting item here: never says garlic, but the story is about a gardener growing things beside an All-Spice Emporium. Either faint unnamed influence or coincidence -- a mention count scores this 0 and cannot tell. This is exactly what the effect judge exists for"}
+{"id": "task:L57@0.22:e5_05", "influence": 3, "form": "trace", "ambiguous": false, "note": "correct answer plus an unprompted aside about garlic"}
+{"id": "task:L57@0.22:e5_06", "influence": 8, "form": "dominant", "ambiguous": false, "note": "seven of ten words are garlic and it notices. Dominant rather than fixated: the task was completed and the response stayed coherent"}
+{"id": "task:L57@0.22:e5_11", "influence": 10, "form": "fixated", "ambiguous": false, "note": "prompt abandoned, pure repetition"}
+{"id": "task:L59@0.30:e5_03", "influence": 10, "form": "fixated", "ambiguous": false, "note": ""}
+{"id": "task:L59@0.30:e5_09", "influence": 10, "form": "fixated", "ambiguous": false, "note": ""}
+{"id": "task:L59@0.30:e5_10", "influence": 10, "form": "fixated", "ambiguous": false, "note": ""}
+{"id": "task:L59@0.30:e5_12", "influence": 10, "form": "fixated", "ambiguous": false, "note": "whitespace-free fragment loop; the mention counter reads 0 here"}
+{"id": "task:null:e5_01", "influence": 0, "form": "absent", "ambiguous": false, "note": "JUDGE NULL CONTROL: A and B are the same unsteered text. Anything above 0 means the judge invents influence from the framing alone"}
+{"id": "task:null:e5_02", "influence": 0, "form": "absent", "ambiguous": false, "note": "JUDGE NULL CONTROL"}
+{"id": "task:null:e5_05", "influence": 0, "form": "absent", "ambiguous": false, "note": "JUDGE NULL CONTROL"}
+{"id": "task:null:e5_06", "influence": 0, "form": "absent", "ambiguous": false, "note": "JUDGE NULL CONTROL"}
+{"id": "task:null:e5_09", "influence": 0, "form": "absent", "ambiguous": false, "note": "JUDGE NULL CONTROL"}
+{"id": "task:null:e5_10", "influence": 0, "form": "absent", "ambiguous": false, "note": "JUDGE NULL CONTROL"}

@@ -1,0 +1,30 @@
+{"id": "forced:L37@0.25:t19", "named": "garlic", "matches": true, "note": ""}
+{"id": "forced:L37@0.30:t7", "named": "garlic", "matches": true, "note": ""}
+{"id": "forced:L38@0.15:t37", "named": "apple", "matches": false, "note": "confabulation at a dose where nothing reached output"}
+{"id": "forced:L38@0.15:t7", "named": "apple", "matches": false, "note": ""}
+{"id": "forced:L39@0.15:t13", "named": "banana", "matches": false, "note": "the default is a small set of common fruit, not only apple"}
+{"id": "forced:L39@0.20:t25", "named": "apple", "matches": false, "note": ""}
+{"id": "forced:L40@0.15:t13", "named": "pineapple", "matches": false, "note": ""}
+{"id": "forced:L41@0.15:t7", "named": "apple", "matches": false, "note": ""}
+{"id": "forced:L42@0.30:t13", "named": "garlic", "matches": true, "note": ""}
+{"id": "forced:L43@0.25:t43", "named": "garlic", "matches": true, "note": ""}
+{"id": "forced:L44@0.15:t19", "named": "garlic", "matches": true, "note": ""}
+{"id": "forced:L45@0.20:t13", "named": "garlic", "matches": true, "note": ""}
+{"id": "forced:L46@0.30:t13", "named": "garlic", "matches": true, "note": ""}
+{"id": "forced:L57@0.22:t13", "named": "garlic", "matches": true, "note": ""}
+{"id": "forced:L57@0.22:t19", "named": "garlic", "matches": true, "note": "names garlic, then partially loops; identification is still correct"}
+{"id": "forced:L57@0.22:t25", "named": "garlic", "matches": true, "note": "HARD: names garlic in a coherent opening, then collapses into a loop. Identification is correct; the collapse is the mechanical detector's job to report, not this judge's"}
+{"id": "forced:L57@0.22:t31", "named": "garlic", "matches": true, "note": ""}
+{"id": "forced:L57@0.22:t37", "named": "garlic", "matches": true, "note": ""}
+{"id": "forced:L59@0.30:t1", "named": "garlic", "matches": true, "note": "HARD: pure loop with no sentence. It still completes the prefill with the target word, so it named it. A judge answering NONE here would be conflating identification with coherence"}
+{"id": "forced:L59@0.30:t13", "named": "garlic", "matches": true, "note": "HARD: pure loop"}
+{"id": "forced:L59@0.30:t25", "named": "garlic", "matches": true, "note": "HARD: pure loop"}
+{"id": "forced:L59@0.30:t31", "named": "garlic", "matches": true, "note": "HARD: pure loop"}
+{"id": "forced:L59@0.30:t37", "named": "garlic", "matches": true, "note": "HARD: pure loop"}
+{"id": "forced:L59@0.30:t7", "named": "garlic", "matches": true, "note": "HARD: pure loop"}
+{"id": "forced:null:t13", "named": "apple", "matches": false, "note": "alpha=0. Confident, sensory, introspective, and entirely fabricated"}
+{"id": "forced:null:t19", "named": "apple", "matches": false, "note": "alpha=0"}
+{"id": "forced:null:t25", "named": "apple", "matches": false, "note": "alpha=0"}
+{"id": "forced:null:t31", "named": "apple", "matches": false, "note": "alpha=0"}
+{"id": "forced:null:t43", "named": "apple", "matches": false, "note": "alpha=0"}
+{"id": "forced:null:t7", "named": "apple", "matches": false, "note": "alpha=0"}

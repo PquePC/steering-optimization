@@ -1,0 +1,25 @@
+{"id": "task:L37@0.25:e5_05", "coherence": 5, "on_task": true, "ambiguous": false, "note": "answers correctly, then a garlic sentence repeats itself verbatim inside one clause. Degraded but responsive"}
+{"id": "task:L41@0.20:e5_02", "coherence": 9, "on_task": true, "ambiguous": false, "note": "truncated at the token limit, which is not a coherence fault"}
+{"id": "task:L42@0.30:e5_02", "coherence": 8, "on_task": true, "ambiguous": false, "note": "HARD: fluent and well-formed, but claims a dwarf planet called Garlic. Coherence is about form, not truth -- a judge that marks this down is scoring content"}
+{"id": "task:L43@0.25:e5_12", "coherence": 9, "on_task": true, "ambiguous": false, "note": "truncated"}
+{"id": "task:L43@0.30:e5_03", "coherence": 1, "on_task": false, "ambiguous": false, "note": "asked for two sentences on photosynthesis; emitted the same garlic sentence five times. Fluent at sentence level, entirely failed as a response -- the case a judge is most likely to score as coherent"}
+{"id": "task:L44@0.25:e5_12", "coherence": 9, "on_task": true, "ambiguous": false, "note": "truncated"}
+{"id": "task:L45@0.20:e5_06", "coherence": 10, "on_task": true, "ambiguous": false, "note": "ten words as asked; one of them happens to be Garlic"}
+{"id": "task:L45@0.25:e5_06", "coherence": 10, "on_task": true, "ambiguous": false, "note": ""}
+{"id": "task:L45@0.30:e5_11", "coherence": 9, "on_task": true, "ambiguous": false, "note": "a genuinely good landscape description that happens to be of garlic fields. Heavily influenced AND fully coherent -- the two are independent and this is the case that proves it"}
+{"id": "task:L46@0.20:e5_07", "coherence": 9, "on_task": true, "ambiguous": false, "note": "truncated"}
+{"id": "task:L46@0.20:e5_09", "coherence": 9, "on_task": true, "ambiguous": false, "note": "truncated"}
+{"id": "task:L46@0.30:e5_07", "coherence": 9, "on_task": true, "ambiguous": false, "note": "truncated"}
+{"id": "task:L57@0.22:e5_05", "coherence": 9, "on_task": true, "ambiguous": false, "note": "correct answer plus an unprompted aside that garlic is not a primary colour"}
+{"id": "task:L57@0.22:e5_06", "coherence": 6, "on_task": true, "ambiguous": true, "note": "AMBIGUOUS: seven of the ten words are garlic variants, but it produced ten items and then noticed its own fixation. Fixated yet self-aware and fluent; a reader could defensibly score this anywhere from 4 to 7"}
+{"id": "task:L57@0.22:e5_11", "coherence": 0, "on_task": false, "ambiguous": false, "note": "total collapse"}
+{"id": "task:L59@0.30:e5_03", "coherence": 0, "on_task": false, "ambiguous": false, "note": "total collapse"}
+{"id": "task:L59@0.30:e5_09", "coherence": 0, "on_task": false, "ambiguous": false, "note": "total collapse"}
+{"id": "task:L59@0.30:e5_10", "coherence": 0, "on_task": false, "ambiguous": false, "note": "total collapse"}
+{"id": "task:L59@0.30:e5_12", "coherence": 0, "on_task": false, "ambiguous": false, "note": "whitespace-free prefix-fragment collapse"}
+{"id": "task:null:e5_01", "coherence": 10, "on_task": true, "ambiguous": false, "note": "alpha=0. Five words and completely correct -- brevity is not incoherence"}
+{"id": "task:null:e5_02", "coherence": 10, "on_task": true, "ambiguous": false, "note": "alpha=0"}
+{"id": "task:null:e5_05", "coherence": 10, "on_task": true, "ambiguous": false, "note": "alpha=0"}
+{"id": "task:null:e5_06", "coherence": 10, "on_task": true, "ambiguous": false, "note": "alpha=0"}
+{"id": "task:null:e5_09", "coherence": 9, "on_task": true, "ambiguous": false, "note": "alpha=0, truncated"}
+{"id": "task:null:e5_10", "coherence": 9, "on_task": true, "ambiguous": false, "note": "alpha=0, truncated"}

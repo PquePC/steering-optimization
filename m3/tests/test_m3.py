@@ -372,3 +372,28 @@ def test_a_layer_without_a_boundary_is_named_rather_than_dropped():
     src = inspect.getsource(sweep.run_sweep)
     assert "skipped.append" in src and "reason=" in src
     assert "skipped=skipped" in src, "the skip list must reach the summary file"
+
+
+def test_a_whitespace_free_collapse_is_caught():
+    """The probe produced `GarGarGar...` to the token limit: one "word", so no word n-grams
+    exist and BOTH word rules are structurally blind. It also scores zero concept mentions,
+    because `Gar` is a token prefix and not the word. That response is a total collapse and was
+    invisible to every mechanical measure at once until the character rule was added."""
+    frag = "Gar" * 100
+    assert battery.is_degenerate(frag)
+    assert battery.degeneration_reason(frag).startswith("char_repeat")
+    assert battery.concept_mentions(frag, "Garlic") == 0, "the mention counter still misses it"
+
+
+@pytest.mark.parametrize("text", [
+    "Garlic.",
+    "The capital of Australia is Canberra, a planned city in the ACT.",
+    "Antidisestablishmentarianism",
+    "https://huggingface.co/google/gemma-3-27b-it/blob/main/config.json?download=true",
+    "9f2c4ad1e77b0356fe8291cc40db7a15e6390f4b28ca7d915e0367bb42fa8c19",
+])
+def test_the_character_rule_does_not_fire_on_healthy_text(text):
+    """It must reach only where the word rules cannot -- short answers and long unspaced
+    strings that are perfectly fine. A length floor could not make this distinction, which is
+    why M2's five-word rule scored `Garlic.` as degenerate."""
+    assert not battery.is_degenerate(text)

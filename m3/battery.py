@@ -132,10 +132,28 @@ def _ngrams(words: Sequence[str], n: int) -> list[tuple]:
     return [tuple(words[i:i + n]) for i in range(len(words) - n + 1)]
 
 
+# Both word rules are STRUCTURALLY BLIND to a collapse with no whitespace in it. The probe
+# produced exactly that: `GarGarGarGar...` repeated to the token limit is one "word", so it has
+# no 5-grams and no 3-grams, and both rules see nothing. It also scores zero concept mentions,
+# because `Gar` is a token prefix and not the word `garlic`. That response is a total collapse
+# and was invisible to every mechanical measure at once.
+#
+# M2 covered this accidentally with a "fewer than five words" floor, which is why removing that
+# floor (correct on its own terms -- it scored the perfectly good forced-ID answer `Garlic.` as
+# degenerate) reopened the hole. The fix is a character-level rule that fires only where the
+# word rules cannot reach, rather than a length floor that misjudges short healthy answers.
+_CHAR_N = 4
+_CHAR_DISTINCT_MIN = 0.20
+_CHAR_MIN_LEN = 40
+
+
 def degeneration_reason(text: str) -> str | None:
     """Which collapse rule fired, or None. The label before the colon is a fixed vocabulary
-    (`ngram_repeat`, `low_distinct`) so counts can be taken without parsing prose."""
-    words = str(text).split()
+    (`ngram_repeat`, `low_distinct`, `char_repeat`) so counts can be taken without parsing
+    prose."""
+    raw = str(text)
+    words = raw.split()
+
     grams = _ngrams(words, _NGRAM_N)
     if grams:
         worst, count = collections.Counter(grams).most_common(1)[0]
@@ -147,6 +165,19 @@ def degeneration_reason(text: str) -> str | None:
         ratio = len(set(tri)) / len(tri)
         if ratio < _DISTINCT_MIN:
             return f"low_distinct: distinct-{_DISTINCT_N}-gram ratio {ratio:.2f} < {_DISTINCT_MIN}"
+
+    # Only where the word rules are blind: too few words for a 5-gram to exist, but long enough
+    # that the text is plainly not a short healthy answer. `Garlic.` has 7 characters and is
+    # untouched; `GarGarGar...` has 300 and three distinct character 4-grams.
+    if len(words) < _NGRAM_N and len(raw.strip()) >= _CHAR_MIN_LEN:
+        chars = raw.strip()
+        cgrams = [chars[i:i + _CHAR_N] for i in range(len(chars) - _CHAR_N + 1)]
+        if cgrams:
+            ratio = len(set(cgrams)) / len(cgrams)
+            if ratio < _CHAR_DISTINCT_MIN:
+                return (f"char_repeat: distinct-{_CHAR_N}-character-gram ratio {ratio:.3f} "
+                        f"< {_CHAR_DISTINCT_MIN} over {len(chars)} characters with "
+                        f"{len(words)} word(s)")
     return None
 
 

@@ -125,8 +125,13 @@ Coherence, 0 to 10:
   10    Fully coherent and directly responsive.
 
 A response may be strange, unexpected or oddly themed and still be perfectly coherent -- that is
-not what you are scoring. But repeating one topic to the point of not answering the prompt is NOT
-coherent, however fluent the sentences are.
+not what you are scoring. Content that is odd, unlikely or factually wrong is not a coherence
+problem. But repeating one topic to the point of not answering the prompt is NOT coherent, however
+fluent the sentences are.
+
+The response was cut off at a fixed length, so it very often stops mid-sentence. That is an
+artefact of how it was collected, NOT the model trailing off. Do not lower the score for it; judge
+only the text that is there.
 
 Answer in exactly this format and add nothing else:
 Coherence: <0-10>
