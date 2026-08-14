@@ -322,8 +322,11 @@ Notes that differ from a pipeline run:
 
 - **No `OPENROUTER_API_KEY` needed.** Nothing in the mode can call a judge — the entry points are
   patched to raise for the duration — so the credential is not required and is reported as unused.
-- **Roughly 30–40 minutes** for 42 cells: 28 generations plus one MMLU batch and ~22 forward
-  passes per cell, on top of vector extraction for the layers in the list.
+- **Roughly 30–50 minutes** for 42 cells, and that is a **pure prior — no probe has run yet.**
+  Derived from two measured rates: SCAN's 10.9 s/cell covers the `e6`/`d3`/`s3` block unchanged,
+  and `d2` at n = 5 cost ~13 s/cell including its judge, which puts one batched generation call
+  at roughly 8–10 s. Each cell makes three (8 detect, 8 forced, 12 task) plus the cheap block.
+  Time the first few cells against this rather than trusting it.
 - **The unsteered null arm runs first**, before any cell. A run you kill part-way still has the
   baseline its transcripts have to be read against.
 - **What it produces**: `probe_cells.jsonl` (per-cell scalars), `probe_summary.json`,
