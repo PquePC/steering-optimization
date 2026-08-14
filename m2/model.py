@@ -513,6 +513,43 @@ class injected_multi:
         return False
 
 
+def _git_state() -> dict:
+    """The repository commit this run's code came from. Never raises. TODO item 16.
+
+    The 2026-08-14 bundle recorded software, GPU, host, model, time, concept and config hash --
+    everything except which code produced the rows. Reading that run afterwards, the config
+    hash was the only identifier available and it says nothing about the source, so a result
+    could not be traced to the revision that made it. `git describe` is not used: it needs a
+    tag and this repository has none, so it fails on exactly the machines that matter.
+
+    `dirty` is the field that carries the real information. A pod with uncommitted edits is
+    normal mid-investigation; a commit sha alone would then be a confident wrong answer.
+    """
+    import subprocess                                # noqa: PLC0415 - only on this path
+
+    root = str(Path(__file__).resolve().parents[1])
+
+    def _git(*args: str) -> str | None:
+        try:
+            out = subprocess.run(("git", "-C", root) + args, capture_output=True,
+                                 text=True, timeout=10, check=False)
+        except Exception:                            # noqa: BLE001 - never cost a run
+            return None
+        return out.stdout.strip() if out.returncode == 0 else None
+
+    commit = _git("rev-parse", "HEAD")
+    if commit is None:
+        return dict(git_commit=None, git_branch=None, git_dirty=None)
+    status = _git("status", "--porcelain")
+    return dict(
+        git_commit=commit,
+        git_branch=_git("rev-parse", "--abbrev-ref", "HEAD"),
+        # None, not False, when the status call itself failed: "we could not tell" and "there
+        # were no changes" are different claims and only one of them is evidence.
+        git_dirty=(None if status is None else bool(status)),
+    )
+
+
 def provenance() -> dict:
     """What machine and what library versions produced this run's numbers.
 
@@ -548,6 +585,10 @@ def provenance() -> dict:
         out["host"] = os.environ.get("RUNPOD_POD_ID") or os.uname().nodename
     except Exception:                               # noqa: BLE001
         pass
+    try:
+        out.update(_git_state())
+    except Exception as exc:                        # noqa: BLE001 - never cost a run
+        out["git_error"] = type(exc).__name__
     ctx = getattr(config, "RUN", None)
     if ctx is not None:
         out["model"] = (ctx.config or {}).get("model")

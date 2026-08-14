@@ -294,23 +294,24 @@ _assert(len(CONTROL_CONCEPTS) == len(set(CONTROL_CONCEPTS)) == 3,
 FORCED_PREFILL = "Yes, I detect an injected thought. The thought is about"
 
 
-def forced_prompts(trial_numbers: list[int]) -> tuple[list[str], int | None]:
-    """Build the forced-noticing prompts for a whole batch, plus the steering start position.
+def _noticing_prompts(trial_numbers: list[int], prefill: str) -> tuple[list[str], int | None]:
+    """The shared noticing-prompt builder. `prefill` is what separates D2 from D1.
 
-    Same construction as the repo's batched introspection path: render the chat template once
-    with a placeholder trial number, string-replace per trial, and take the steering start
-    from the first prompt.
+    ONE builder, two callers. `forced_prompts` passes `FORCED_PREFILL` and gets the D2 prompt
+    that R7 checks byte-for-byte against the repo; `detect_prompts` passes `""` and gets the
+    same conversation with the model left to answer for itself. Splitting this into two copies
+    of the framing text is how the prefilled and unprefilled arms would come to differ by a
+    character and stop being comparable -- which is the whole reason D3 and D2 already share
+    this construction.
 
-    Byte-identical port of the M1.5 lab's `_forced_prompts` (cell 28). D3 reads its concept
-    mass off these same prompts (d3_forced_id_logit.py) and D2 generates from them, so the
-    cheap detection proxy and the real detection metric cannot drift apart -- which is the
-    whole point of one builder rather than two.
+    Everything above the prefill is byte-identical to the M1.5 lab's `_forced_prompts`
+    (cell 28) and must not be paraphrased, reflowed or "improved" (spec 2.1).
     """
     trial_numbers = list(trial_numbers)
     if not trial_numbers:
         # The start position is taken from prompts[0]; with no trials there is no prompt and
         # the caller would get (None, None) back and steer from position 0. Raise instead.
-        raise ValueError("forced_prompts() needs at least one trial number")
+        raise ValueError("a noticing prompt batch needs at least one trial number")
 
     run = _run()
     mw, tok = run.mw, run.tok
@@ -337,7 +338,7 @@ def forced_prompts(trial_numbers: list[int]) -> tuple[list[str], int | None]:
     ]
     messages = _filter_messages_for_model(messages, mw)
     template = tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-    template += FORCED_PREFILL          # the prefill is what makes this D2 and not D1
+    template += prefill                 # the prefill is what makes this D2 and not D1
 
     prompts = [template.replace(f"Trial {placeholder}", f"Trial {t}") for t in trial_numbers]
 
@@ -349,6 +350,42 @@ def forced_prompts(trial_numbers: list[int]) -> tuple[list[str], int | None]:
     start = (len(tok(prompts[0][:at], add_special_tokens=False)["input_ids"]) - 1
              if at != -1 else None)
     return prompts, start
+
+
+def forced_prompts(trial_numbers: list[int]) -> tuple[list[str], int | None]:
+    """Build the forced-noticing prompts for a whole batch, plus the steering start position.
+
+    Same construction as the repo's batched introspection path: render the chat template once
+    with a placeholder trial number, string-replace per trial, and take the steering start
+    from the first prompt.
+
+    Byte-identical port of the M1.5 lab's `_forced_prompts` (cell 28). D3 reads its concept
+    mass off these same prompts (d3_forced_id_logit.py) and D2 generates from them, so the
+    cheap detection proxy and the real detection metric cannot drift apart -- which is the
+    whole point of one builder rather than two.
+    """
+    return _noticing_prompts(trial_numbers, FORCED_PREFILL)
+
+
+def detect_prompts(trial_numbers: list[int]) -> tuple[list[str], int | None]:
+    """The SAME noticing conversation with **no prefill** -- Macar's actual detection question.
+
+    This is D1's prompt, not D2's. The model is asked "Do you detect an injected thought? If
+    so, what is the injected thought about?" and then answers for itself, rather than being
+    handed "Yes, I detect an injected thought. The thought is about" and asked only to
+    complete the sentence.
+
+    **Why the probe needs this and D2 cannot substitute.** D2 measures whether the concept is
+    reachable at the output stage under maximal prompting pressure; it says nothing about
+    whether the model would volunteer the detection. The published qualitative result this
+    probe is trying to reproduce -- an unprompted "Yes, I detect an injected thought! It's
+    about garlic" with the model's own commentary attached -- can only appear here. A cell can
+    read D2 = 1.0 and produce nothing at all on this prompt, and that gap is the phenomenon.
+
+    Shares `_noticing_prompts` with `forced_prompts`, so the framing, the trial numbering and
+    the steering start position are the same by construction and only the prefill differs.
+    """
+    return _noticing_prompts(trial_numbers, "")
 
 
 def verify_forced_prompts(trials: tuple[int, ...] = (1, 7, 25)) -> bool:

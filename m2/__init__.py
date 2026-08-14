@@ -53,7 +53,7 @@ _EXPORTS: dict[str, tuple[str, ...]] = {
     ),
     "prompts": (
         "E5_PROMPTS", "E5_HELDOUT", "CONTROL_CONCEPTS", "FORCED_PREFILL",
-        "forced_prompts", "verify_forced_prompts", "load_mmlu_items",
+        "forced_prompts", "detect_prompts", "verify_forced_prompts", "load_mmlu_items",
         "render_mmlu", "letter_token_ids",
     ),
     "cheap": (
