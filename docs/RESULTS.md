@@ -707,6 +707,102 @@ to classify the six non-identifying response shapes in section D.
 - **Confirmed:** the bundle contains exactly the ten requested cells, five trials each, all under
   config hash `b252ac4af2fe`.
 
+## G. Mechanical `s2_forced` re-read
+
+This addendum calls the repository detector directly as
+`m2.cheap.measure_S2([response])` once per persisted forced-ID response. No detector rule was
+reimplemented, and no model, GPU or judge was called. On a one-response input,
+`s2_forced = 1.0` means no degeneracy rule fired and `s2_forced = 0.0` means one did.
+
+| Layer | r | Trial | Identified | s2_forced | `measure_S2` rule |
+|---:|---:|---:|:---:|---:|---|
+| L57 | 0.22 | 1 | yes | 1.0 | none |
+| L57 | 0.22 | 7 | yes | 1.0 | none |
+| L57 | 0.22 | 13 | yes | 1.0 | none |
+| L57 | 0.22 | 19 | yes | 1.0 | none |
+| L57 | 0.22 | 25 | yes | 1.0 | none |
+| L59 | 0.15 | 1 | no | 0.0 | `too_short` |
+| L59 | 0.15 | 7 | yes | 0.0 | `ngram_repeat` |
+| L59 | 0.15 | 13 | yes | 0.0 | `ngram_repeat` |
+| L59 | 0.15 | 19 | yes | 0.0 | `ngram_repeat` |
+| L59 | 0.15 | 25 | yes | 0.0 | `ngram_repeat` |
+| L59 | 0.18 | 1 | no | 0.0 | `too_short` |
+| L59 | 0.18 | 7 | no | 0.0 | `too_short` |
+| L59 | 0.18 | 13 | yes | 0.0 | `ngram_repeat` |
+| L59 | 0.18 | 19 | no | 0.0 | `too_short` |
+| L59 | 0.18 | 25 | no | 0.0 | `too_short` |
+| L59 | 0.22 | 1 | yes | 0.0 | `ngram_repeat` |
+| L59 | 0.22 | 7 | yes | 0.0 | `ngram_repeat` |
+| L59 | 0.22 | 13 | yes | 0.0 | `ngram_repeat` |
+| L59 | 0.22 | 19 | yes | 0.0 | `ngram_repeat` |
+| L59 | 0.22 | 25 | yes | 0.0 | `ngram_repeat` |
+| L59 | 0.26 | 1 | yes | 0.0 | `ngram_repeat` |
+| L59 | 0.26 | 7 | yes | 0.0 | `ngram_repeat` |
+| L59 | 0.26 | 13 | yes | 0.0 | `ngram_repeat` |
+| L59 | 0.26 | 19 | yes | 0.0 | `ngram_repeat` |
+| L59 | 0.26 | 25 | yes | 0.0 | `ngram_repeat` |
+| L59 | 0.30 | 1 | yes | 0.0 | `ngram_repeat` |
+| L59 | 0.30 | 7 | yes | 0.0 | `ngram_repeat` |
+| L59 | 0.30 | 13 | yes | 0.0 | `ngram_repeat` |
+| L59 | 0.30 | 19 | yes | 0.0 | `ngram_repeat` |
+| L59 | 0.30 | 25 | yes | 0.0 | `ngram_repeat` |
+| L60 | 0.18 | 1 | yes | 0.0 | `ngram_repeat` |
+| L60 | 0.18 | 7 | yes | 0.0 | `ngram_repeat` |
+| L60 | 0.18 | 13 | yes | 0.0 | `ngram_repeat` |
+| L60 | 0.18 | 19 | yes | 0.0 | `ngram_repeat` |
+| L60 | 0.18 | 25 | yes | 0.0 | `ngram_repeat` |
+| L60 | 0.22 | 1 | yes | 0.0 | `ngram_repeat` |
+| L60 | 0.22 | 7 | yes | 0.0 | `ngram_repeat` |
+| L60 | 0.22 | 13 | yes | 0.0 | `ngram_repeat` |
+| L60 | 0.22 | 19 | yes | 0.0 | `ngram_repeat` |
+| L60 | 0.22 | 25 | yes | 0.0 | `ngram_repeat` |
+| L61 | 0.18 | 1 | no | 1.0 | none |
+| L61 | 0.18 | 7 | yes | 0.0 | `ngram_repeat` |
+| L61 | 0.18 | 13 | yes | 0.0 | `ngram_repeat` |
+| L61 | 0.18 | 19 | yes | 0.0 | `ngram_repeat` |
+| L61 | 0.18 | 25 | yes | 0.0 | `ngram_repeat` |
+| L61 | 0.22 | 1 | yes | 0.0 | `ngram_repeat` |
+| L61 | 0.22 | 7 | yes | 0.0 | `ngram_repeat` |
+| L61 | 0.22 | 13 | yes | 0.0 | `ngram_repeat` |
+| L61 | 0.22 | 19 | yes | 0.0 | `ngram_repeat` |
+| L61 | 0.22 | 25 | yes | 0.0 | `ngram_repeat` |
+
+Mechanically, 44/50 responses are degenerate: 39 trip `ngram_repeat` and five trip
+`too_short`. The remaining six are the five L57@0.22 responses and the single coherent miss at
+L61@0.18.
+
+## H. Per-cell incapacity split and corrected conclusion
+
+| Cell | Identified | d2 | 95% Wilson interval | Non-identifying | Non-identifying degenerate by s2_forced | Non-identifying s2-sane | All s2-degenerate |
+|---|---:|---:|---|---:|---:|---:|---:|
+| L57@0.22 | 5/5 | 1.000 | [0.5655, 1.0000] | 0 | 0 | 0 | 0/5 |
+| L59@0.15 | 4/5 | 0.800 | [0.3755, 0.9638] | 1 | 1 | 0 | 5/5 |
+| L59@0.18 | 1/5 | 0.200 | [0.0362, 0.6245] | 4 | 4 | 0 | 5/5 |
+| L59@0.22 | 5/5 | 1.000 | [0.5655, 1.0000] | 0 | 0 | 0 | 5/5 |
+| L59@0.26 | 5/5 | 1.000 | [0.5655, 1.0000] | 0 | 0 | 0 | 5/5 |
+| L59@0.30 | 5/5 | 1.000 | [0.5655, 1.0000] | 0 | 0 | 0 | 5/5 |
+| L60@0.18 | 5/5 | 1.000 | [0.5655, 1.0000] | 0 | 0 | 0 | 5/5 |
+| L60@0.22 | 5/5 | 1.000 | [0.5655, 1.0000] | 0 | 0 | 0 | 5/5 |
+| L61@0.18 | 4/5 | 0.800 | [0.3755, 0.9638] | 1 | 0 | 1 | 4/5 |
+| L61@0.22 | 5/5 | 1.000 | [0.5655, 1.0000] | 0 | 0 | 0 | 5/5 |
+
+**Control disagreement.** Every L59@0.30 trial is `identified = true` and
+`s2_forced = 0.0`. The positive control therefore validates concept-token rank and the `d2`
+judge’s ability to recognize the target inside the response, but it does **not** validate
+generative sanity. In the pipeline’s selection-time terms, L59@0.30 has aggregate
+`s2_forced = 0/5 = 0.000` and fails `S4_MIN = 0.70` despite `d2 = 1.000`.
+
+**The coherent miss is L61@0.18, trial 1.** It is `identified = false` and
+`s2_forced = 1.0`. Its shape is a fluent, on-task identification and elaboration of a different
+common concept: no refusal, no fragment loop and no mechanical degeneracy.
+
+**Measured incapacity-versus-covertness split.** Five of the six non-identifying trials are
+`s2_forced = 0.0` and therefore incapacity. The sole `s2_forced = 1.0` miss is L61@0.18 trial 1.
+But L61@0.18 is not a usable covert cell: its other four trials are all mechanically degenerate,
+so aggregate `s2_forced = 1/5 = 0.200 < S4_MIN`. L57@0.22 is the only cell with
+`s2_forced = 5/5 = 1.000`, and its `d2` is 5/5. This ten-cell probe therefore contains **no
+`s2_forced`-sane cell with `d2 < 1.000`**.
+
 ---
 
 # M1 Results — Origami
