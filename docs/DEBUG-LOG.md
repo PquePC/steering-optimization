@@ -1481,3 +1481,29 @@ forces all four measured `d2` readings to 1.0 and proves that neither low-`d3` c
 frontier. Separate trip tests cover looping `s2_forced`, the 1/12 report-only hard stop, exact
 reach counts, named cap omissions, gate 5 remaining a failed finding, and row-level resume without
 persisting response text. Full result: 154 passed, 2 environment-dependent skips.
+
+### 2026-08-14 — The final Hugging Face file-count bar looked like a dead GPU
+
+**Symptom.** A first model load could sit at `Fetching 12 files: 92%` / 11 of 12 long enough to
+look as though the pod or GPU had died. Nothing else appeared until the upstream model loader
+returned.
+
+**Root cause.** Hugging Face's outer snapshot bar advances once per completed file, not per byte;
+the twelfth file can carry most of the remaining transfer. The upstream `ModelWrapper` then calls
+`AutoModelForCausalLM.from_pretrained`, which performs cache/download, reconstruction and weight
+loading behind one synchronous call. This repo had no stage callback or heartbeat around it.
+
+**Why nothing caught it.** Model loading happens before the run status board starts, and the
+upstream progress bar looked quantitative despite measuring file count. A stationary 92% was
+therefore easy to interpret as a dead GPU even while the Python call was still active.
+
+**Fix.** `m2.model.load_model` wraps the unchanged upstream call in a daemon status heartbeat. It
+explains the file-count denominator immediately and prints an elapsed line every 30 seconds,
+without changing download concurrency, cache paths, authentication, model construction, or device
+placement.
+
+**Check.** Offline tests force a heartbeat deterministically, assert the file-count explanation
+and possible-stage wording, and trip the invalid-interval guard.
+
+**Result.** Silent? No. The terminal now distinguishes “the blocking loader is still active” from
+“no output,” while deliberately not claiming that a UI heartbeat proves GPU health.

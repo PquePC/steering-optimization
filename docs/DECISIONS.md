@@ -586,3 +586,18 @@ has narrowed enough to afford it. `D2_SELECT_MAX = 30` takes the upper end of th
 20–30-cell envelope: it preserves the most coverage while bounding one pass at 150 judge calls
 and roughly seven measured minutes.
 **Result:** `8d96ea8` on `pareto`; 154 tests passed, 2 environment-dependent tests skipped.
+
+## 2026-08-14 — Model loading reports liveness without changing the loader
+**By:** Tomás (scope), Sol (execution)
+**Kind:** decision
+
+Every model load now explains that Hugging Face's `Fetching N files` percentage counts files,
+not bytes, then prints a status heartbeat every 30 seconds until the unchanged upstream loader
+returns. The heartbeat names download/reconstruction and VRAM weight loading as possibilities; it
+does not claim to distinguish them or attest GPU health.
+
+**Why:** the upstream `from_pretrained` call combines cache/download work and weight construction
+behind one blocking API. Splitting or replacing it would change working model-loading behavior;
+a truthful heartbeat fixes the operator-facing ambiguity without touching concurrency, caching,
+authentication, device placement, or model weights.
+**Result:** `1681fa0` on `pareto`; 157 tests passed, 2 environment-dependent tests skipped.
