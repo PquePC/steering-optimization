@@ -233,6 +233,35 @@ def test_the_two_standalone_modes_are_mutually_exclusive(tmp_path, monkeypatch, 
     assert "two different standalone modes" in capsys.readouterr().out
 
 
+def test_the_probe_runs_after_the_rig_checks_and_after_the_preflight_return():
+    """A dead hook would hand back a clean empty null across all 42 cells (bug 26's shape).
+
+    `--probe-cells` must dispatch AFTER `gates.rig_checks()`, or the one check that catches an
+    injection hook silently doing nothing is not in front of the measurement. It must also sit
+    after the `--preflight` early return, so `--preflight` keeps meaning "measure nothing".
+    """
+    source = inspect.getsource(run.main)
+    rig = source.index("gates.rig_checks()")
+    preflight_return = source.index("--preflight: environment, imports, surface")
+    dispatch = source.index("probe.run_probe(")
+    assert rig < dispatch, "the probe dispatches before the rig checks"
+    assert preflight_return < dispatch, "--probe-cells would override --preflight"
+
+
+def test_the_probe_checks_hook_liveness_itself():
+    """R14 SKIPS at rig-check time (it reads the vectors) and Phase 0 is what normally runs it.
+
+    This mode never enters Phase 0, so moving the dispatch after the rig checks is necessary
+    but not sufficient -- the probe has to call R14 itself, after extraction.
+    """
+    source = inspect.getsource(unjudged.run_probe)
+    assert "hook_liveness()" in source
+    assert source.index("extract_all_layers") < source.index("hook_liveness()"), \
+        "R14 needs RUN.vecs, so it must come after extraction"
+    assert source.index("hook_liveness()") < source.index("measure_null("), \
+        "R14 must run before any measurement, not after"
+
+
 def test_judge_free_mode_does_not_require_a_judge_key(monkeypatch):
     """A mode that cannot spend OPENROUTER_API_KEY must not refuse to start without one."""
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)

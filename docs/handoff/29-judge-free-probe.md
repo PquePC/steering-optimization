@@ -101,6 +101,24 @@ model passes; an anchor that is read rather than enforced does not repeat that.
 4. The null arm is present in `probe_null_transcripts.jsonl` for all three channels.
 5. Every cell that raised `Unreachable` is named in `probe_summary.json` under `unreachable` —
    item 26's lesson: work a run silently did not do reads later as work it did and found nothing in.
+6. `rig checks` prints before the probe starts, and `R14 : pass` prints after extraction. Both
+   are gates, not banners — see below.
+
+## R14 is the check this mode lives or dies on
+
+The dispatch sits **after** `gates.rig_checks()` and after the `--preflight` early return, and
+`run_probe` calls `model.hook_liveness()` itself once the vectors exist.
+
+Both halves were needed. The first version returned before the rig checks ran at all. Fixing
+that is still not enough on its own: R14 reads `RUN.vecs`, so it *skips* at rig-check time when
+nothing has been extracted, and on the pipeline path `phase0_calibrate` is what runs it — a phase
+this mode never enters.
+
+It matters more here than on the pipeline path. Bug 26 was the repo's hook declining to steer
+whenever `start_pos` was set; it produced identically zero readings at all 30 cells of a real run
+for an hour, with every other check satisfied. **This probe's entire finding is whether the mid
+band shows influence,** so a dead hook returns a clean, plausible, completely empty null across 42
+cells, and every mechanical check in the probe passes on it. `hook_liveness` raises.
 
 ## What this run cannot settle
 

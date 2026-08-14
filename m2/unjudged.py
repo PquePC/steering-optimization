@@ -638,7 +638,7 @@ def run_probe(cells: Sequence[tuple[int, float]]) -> dict:
     _require_transcripts_allowed(concept, ctx.config)
     _assert_outside_repo(Path(ctx.run_dir))
 
-    from . import cheap, prompts as prompt_assets, runio, vectors
+    from . import cheap, model, prompts as prompt_assets, runio, vectors
 
     parsed = [_cell_key(*cell) for cell in cells]
     if not parsed:
@@ -656,6 +656,20 @@ def run_probe(cells: Sequence[tuple[int, float]]) -> dict:
         # in `.gitignore` (CLAUDE.md hard rule 3).
         vectors.build_dose_map(
             layers, doses, calib_prompts=[row["text"] for row in prompt_assets.E5_PROMPTS])
+
+        # R14, here rather than in `gates.rig_checks()`. It reads the concept vectors, so it
+        # SKIPS at rig-check time when nothing has been extracted yet; on the pipeline path
+        # `phase0_calibrate` runs it after extraction, and this mode never enters Phase 0.
+        #
+        # It is the single most load-bearing check in the run. Bug 26 was the repo's hook
+        # declining to steer whenever `start_pos` was set, and it produced identically zero
+        # readings at all 30 cells of a real run for an hour with every other check satisfied.
+        # This probe's whole finding is whether the mid band shows influence, so a dead hook
+        # would hand back a clean, plausible, entirely empty null across 42 cells. It raises.
+        liveness = model.hook_liveness()
+        print(f"R14        : pass - start_pos {liveness['d_start_pos']:.2e}, "
+              f"all-positions {liveness['d_all_pos']:.2e} "
+              f"(L{liveness['layer']} alpha={liveness['alpha']:.3f})")
 
         # `_s3_pass` hard-indexes `RUN.mmlu` and `load_mmlu_items` deliberately does not
         # assign it -- on the pipeline path `phase0_calibrate` does. This mode never enters

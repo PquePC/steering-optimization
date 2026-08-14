@@ -478,17 +478,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         autopsy.run_autopsy(autopsy_cells)
         return EXIT_OK
 
-    if probe_cells is not None:
-        print("\nTASK 29 STANDALONE MODE - judge-free. Nothing here is a scored measurement: "
-              "influence\nis a mechanical mention count and detection is a transcript. "
-              "The rig checks above\nstill apply, because a probe on an unsteered model would "
-              "read exactly like a null result.")
-        probe.record_provenance()
-        probe.run_probe(probe_cells)
-        bundle = probe.export_bundle()
-        print(f"\nbundle: {bundle}")
-        return EXIT_OK
-
     if args.preflight:
         # Gate 11 uses the upstream repo's LLMJudge through a scoped OpenRouter adapter.
         # Construct it here: importing eval_utils alone used to pass, then a missing or
@@ -526,6 +515,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.preflight:
         print("\n--preflight: environment, imports, surface, model and rig checks all done. "
               "Nothing measured, no judge calls spent.")
+        return EXIT_OK
+
+    # AFTER the rig checks, deliberately. R14 is what catches an injection hook that silently
+    # does nothing, and this mode's entire finding is whether the mid band shows influence: a
+    # dead hook would produce a clean, plausible, completely empty null across all 42 cells and
+    # every mechanical check in the probe would still pass. That is bug 26's exact shape, which
+    # cost 30 cells and an hour. It sits after the `--preflight` return too, so `--preflight`
+    # keeps meaning "measure nothing" when both flags are passed.
+    if probe_cells is not None:
+        print("\nTASK 29 STANDALONE MODE - judge-free. Nothing here is a scored measurement: "
+              "influence\nis a mechanical mention count and detection is a transcript. The rig "
+              "checks above are\nwhat make a null reading here mean something.")
+        probe.record_provenance()
+        probe.run_probe(probe_cells)
+        bundle = probe.export_bundle()
+        print(f"\nbundle: {bundle}")
         return EXIT_OK
 
     # ---- the run --------------------------------------------------------------------------
