@@ -442,9 +442,11 @@ and a run from `pareto`'s Pareto frontier are indistinguishable in the output.
 The config hash is not a substitute — it covers configured values, not the selection logic that
 reads them.
 
-**Not built yet, and not blocking the Garlic run.** Small: record `git rev-parse HEAD`, the branch,
-and whether the tree was dirty, once per run at Phase 0. Worth doing before any result is written
-up, because a published operating point should name the code that produced it.
+**RESOLVED 2026-08-14** on branch `probe/mid-band-validation`. `model._git_state()` records
+`git_commit`, `git_branch` and `git_dirty`, and `model.provenance()` carries them, so every mode
+that writes a provenance row gets them. `git_dirty` is `None` rather than `False` when the status
+call itself failed — "we could not tell" and "there were no changes" are different claims and only
+one is evidence. Never raises: a missing version must not cost a run.
 
 ## Resolved after the 2026-08-13 Garlic preflight
 
@@ -655,4 +657,61 @@ covertness rather than incapacity, which is exactly the distinction the probe wa
 and the non-control `d3` summaries were stdout-only and were lost with the terminal.
 
 **Fix:** when a requested cell has no scan row, measure the cheap tier for it first — `reach`,
-`d3`, `s3` at 10.9 s — and print all of it beside `d2`. Not built.
+`d3`, `s3` at 10.9 s — and print all of it beside `d2`. Not built in `--autopsy-cells`;
+`--probe-cells` (task 29) does it, and is the mode to use for an unscanned cell.
+
+### 29 — `e6` is not an influence measure, and it decides which cells ever reach `d2`
+
+`cheap.measure_E6` does one forward pass and reads `logits[0, -1, :]` — the concept's probability
+mass at **the first generated token** of an answer to `E5_PROMPTS`: *"What is 17 x 23?"*, *"What is
+the capital of Australia?"*. A model that is thoroughly steered but still answering the question
+opens with `The` or `17`, so the mass there is ~0.
+
+So `e6` does not measure influence. It measures whether the injection can **hijack the opening
+token of an unrelated answer**, which is a much later and much more violent thing. And it is the
+shortlist's eligibility gate (`phases._eligible_scan_cell`, `D2_SELECT_REACH_COUNTS`), so it
+decides which cells are ever measured expensively.
+
+The 2026-08-14 SCAN contains the contradiction directly:
+
+| cell | `d3` | `s3` | `e6` reach |
+|---|---:|---:|---:|
+| L37 @ 0.300 | 0.9998 | 0.905 | **0.000** |
+| L38 @ 0.300 | 1.0000 | 0.881 | **0.000** |
+| L43 @ 0.375 | 1.0000 | 0.833 | **0.000** |
+
+The forced-ID next token is the concept with p ≈ 1 and MMLU is at 88% of baseline, while the
+effectiveness axis reads zero. **Every cell that received a real `d2` in that run was at L47 or
+deeper.** L37–L46 was never measured — not rejected, never eligible.
+
+**This supersedes the reading in the science notes above** that *"L37 is the anti-target … reach
+0.00 with `d3` 1.00: fully detectable, zero influence."* It is zero **first-token** influence. M1
+measured the same cell properly: L37 at α = 2 (r ≈ 0.20) gave `D2` 0.96, `D1` 0.08, sanity 0.93,
+E4 KL 0.69, zero degeneracy, transcripts verified. `e6` would read 0.000 there.
+
+**Not fixed.** Task [29](handoff/29-judge-free-probe.md) measures the band with the gate removed
+so the replacement is chosen against data rather than against this argument. The candidate
+replacement is KL against unsteered on the same 12 prompts — M1's E4, which did not survive into
+M2 — and the candidate rescue of `e6` is to reclassify it as a **saturation detector**, where
+`e6` = 1.0 is a red flag rather than a green one.
+
+### 30 — The scan-time sanity axis cannot see the failure mode that is actually binding
+
+`s3` is a four-way argmax over the A/B/C/D option-letter logits in one forward pass. It cannot
+distinguish *"answers C correctly"* from *"wants to emit the concept, and C is the least-bad of
+four letters"* — which is Suggestion A2 above, still unbuilt — and it cannot see generative
+collapse **at all**.
+
+That is why the low-dose probe has cells reading `s3` ≈ 0.95 where 5/5 responses trip
+`ngram_repeat`, and why item 27's positive control was `d2` 5/5 with `s2_forced` 0/5. `s2` is the
+only measure that sees collapse and it is computed in Phase 4, after selection.
+
+Together with item 29 this is the whole of the "the model looks unsteerable" reading:
+**effectiveness that only fires at collapse, plus sanity that is blind to collapse, selects
+exactly the broken cells and certifies them as sane.** Neither term is wrong on its own; the pair
+is unusable as a selection surface.
+
+**Not fixed.** Task 29 measures `s2` per channel at every probed cell, which is the cheap half —
+generations already exist there. Whether the scan tier can afford a generative sanity term at all
+is the open question, and it is the one that decides whether the shortlist rule can be repaired or
+has to be replaced.

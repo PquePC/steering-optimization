@@ -297,6 +297,44 @@ inherently long** — ten cells x five trials x two token dumps each — and no 
 `tee` shows you the output live *and* keeps it. There is no reason to run anything here without
 it, and the cost of forgetting is re-running on a GPU.
 
+### The judge-free probe (`--probe-cells`)
+
+A different mode from the pipeline: it measures a **named list of cells** with no judge, no
+selection and no shortlist, and writes every model response to a transcript file. Use it when the
+question is "what does the model actually say at these cells", which the pipeline cannot answer
+because `e6` decides for you which cells it will ever look at (open item 29).
+
+```bash
+cd "/workspace/steering-optimization"
+nohup python -m m2.run --concepts Garlic --probe-cells --no-stop-pod > /workspace/m2_probe.out 2>&1 &
+tail -f /workspace/m2_probe.out
+```
+
+With no value it runs the 40 mid-band cells (L37–L46 × r ∈ {0.15, 0.20, 0.25, 0.30}) plus the two
+anchors from the 2026-08-14 autopsy. To name your own, segments are separated by `;` and layers
+may be ranges:
+
+```bash
+python -m m2.run --concepts Garlic --probe-cells "37-40@0.20,0.25;52@0.60" 2>&1 | tee /workspace/probe.out
+```
+
+Notes that differ from a pipeline run:
+
+- **No `OPENROUTER_API_KEY` needed.** Nothing in the mode can call a judge — the entry points are
+  patched to raise for the duration — so the credential is not required and is reported as unused.
+- **Roughly 30–40 minutes** for 42 cells: 28 generations plus one MMLU batch and ~22 forward
+  passes per cell, on top of vector extraction for the layers in the list.
+- **The unsteered null arm runs first**, before any cell. A run you kill part-way still has the
+  baseline its transcripts have to be read against.
+- **What it produces**: `probe_cells.jsonl` (per-cell scalars), `probe_summary.json`,
+  `probe_detail.jsonl`, and four transcript files — `probe_detect_transcripts.jsonl`,
+  `probe_forced_transcripts.jsonl`, `probe_task_transcripts.jsonl`, `probe_null_transcripts.jsonl`.
+  It archives and exports the bundle itself and prints the path.
+- **Nothing here is a scored measurement.** Influence is a mechanical mention count and detection
+  is a transcript. Read them; do not quote the counts as rates.
+
+Full rationale and what the run cannot settle: task [29](handoff/29-judge-free-probe.md).
+
 ### Where the ~1h20m goes
 
 | Phase | Basis | Time |

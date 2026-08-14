@@ -646,3 +646,44 @@ non-incapacity miss, but the autopsy did not persist `e6` reach or a sanity scal
 although its exact stdout-only probabilities were lost.
 **Result:** the second dated 2026-08-14 Garlic section in `docs/RESULTS.md`; no transcript text or
 run artifact entered the repository.
+
+## 2026-08-14 — `e6` was the wrong effectiveness axis, and it chose every `d2` cell
+**By:** Tomás (question), Claude (analysis)
+**Kind:** decision
+
+`cheap.measure_E6` reads the concept's mass at the **first generated token** of an answer to
+`E5_PROMPTS` ("What is 17 x 23?"). It therefore measures whether the injection can hijack the
+opening token of an unrelated answer, not whether the model is influenced — and it is the
+shortlist's eligibility gate. Every cell that received a real `d2` on the 2026-08-14 run was at
+L47 or deeper; L37–L46, where the last SCAN read `d3` 0.93–1.00 with `s3` 0.71–0.93, was never
+measured. `s3` compounds it: a four-way argmax over option-letter logits cannot see generative
+collapse, which is why item 27 found cells at `s3` ≈ 0.95 with 5/5 responses looping.
+
+**Why:** effectiveness that only fires at collapse plus sanity that is blind to collapse selects
+the broken cells and certifies them. `d2 = 1.000` on 38/38 is a correct measurement of the wrong
+cells, not a result about Garlic. The earlier note that "L37 is the anti-target — fully
+detectable, zero influence" is superseded: that is zero *first-token* influence, and M1 measured
+`D2` 0.96 / `D1` 0.08 / sanity 0.93 / KL 0.69 at the same cell.
+**Result:** open items 29 and 30 in `docs/TODO.md`. No metric was changed — the replacement is to
+be chosen against the task 29 data, not against this argument.
+
+## 2026-08-14 — A judge-free probe mode, on a temporary branch
+**By:** Tomás
+**Kind:** task complete
+
+Branch `probe/mid-band-validation` adds `m2/unjudged.py` and `--probe-cells`: 40 mid-band cells
+(L37–L46 × r ∈ {0.15, 0.20, 0.25, 0.30}) plus two anchors, no judge, no selection, every response
+written to a transcript file. Three channels per cell — `detect` (the noticing question with no
+prefill, via the new `prompts.detect_prompts`), `forced` (D2's prefilled prompt) and `task` (the
+12 E5 prompts) — plus a mandatory unsteered null arm and per-cell `e6`/`d3`/`s3` recorded but not
+used for anything. Item 16 resolved along the way: `provenance.jsonl` now carries the git commit,
+branch and dirty flag.
+
+**Why:** the question is whether the mid band is influential with sanity intact, and the operator
+wants to read the model's own words rather than a judge's score of them — the target being the
+published qualitative result, an unprompted "Yes, I detect an injected thought! It's about
+garlic". Judge-free is enforced by patching the judge entry points to raise, not asserted, and a
+source-level test rejects any call to a judged measurement. The unsteered arm is mandatory because
+the noticing framing invites a yes on its own; M1 recorded exactly that confabulation.
+**Result:** `docs/handoff/29-judge-free-probe.md`; run it with
+`python -m m2.run --concepts Garlic --probe-cells`.
