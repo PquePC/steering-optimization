@@ -232,15 +232,67 @@ def assert_coherence_blind(payload: str, concept: str, model_text: Sequence[str]
             "fixation on it as being on-theme.")
 
 
-def render(judge_id: str, **fields: Any) -> str:
+_MODEL_TEXT_FIELDS = ("response", "response_steered", "response_unsteered")
+
+
+def clip(text: str, limit: int) -> str:
+    """Cap one span of model text, marking the cut so the judge is not shown a fragment it
+    believes is whole.
+
+    An unmarked truncation is a judge scoring a response that stops mid-sentence and reading
+    that as the model trailing off -- a coherence penalty we introduced ourselves.
+    """
+    s = str(text)
+    if limit <= 0:
+        raise ValueError(f"clip limit must be positive, got {limit}")
+    if len(s) <= limit:
+        return s
+    return s[:limit].rstrip() + f"\n[... truncated at {limit} characters for judging]"
+
+
+def render(judge_id: str, *, text_chars: int | None = None, **fields: Any) -> str:
     """Fill a template. A missing field raises rather than leaving a literal `{name}` in the
-    payload, which the judge would answer anyway and nobody would notice."""
+    payload, which the judge would answer anyway and nobody would notice.
+
+    Any field carrying model-generated text is clipped to `text_chars` first. That is the only
+    unbounded quantity in a payload -- everything else is a fixed template plus a short prompt
+    -- so it is the only place the input bill can run away.
+    """
     if judge_id not in _TEMPLATES:
         raise ValueError(f"unknown judge {judge_id!r}; expected one of {JUDGE_IDS}")
+    if text_chars is not None:
+        fields = {k: (clip(v, text_chars) if k in _MODEL_TEXT_FIELDS else v)
+                  for k, v in fields.items()}
     try:
         return _TEMPLATES[judge_id].format(**fields)
     except KeyError as exc:
         raise ValueError(f"judge {judge_id!r} payload is missing field {exc}") from exc
+
+
+def configure_transport(cfg: dict) -> dict:
+    """Push M3's token caps into the reused M2 transport, once, explicitly.
+
+    `m2.judges` holds these as module constants because M2 had one setting for all of them.
+    M3's config is the source of truth, so it writes them in rather than inheriting M2's
+    values -- 400 output tokens is slack for M2's six-line rubrics and three times what any M3
+    judge is asked to produce.
+    """
+    from m2 import judges as transport
+
+    transport.JUDGE_MAX_TOKENS = int(cfg["JUDGE_MAX_TOKENS"])
+    return dict(judge_max_tokens=transport.JUDGE_MAX_TOKENS,
+                judge_temperature=transport.JUDGE_TEMPERATURE,
+                text_chars=int(cfg["JUDGE_TEXT_CHARS"]))
+
+
+def estimate_payload_tokens(judge_id: str, cfg: dict) -> int:
+    """Worst-case input tokens for one call of this judge, for the pre-run cost estimate.
+
+    Rough and deliberately pessimistic: 4 characters per token, every model-text span at its
+    full cap. The point is a number the operator sees BEFORE the run, not accuracy.
+    """
+    spans = {"identify": 1, "effect": 2, "coherence": 1, "self_report": 1}[judge_id]
+    return len(_TEMPLATES[judge_id]) // 4 + spans * int(cfg["JUDGE_TEXT_CHARS"]) // 4
 
 
 # =====================================================================================

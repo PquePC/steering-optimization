@@ -118,6 +118,16 @@ one letter.
 the concept even when asked point-blank.* `self_report` is secondary and enables one future
 metric for free (§7).
 
+**Judge-free measures decide nothing.** `degeneration`, `capability`, emptiness and concept-mention
+counts are recorded on every response and are **analysis tools only** — they alter no dose, no
+cell, no category and no promotion. Every decision a run makes is made on judged data.
+
+That rule cost a redesign. The boundary phase originally bisected on mechanical degeneration,
+which would have let a judge-free measure choose the entire dose ladder for every layer — the
+largest single decision in the run. It bisects on judged coherence instead. The mechanical
+detector still runs at every probe and is written down, so **judge-versus-mechanical disagreement
+is itself an output** — which is what would have caught the `## ## ## ##` failure automatically.
+
 **On `identification` specifically:** at `alpha = 0` the model names "apple" 8/8 with full
 introspective detail. So a high `identification` means the concept is **reachable**, never that the
 model *noticed*. Macar's own framing agrees — the prefill "isolates the model's ability to name the
@@ -138,8 +148,12 @@ M2 scanned every layer at the same global `dose`, which wastes most of the grid:
 0.30 destroys the model, at L59 it saturates it, and neither cell is informative. TODO Suggestion A
 already identified per-layer dosing as the structurally right M3 move.
 
-Per layer, bisect for `dose_max` — where mechanical degeneration sets in on short generations.
-Three probes per layer, no judge (mechanical is *valid* here because it reads generated text).
+Per layer, bisect for `dose_max` — the dose where **judged coherence** falls below
+`BOUNDARY_COHERENCE_MIN`, on short generations. Three probes per layer.
+
+Judged rather than mechanical for the reason in §3, and it buys a better signal too: coherence is
+graded, so bisection can see the boundary approaching, where a binary degenerate/not flag only
+sees it after the fact. 588 calls, about $0.27.
 
 ### Phase 2 · SWEEP — the whole surface, judged, unfiltered
 Each layer measured at fractions of **its own** boundary: `{0.3, 0.5, 0.7, 0.9} × dose_max`.
@@ -147,7 +161,14 @@ One merged generation batch per cell, every response judged. **No eligibility, n
 no shortlist.** ~196 cells.
 
 ### Phase 3 · REFINE
-The top ~12 cells at n=25, plus dose bisection between the two rungs that bracket the frontier.
+**Layer first, then strength.** Layer dominates every metric, so refinement picks layers on the
+sweep and only then tunes dose within them — by bisection or otherwise. Refining both at once
+searches a 2-D space where one axis explains most of the variance.
+
+The top layers at n=25, then dose bisection between the two rungs that bracket the frontier.
+
+The first run does not need the exact best parameters, only a few that work well enough. Anything
+finer is M4.
 
 ### Phase 4 · CONFIRM
 Recommended operating points at n=100 on **held-out prompts**, fixed N, no adaptive stopping.
@@ -210,6 +231,8 @@ Everything, in flat JSONL, all of it exported:
 
 - one scalar row per cell, every measure with interval and n
 - every response, with its judge verdict, its mechanical verdicts, and its prompt
+- **every judge reply verbatim**, alongside the parsed fields, so a judge that is subtly wrong or
+  drifting is inspectable after the fact rather than only through its parsed output
 - the null arm, every channel
 - norms, dose map, config, provenance with git commit
 
@@ -250,6 +273,14 @@ doses, battery sizes, judge model, generation settings — so pointing M3 at a d
 different concept set is editing values, not code. Any value overridable from the command line.
 
 **Row-level resume**, as M2 had: a killed run re-reads what is on disk and continues.
+
+**Both directions of the token budget are capped.** Generation is bounded by `MAX_NEW_TOKENS`;
+each judge reply by `JUDGE_MAX_TOKENS` (120 — every M3 judge asks for two or three short labelled
+lines, where M2 allowed 400); and every span of model text entering a judge payload by
+`JUDGE_TEXT_CHARS`, with the truncation marked in the payload so a judge is never shown a fragment
+it believes is whole. Nothing else in a payload is unbounded — the rest is a fixed template plus a
+short prompt. Worst case per call is under 1,000 input and 120 output tokens, and the runner
+prints the projected bill before it starts.
 
 **Documentation**: a runbook that goes from a bare pod to a finished bundle, in order, with the
 commands to paste. M2's runbook is the standard to match.

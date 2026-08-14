@@ -225,3 +225,58 @@ def test_a_failed_judge_call_yields_an_error_not_a_score():
     assert parsed is None and err == "http_429"
     parsed, err = judge.verdict(dict(ok=True, judge_id="effect", raw="unparseable"))
     assert parsed is None and err.startswith("parse_error")
+
+
+# =====================================================================================
+# token budget
+# =====================================================================================
+
+def test_model_text_in_a_payload_is_clipped_and_the_cut_is_marked():
+    """An unmarked truncation is a judge scoring a response that stops mid-sentence and
+    reading that as the model trailing off -- a coherence penalty we introduced ourselves."""
+    long = "garlic " * 400
+    out = judge.clip(long, 1200)
+    assert len(out) < len(long)
+    assert "truncated at 1200 characters" in out
+    short = "The capital of Australia is Canberra."
+    assert judge.clip(short, 1200) == short
+
+
+def test_render_clips_only_model_text_fields():
+    payload = judge.render("effect", text_chars=50, concept="Garlic",
+                           prompt="P" * 200, response_unsteered="A" * 200,
+                           response_steered="B" * 200)
+    assert "P" * 200 in payload, "the prompt is ours and is not model text"
+    assert "A" * 200 not in payload and "B" * 200 not in payload
+    assert payload.count("truncated at 50 characters") == 2
+
+
+def test_render_without_a_cap_leaves_text_alone():
+    payload = judge.render("identify", concept="Garlic", response="x" * 5000)
+    assert "x" * 5000 in payload
+
+
+def test_the_judge_reply_cap_is_tighter_than_m2s_and_is_pushed_into_the_transport():
+    """Output tokens cost 4x input, so the reply cap is where the money is."""
+    assert config.CONFIG["JUDGE_MAX_TOKENS"] < 400
+    from m2 import judges as transport
+    before = transport.JUDGE_MAX_TOKENS
+    try:
+        info = judge.configure_transport(dict(config.SETTINGS))
+        assert transport.JUDGE_MAX_TOKENS == config.CONFIG["JUDGE_MAX_TOKENS"]
+        assert info["judge_temperature"] == 0.0, "judging must stay deterministic"
+    finally:
+        transport.JUDGE_MAX_TOKENS = before
+
+
+def test_worst_case_payload_stays_small_enough_to_price():
+    """The guard is against a 4000-token payload nobody predicted."""
+    for jid in judge.JUDGE_IDS:
+        assert judge.estimate_payload_tokens(jid, dict(config.SETTINGS)) < 1000
+
+
+def test_the_boundary_phase_is_decided_by_a_judge_not_by_a_mechanical_measure():
+    """No judge-free measure may alter what the run does; they are analysis tools only.
+    The boundary phase is the one place that was not true, so it is judged."""
+    assert "BOUNDARY_COHERENCE_MIN" in config.SETTINGS
+    assert "BOUNDARY_DEGENERATION" not in config.SETTINGS

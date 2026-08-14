@@ -95,9 +95,16 @@ SETTINGS: dict[str, Any] = dict(
     BOUNDARY_N=4,
     BOUNDARY_MAX_TOKENS=48,
 
-    # A probe counts as past the boundary when this fraction of its responses are mechanically
-    # degenerate. 0.5 = half of them.
-    BOUNDARY_DEGENERATION=0.5,
+    # A probe is past the boundary when mean JUDGED coherence falls below this, on 0-10.
+    #
+    # Judged, not mechanical, and this is a deliberate constraint: no judge-free measure is
+    # allowed to alter what the run does. The mechanical degeneration detector is recorded
+    # beside every probe and decides nothing, so it stays a pure analysis tool -- and the
+    # judge-vs-mechanical disagreement it produces here is itself worth reading.
+    #
+    # It also buys a better signal: coherence is graded, so bisection can see the boundary
+    # approaching, where a binary degenerate/not flag only sees it after the fact.
+    BOUNDARY_COHERENCE_MIN=5.0,
 
     # Refuse any (layer, dose) needing a larger raw multiplier than this. Never clamped: a
     # clamped alpha is a cell measured at a dose other than the one recorded against it.
@@ -158,6 +165,22 @@ SETTINGS: dict[str, Any] = dict(
     # Concurrent judge calls. The rate limiter backs the whole pool off together when the
     # provider returns 429, because that is an account limit and not a per-request one.
     JUDGE_CONCURRENT=32,
+
+    # --- token budget, both directions --------------------------------------------------
+    # Output tokens cost 4x input on this model, so the reply cap is where the money is. Every
+    # M3 judge asks for two or three short labelled lines; 120 is slack for that and a hard
+    # stop on a judge that decides to write an essay. M2 allowed 400.
+    JUDGE_MAX_TOKENS=120,
+
+    # Hard character cap on any MODEL-GENERATED text embedded in a judge payload, per span.
+    # Truncation is marked in the payload so the judge is never silently shown a fragment it
+    # thinks is whole.
+    #
+    # Generation already bounds this: MAX_NEW_TOKENS=100 is roughly 500 characters. This cap is
+    # the second line of defence, so that raising MAX_NEW_TOKENS for some other reason cannot
+    # quietly multiply the judge bill. 1200 chars is ~300 tokens: generous headroom, and it
+    # still catches a runaway.
+    JUDGE_TEXT_CHARS=1200,
 
     # =================================================================================
     # 6. STATISTICS
