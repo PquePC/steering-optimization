@@ -594,6 +594,84 @@ path, even if every phase completes.
 - **Failure semantics:** the null operating-point record is an infrastructure-cascade result over
   zero verified cells, not a completed scientific null.
 
+## K. `d2` conditioned on forced-response sanity
+
+Task 26's selection-time sanity floor is `S4_MIN = 0.70`. It applies to
+`selection_sanity = min(s2_forced, s3)`. For the conditioning requested here, a cell is
+`s2_forced`-sane when `s2_forced >= 0.70`; because every persisted cell has
+`s2_forced_n = 5`, that means at least 4/5 forced-ID responses were non-degenerate.
+
+There are **37, not 38, persisted rows** in `selection_d2.jsonl`, all with unique `(layer, r)`
+keys. The 38th measured cell was L47@0.450, but its `selection_d2` scalar-row append is the write
+that failed. It therefore has no persisted `s2_forced` value and is not reconstructed or included
+in the conditioning below.
+
+| Layer | r | e6 reach | d2 | s2_forced | s3 |
+|---:|---:|---:|---:|---:|---:|
+| L47 | 0.600 | 0.250 | 1.000 | 0.200 | 0.738 |
+| L49 | 0.450 | 0.167 | 1.000 | 1.000 | 1.000 |
+| L49 | 0.600 | 0.250 | 1.000 | 0.400 | 0.952 |
+| L50 | 0.525 | 0.250 | 1.000 | 1.000 | 0.929 |
+| L50 | 0.600 | 0.417 | 1.000 | 0.200 | 0.881 |
+| L51 | 0.450 | 0.167 | 1.000 | 1.000 | 0.952 |
+| L51 | 0.525 | 0.250 | 1.000 | 1.000 | 0.976 |
+| L51 | 0.600 | 0.500 | 1.000 | 0.400 | 0.929 |
+| L52 | 0.375 | 0.167 | 1.000 | 1.000 | 0.976 |
+| L52 | 0.450 | 0.500 | 1.000 | 0.800 | 1.000 |
+| L52 | 0.600 | 1.000 | 1.000 | 0.000 | 0.952 |
+| L53 | 0.300 | 0.167 | 1.000 | 1.000 | 0.905 |
+| L53 | 0.375 | 0.250 | 1.000 | 0.800 | 0.952 |
+| L53 | 0.450 | 0.667 | 1.000 | 0.200 | 0.976 |
+| L53 | 0.600 | 1.000 | 1.000 | 0.000 | 1.000 |
+| L54 | 0.300 | 0.167 | 1.000 | 1.000 | 0.952 |
+| L54 | 0.375 | 0.417 | 1.000 | 0.400 | 0.952 |
+| L54 | 0.600 | 1.000 | 1.000 | 0.000 | 0.905 |
+| L55 | 0.300 | 0.167 | 1.000 | 1.000 | 0.929 |
+| L55 | 0.375 | 0.500 | 1.000 | 0.200 | 0.929 |
+| L55 | 0.450 | 0.667 | 1.000 | 0.000 | 0.929 |
+| L55 | 0.600 | 1.000 | 1.000 | 0.000 | 0.905 |
+| L56 | 0.300 | 0.167 | 1.000 | 0.800 | 0.929 |
+| L56 | 0.450 | 0.667 | 1.000 | 0.000 | 0.905 |
+| L56 | 0.525 | 0.917 | 1.000 | 0.000 | 0.929 |
+| L56 | 0.600 | 1.000 | 1.000 | 0.000 | 0.929 |
+| L57 | 0.300 | 0.333 | 1.000 | 0.000 | 0.976 |
+| L57 | 0.375 | 0.667 | 1.000 | 0.000 | 0.952 |
+| L57 | 0.600 | 1.000 | 1.000 | 0.000 | 0.952 |
+| L58 | 0.375 | 1.000 | 1.000 | 0.000 | 0.952 |
+| L58 | 0.450 | 1.000 | 1.000 | 0.000 | 0.929 |
+| L58 | 0.600 | 1.000 | 1.000 | 0.000 | 0.929 |
+| L59 | 0.300 | 1.000 | 1.000 | 0.000 | 0.976 |
+| L59 | 0.600 | 1.000 | 1.000 | 0.000 | 0.952 |
+| L60 | 0.300 | 1.000 | 1.000 | 0.000 | 0.952 |
+| L61 | 0.300 | 0.917 | 1.000 | 0.000 | 0.952 |
+| L61 | 0.600 | 1.000 | 1.000 | 0.000 | 0.952 |
+
+The `s2_forced` distribution over the 37 persisted cells is:
+
+| s2_forced | Cells | Threshold class |
+|---:|---:|---|
+| 0.000 (0/5 sane) | 19 | below 0.70 |
+| 0.200 (1/5 sane) | 4 | below 0.70 |
+| 0.400 (2/5 sane) | 3 | below 0.70 |
+| 0.800 (4/5 sane) | 3 | sane |
+| 1.000 (5/5 sane) | 8 | sane |
+
+Thus **11/37 persisted cells are `s2_forced`-sane** and 26/37 are not. All 11 also have
+`s3 >= 0.70`, so the same 11 pass task 26's complete persisted selection-sanity condition.
+Among those 11 sane cells only, `d2` has this distribution:
+
+| d2 | Cells |
+|---:|---:|
+| 1.000 | 11 |
+
+This is a distribution, not a mean: there are no other observed `d2` values among the sane cells.
+
+`s2_forced` is persisted at **per-cell aggregate granularity**, not per trial. Each row retains
+`s2_forced_n`, `s2_forced_count`, `s2_forced_degenerate_count` and the aggregate Wilson interval;
+all 37 rows have `n = 5`. `selection_d2.jsonl` does not retain per-trial degeneracy verdicts or
+rule labels. Therefore task 26 Part 2 did ship into every successfully persisted selection row,
+but not into the missing L47@0.450 row because that row was never written.
+
 # 2026-08-14 — Garlic low-dose autopsy read
 
 **Status.** This is a task-25 diagnostic at `n = 5` fixed trials per cell, not a confirmed
