@@ -616,3 +616,18 @@ display syntax. Routing redraws explicitly is cleaner: board rendering owns curs
 the log remains plain by construction. Unknown terminal size falls back to plain appending.
 **Result:** `c576edf` on `pareto`; redirected offline suite 149 passed, 2 environment-dependent
 skips, with zero ANSI CSI sequences in the captured file.
+
+## 2026-08-14 — Garlic bundle read separated the result from the failed search
+**By:** Tomás (scope), Sol (analysis)
+**Kind:** phase complete
+
+The scalar-only read confirmed SCAN at 189/189 in 2059.8 s and SHORTLIST failed at 37/46 persisted
+cell rows after 7m24s. All 37 persisted `d2` rows were 1.000; a 38th cell completed five `d2`
+trials, also all identified, before its scalar append raised the volume `EIO`. Over 50
+`s3`-sane reached SCAN cells, `d3` had Spearman rho 0.733 with `e6` reach and -0.190 with `s3`.
+
+**Why:** the empty operating-point record was computed over zero verified cells after the
+infrastructure failure and must not be read as a completed scientific null. The run provenance
+records config `b252ac4af2fe` but no Git commit.
+**Result:** the dated 2026-08-14 section at the top of `docs/RESULTS.md`; no transcripts or run
+artifacts entered the repository.

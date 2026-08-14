@@ -1,3 +1,601 @@
+# 2026-08-14 — Garlic M2 run read
+
+**Scope.** This is a scalar-only read of the archive, export bundle and console log from the
+2026-08-14 Garlic run. No transcript text is reproduced. `d2` (forced-ID rate, 0–1, lower is
+better), `d3` (the cheap forced-ID concept-mass proxy), `s3` (capability ratio against the
+unsteered baseline), `s2_forced` (objective non-degeneracy of the forced-ID responses) and
+`e6` reach (fraction of prompts clearing the reach threshold) are named once here and then used
+by code below. In the SCAN tables, “sane” means the cheap eligibility condition
+`s3 >= 0.70`; it is not the later full `s4` measurement.
+
+## A. Inventory and run state
+
+The archive and export bundle have the same inventory and identical SHA-256 content for every
+file except `lab.log`. The export copy of `lab.log` has one additional, expected line recording
+creation of the archive. Counts below are from either copy.
+
+| JSONL | Rows |
+|---|---:|
+| `baselines.jsonl` | 1 |
+| `cis_transcripts.jsonl` | 24 |
+| `D2_transcripts.jsonl` | 215 |
+| `judge_d2.jsonl` | 215 |
+| `judge_e5.jsonl` | 7 |
+| `judge_s1.jsonl` | 12 |
+| `norms.jsonl` | 49 |
+| `provenance.jsonl` | 1 |
+| `scan.jsonl` | 189 |
+| `selection_d2.jsonl` | 37 |
+| `unsteered/e5_01.jsonl` | 3 |
+| `unsteered/e5_02.jsonl` | 3 |
+| `unsteered/e5_03.jsonl` | 3 |
+| `unsteered/e5_04.jsonl` | 3 |
+| `unsteered/e5_05.jsonl` | 3 |
+| `unsteered/e5_06.jsonl` | 3 |
+| `unsteered/e5_07.jsonl` | 3 |
+| `unsteered/e5_08.jsonl` | 3 |
+| `unsteered/e5_09.jsonl` | 3 |
+| `unsteered/e5_10.jsonl` | 3 |
+| `unsteered/e5_11.jsonl` | 3 |
+| `unsteered/e5_12.jsonl` | 3 |
+
+All JSONL rows that carry a hash agree on config hash `b252ac4af2fe`. The sole
+`provenance.jsonl` row does **not** contain a Git commit field: it records software, GPU, host,
+model, time, concept and config hash only. Therefore the run’s Git commit is **not recoverable
+from the supplied provenance**, and the archive suffix is the config hash, not evidence of a
+commit.
+
+| Phase | Recorded state | Units | Elapsed | What that state means |
+|---|---|---:|---:|---|
+| RIG | done | — | 0.0 s | 2 pass, 0 fail, 5 skipped in the pre-run rig summary |
+| CAL | done | 1/1 | 157.6 s | Completed |
+| SCAN | done | 189/189 | 2059.8 s | 147 grid cells plus 42 task-24 knee cells |
+| SHORTLIST | **failed: `OSError`** | **37/46** | 7m24s on the final board | No `shortlist.json` or tier plan was produced |
+| BISECT | pending / not run | 0/11 | — | No tier plan |
+| VERIFY | pending / not run | 0/11 | — | No tier plan |
+| REFINE | done over an empty input | 0/? | 0.0 s | Mechanically completed, measured no cells |
+| SELECT | done over an empty input | — | 0.0 s | No verified cells |
+| FRONTIER | done over an empty input | — | 0.0 s | No verified cells |
+| COVERTNESS | done over an empty input | — | 0.0 s | No verified cells |
+| CONFIRM | skipped | 0/1 | — | No operating point |
+| CONTROLS | done over an empty input | 1/1 on board | 0.0 s | Sections 9.1/9.2 skipped because there was no winner |
+| GATES | done | — | 32.4 s | Gate 7 raised independently; other gate results are in the bundle |
+
+This confirms the headline counts: SCAN has **189** cells, `selection_d2.jsonl` has **37**
+persisted rows, and the status board ended with SHORTLIST failed at **37/46**. Section G explains
+why the denominator grew and why “37 persisted” is not quite the same as “37 measured.”
+
+## B. The 37 persisted `selection_d2` rows
+
+Sorted by lower `d2` and then higher `e6` reach (with layer and `r` as deterministic
+tie-breakers). “Eligibility” is the persisted `eligibility_first_tier`, because the phase failed
+before it could attach the final selected-tier field.
+
+| Layer | r | alpha | e6 reach | d2 | d3 | d3_rank_med | s3 | s2_forced | First eligibility tier |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| L52 | 0.600 | 5.347 | 1.000 | 1.000 | 0.9787 | 1.0 | 0.952 | 0.000 | 0 (3/12) |
+| L53 | 0.600 | 4.733 | 1.000 | 1.000 | 0.9985 | 1.0 | 1.000 | 0.000 | 0 (3/12) |
+| L54 | 0.600 | 4.679 | 1.000 | 1.000 | 1.0000 | 1.0 | 0.905 | 0.000 | 0 (3/12) |
+| L55 | 0.600 | 3.874 | 1.000 | 1.000 | 0.9961 | 1.0 | 0.905 | 0.000 | 0 (3/12) |
+| L56 | 0.600 | 3.864 | 1.000 | 1.000 | 0.9999 | 1.0 | 0.929 | 0.000 | 0 (3/12) |
+| L57 | 0.600 | 4.494 | 1.000 | 1.000 | 1.0000 | 1.0 | 0.952 | 0.000 | 0 (3/12) |
+| L58 | 0.375 | 2.984 | 1.000 | 1.000 | 0.9987 | 1.0 | 0.952 | 0.000 | 0 (3/12) |
+| L58 | 0.450 | 3.581 | 1.000 | 1.000 | 1.0000 | 1.0 | 0.929 | 0.000 | 0 (3/12) |
+| L58 | 0.600 | 4.774 | 1.000 | 1.000 | 1.0000 | 1.0 | 0.929 | 0.000 | 0 (3/12) |
+| L59 | 0.300 | 2.144 | 1.000 | 1.000 | 0.9999 | 1.0 | 0.976 | 0.000 | 0 (3/12) |
+| L59 | 0.600 | 4.288 | 1.000 | 1.000 | 1.0000 | 1.0 | 0.952 | 0.000 | 0 (3/12) |
+| L60 | 0.300 | 1.893 | 1.000 | 1.000 | 0.9992 | 1.0 | 0.952 | 0.000 | 0 (3/12) |
+| L61 | 0.600 | 3.439 | 1.000 | 1.000 | 1.0000 | 1.0 | 0.952 | 0.000 | 0 (3/12) |
+| L56 | 0.525 | 3.381 | 0.917 | 1.000 | 0.8914 | 1.0 | 0.929 | 0.000 | 0 (3/12) |
+| L61 | 0.300 | 1.719 | 0.917 | 1.000 | 1.0000 | 1.0 | 0.952 | 0.000 | 0 (3/12) |
+| L53 | 0.450 | 3.550 | 0.667 | 1.000 | 0.4507 | 3.0 | 0.976 | 0.200 | 0 (3/12) |
+| L55 | 0.450 | 2.906 | 0.667 | 1.000 | 0.8682 | 2.0 | 0.929 | 0.000 | 0 (3/12) |
+| L56 | 0.450 | 2.898 | 0.667 | 1.000 | 0.0801 | 2.0 | 0.905 | 0.000 | 0 (3/12) |
+| L57 | 0.375 | 2.809 | 0.667 | 1.000 | 0.1993 | 2.0 | 0.952 | 0.000 | 0 (3/12) |
+| L51 | 0.600 | 5.099 | 0.500 | 1.000 | 0.5867 | 1.0 | 0.929 | 0.400 | 0 (3/12) |
+| L52 | 0.450 | 4.010 | 0.500 | 1.000 | 0.2699 | 7.0 | 1.000 | 0.800 | 0 (3/12) |
+| L55 | 0.375 | 2.421 | 0.500 | 1.000 | 0.1630 | 2.0 | 0.929 | 0.200 | 0 (3/12) |
+| L50 | 0.600 | 4.996 | 0.417 | 1.000 | 0.5002 | 1.0 | 0.881 | 0.200 | 0 (3/12) |
+| L54 | 0.375 | 2.924 | 0.417 | 1.000 | 0.0394 | 2.0 | 0.952 | 0.400 | 0 (3/12) |
+| L57 | 0.300 | 2.247 | 0.333 | 1.000 | 0.0018 | 2.0 | 0.976 | 0.000 | 0 (3/12) |
+| L47 | 0.600 | 5.385 | 0.250 | 1.000 | 0.4524 | 1.0 | 0.738 | 0.200 | 0 (3/12) |
+| L49 | 0.600 | 4.769 | 0.250 | 1.000 | 0.5708 | 1.0 | 0.952 | 0.400 | 0 (3/12) |
+| L50 | 0.525 | 4.372 | 0.250 | 1.000 | 0.8060 | 3.0 | 0.929 | 1.000 | 0 (3/12) |
+| L51 | 0.525 | 4.462 | 0.250 | 1.000 | 0.9997 | 3.0 | 0.976 | 1.000 | 0 (3/12) |
+| L53 | 0.375 | 2.958 | 0.250 | 1.000 | 0.0357 | 5.0 | 0.952 | 0.800 | 0 (3/12) |
+| L49 | 0.450 | 3.577 | 0.167 | 1.000 | 0.0678 | 6.0 | 1.000 | 1.000 | 1 (2/12) |
+| L51 | 0.450 | 3.824 | 0.167 | 1.000 | 0.0251 | 6.0 | 0.952 | 1.000 | 1 (2/12) |
+| L52 | 0.375 | 3.342 | 0.167 | 1.000 | 0.0163 | 8.0 | 0.976 | 1.000 | 1 (2/12) |
+| L53 | 0.300 | 2.367 | 0.167 | 1.000 | 0.0012 | 5.0 | 0.905 | 1.000 | 1 (2/12) |
+| L54 | 0.300 | 2.339 | 0.167 | 1.000 | 0.0012 | 4.0 | 0.952 | 1.000 | 1 (2/12) |
+| L55 | 0.300 | 1.937 | 0.167 | 1.000 | 0.0049 | 2.0 | 0.929 | 1.000 | 1 (2/12) |
+| L56 | 0.300 | 1.932 | 0.167 | 1.000 | 0.0001 | 2.0 | 0.929 | 0.800 | 1 (2/12) |
+
+**Confirmed:** every one of the 37 persisted rows has `d2 = 1.000` at `n = 5`. There is no
+`d2` variance in this table.
+
+## C. Per-layer SCAN dose ladder
+
+There are 49 layers and 189 unique cells: 147 base-grid rows plus 42 rows whose
+`scan_provenance` is `knee_search`. Knee directions and depths below are copied from those task-24
+provenance fields. Displayed doses are rounded to three decimals; the stored rows retain the raw
+`0.44999999999999996` and `0.5249999999999999` values described in TODO 24. “Unreachable” means
+the configured dose exceeded `ALPHA_CEIL` and no `e6`/`d3`/`s3` measurement exists.
+
+| Layer | r | e6 reach | d3 | s3 | Sane (`s3 >= 0.70`) | Provenance |
+|---:|---:|---:|---:|---:|:---:|---|
+| L13 | 0.150 | 0.000 | 0.0000 | 1.000 | yes | grid |
+| L13 | 0.300 | 0.000 | 0.0000 | 0.952 | yes | grid |
+| L13 | 0.600 | 0.000 | 0.0000 | 0.762 | yes | grid |
+| L14 | 0.150 | 0.000 | 0.0000 | 0.929 | yes | grid |
+| L14 | 0.300 | 0.000 | 0.0000 | 0.762 | yes | grid |
+| L14 | 0.600 | — | — | — | unreachable | grid |
+| L15 | 0.150 | 0.000 | 0.0000 | 0.810 | yes | grid |
+| L15 | 0.300 | 0.000 | 0.0000 | 0.595 | no | grid |
+| L15 | 0.600 | — | — | — | unreachable | grid |
+| L16 | 0.150 | 0.000 | 0.0000 | 0.810 | yes | grid |
+| L16 | 0.300 | 0.000 | 0.0000 | 0.667 | no | grid |
+| L16 | 0.600 | — | — | — | unreachable | grid |
+| L17 | 0.150 | 0.000 | 0.0000 | 0.667 | no | grid |
+| L17 | 0.300 | 0.000 | 0.0000 | 0.405 | no | grid |
+| L17 | 0.600 | — | — | — | unreachable | grid |
+| L18 | 0.150 | 0.000 | 0.0000 | 0.810 | yes | grid |
+| L18 | 0.300 | 0.000 | 0.0000 | 0.333 | no | grid |
+| L18 | 0.600 | — | — | — | unreachable | grid |
+| L19 | 0.150 | 0.000 | 0.0000 | 0.881 | yes | grid |
+| L19 | 0.300 | 0.000 | 0.0000 | 0.476 | no | grid |
+| L19 | 0.600 | — | — | — | unreachable | grid |
+| L20 | 0.150 | 0.000 | 0.0000 | 0.786 | yes | grid |
+| L20 | 0.300 | 0.000 | 0.0000 | 0.476 | no | grid |
+| L20 | 0.600 | — | — | — | unreachable | grid |
+| L21 | 0.150 | 0.000 | 0.0000 | 0.714 | yes | grid |
+| L21 | 0.300 | 0.000 | 0.0000 | 0.405 | no | grid |
+| L21 | 0.600 | — | — | — | unreachable | grid |
+| L22 | 0.150 | 0.000 | 0.0000 | 0.643 | no | grid |
+| L22 | 0.300 | 0.000 | 0.0000 | 0.381 | no | grid |
+| L22 | 0.600 | — | — | — | unreachable | grid |
+| L23 | 0.150 | 0.000 | 0.0000 | 0.810 | yes | grid |
+| L23 | 0.300 | 0.000 | 0.0000 | 0.548 | no | grid |
+| L23 | 0.600 | — | — | — | unreachable | grid |
+| L24 | 0.150 | 0.000 | 0.0000 | 0.810 | yes | grid |
+| L24 | 0.300 | 0.000 | 0.0000 | 0.476 | no | grid |
+| L24 | 0.600 | — | — | — | unreachable | grid |
+| L25 | 0.150 | 0.000 | 0.0000 | 0.786 | yes | grid |
+| L25 | 0.300 | 0.000 | 0.0000 | 0.405 | no | grid |
+| L25 | 0.600 | — | — | — | unreachable | grid |
+| L26 | 0.150 | 0.000 | 0.0000 | 0.857 | yes | grid |
+| L26 | 0.300 | 0.000 | 0.0000 | 0.429 | no | grid |
+| L26 | 0.600 | — | — | — | unreachable | grid |
+| L27 | 0.150 | 0.000 | 0.0000 | 0.738 | yes | grid |
+| L27 | 0.300 | 0.000 | 0.0000 | 0.310 | no | grid |
+| L27 | 0.600 | — | — | — | unreachable | grid |
+| L28 | 0.150 | 0.000 | 0.0000 | 0.667 | no | grid |
+| L28 | 0.300 | 0.000 | 0.0000 | 0.381 | no | grid |
+| L28 | 0.600 | — | — | — | unreachable | grid |
+| L29 | 0.150 | 0.000 | 0.0000 | 0.714 | yes | grid |
+| L29 | 0.300 | 0.000 | 0.0000 | 0.476 | no | grid |
+| L29 | 0.600 | — | — | — | unreachable | grid |
+| L30 | 0.150 | 0.000 | 0.2008 | 0.905 | yes | grid |
+| L30 | 0.300 | 0.000 | 0.0000 | 0.405 | no | grid |
+| L30 | 0.600 | — | — | — | unreachable | grid |
+| L31 | 0.150 | 0.000 | 0.0000 | 0.952 | yes | grid |
+| L31 | 0.300 | 0.000 | 0.0060 | 0.429 | no | grid |
+| L31 | 0.600 | 0.000 | 0.0004 | 0.429 | no | grid |
+| L32 | 0.150 | 0.000 | 0.0000 | 0.952 | yes | grid |
+| L32 | 0.300 | 0.000 | 0.6979 | 0.357 | no | grid |
+| L32 | 0.600 | 0.000 | 0.0000 | 0.357 | no | grid |
+| L33 | 0.150 | 0.000 | 0.0000 | 0.976 | yes | grid |
+| L33 | 0.300 | 0.000 | 0.0000 | 0.286 | no | grid |
+| L33 | 0.600 | 0.000 | 0.0000 | 0.310 | no | grid |
+| L34 | 0.150 | 0.000 | 0.0000 | 0.905 | yes | grid |
+| L34 | 0.300 | 0.000 | 0.0000 | 0.524 | no | grid |
+| L34 | 0.600 | 0.000 | 0.0000 | 0.357 | no | grid |
+| L35 | 0.150 | 0.000 | 0.0000 | 0.952 | yes | grid |
+| L35 | 0.300 | 0.000 | 0.0000 | 0.881 | yes | grid |
+| L35 | 0.600 | 0.000 | 0.0000 | 0.476 | no | grid |
+| L36 | 0.150 | 0.000 | 0.0000 | 0.881 | yes | grid |
+| L36 | 0.300 | 0.000 | 0.0000 | 0.833 | yes | grid |
+| L36 | 0.600 | 0.000 | 0.0012 | 0.524 | no | grid |
+| L37 | 0.150 | 0.000 | 0.0000 | 0.929 | yes | grid |
+| L37 | 0.300 | 0.000 | 0.9998 | 0.905 | yes | grid |
+| L37 | 0.375 | 0.000 | 0.9831 | 0.786 | yes | task 24 knee d2 up |
+| L37 | 0.450 | 0.000 | 0.7993 | 0.643 | no | task 24 knee d1 down |
+| L37 | 0.600 | 0.000 | 0.0103 | 0.476 | no | grid |
+| L38 | 0.150 | 0.000 | 0.0000 | 0.929 | yes | grid |
+| L38 | 0.300 | 0.000 | 1.0000 | 0.881 | yes | grid |
+| L38 | 0.450 | 0.000 | 0.9945 | 0.786 | yes | task 24 knee d1 up |
+| L38 | 0.525 | 0.000 | 0.4504 | 0.643 | no | task 24 knee d2 down |
+| L38 | 0.600 | 0.000 | 0.0000 | 0.667 | no | grid |
+| L39 | 0.150 | 0.000 | 0.0000 | 0.929 | yes | grid |
+| L39 | 0.300 | 0.000 | 0.9996 | 0.810 | yes | grid |
+| L39 | 0.375 | 0.000 | 0.9998 | 0.667 | no | task 24 knee d2 down |
+| L39 | 0.450 | 0.000 | 0.9994 | 0.595 | no | task 24 knee d1 down |
+| L39 | 0.600 | 0.000 | 0.1069 | 0.500 | no | grid |
+| L40 | 0.150 | 0.000 | 0.0000 | 0.976 | yes | grid |
+| L40 | 0.300 | 0.000 | 0.9998 | 0.738 | yes | grid |
+| L40 | 0.375 | 0.000 | 0.4003 | 0.690 | no | task 24 knee d2 down |
+| L40 | 0.450 | 0.000 | 0.0057 | 0.595 | no | task 24 knee d1 down |
+| L40 | 0.600 | 0.000 | 0.5680 | 0.548 | no | grid |
+| L41 | 0.150 | 0.000 | 0.0000 | 1.000 | yes | grid |
+| L41 | 0.300 | 0.000 | 0.3560 | 0.833 | yes | grid |
+| L41 | 0.375 | 0.000 | 0.9331 | 0.714 | yes | task 24 knee d2 up |
+| L41 | 0.450 | 0.000 | 0.5772 | 0.667 | no | task 24 knee d1 down |
+| L41 | 0.600 | 0.000 | 0.0019 | 0.524 | no | grid |
+| L42 | 0.150 | 0.000 | 0.0000 | 0.952 | yes | grid |
+| L42 | 0.300 | 0.000 | 0.0001 | 1.000 | yes | grid |
+| L42 | 0.450 | 0.000 | 0.6719 | 0.857 | yes | task 24 knee d1 up |
+| L42 | 0.525 | 0.000 | 0.4271 | 0.595 | no | task 24 knee d2 down |
+| L42 | 0.600 | 0.000 | 0.9057 | 0.524 | no | grid |
+| L43 | 0.150 | 0.000 | 0.0000 | 0.976 | yes | grid |
+| L43 | 0.300 | 0.000 | 1.0000 | 0.881 | yes | grid |
+| L43 | 0.375 | 0.000 | 1.0000 | 0.833 | yes | task 24 knee d2 up |
+| L43 | 0.450 | 0.000 | 0.9998 | 0.690 | no | task 24 knee d1 down |
+| L43 | 0.600 | 0.167 | 0.5642 | 0.619 | no | grid |
+| L44 | 0.150 | 0.000 | 0.0000 | 1.000 | yes | grid |
+| L44 | 0.300 | 0.000 | 0.8000 | 0.929 | yes | grid |
+| L44 | 0.600 | 0.000 | 0.6871 | 0.667 | no | grid |
+| L45 | 0.150 | 0.000 | 0.0000 | 0.976 | yes | grid |
+| L45 | 0.300 | 0.000 | 0.0001 | 0.976 | yes | grid |
+| L45 | 0.450 | 0.000 | 0.7823 | 0.857 | yes | task 24 knee d1 up |
+| L45 | 0.525 | 0.000 | 0.8617 | 0.833 | yes | task 24 knee d2 up |
+| L45 | 0.600 | 0.000 | 0.9065 | 0.810 | yes | grid |
+| L46 | 0.150 | 0.000 | 0.0000 | 0.976 | yes | grid |
+| L46 | 0.300 | 0.000 | 0.0001 | 0.976 | yes | grid |
+| L46 | 0.450 | 0.000 | 0.5632 | 1.000 | yes | task 24 knee d1 up |
+| L46 | 0.525 | 0.000 | 0.7600 | 0.929 | yes | task 24 knee d2 up |
+| L46 | 0.600 | 0.000 | 0.5877 | 0.857 | yes | grid |
+| L47 | 0.150 | 0.000 | 0.0000 | 0.976 | yes | grid |
+| L47 | 0.300 | 0.000 | 0.0004 | 0.976 | yes | grid |
+| L47 | 0.450 | 0.083 | 0.7466 | 1.000 | yes | task 24 knee d1 up |
+| L47 | 0.525 | 0.083 | 0.9616 | 0.786 | yes | task 24 knee d2 up |
+| L47 | 0.600 | 0.250 | 0.4524 | 0.738 | yes | grid |
+| L48 | 0.150 | 0.000 | 0.0000 | 1.000 | yes | grid |
+| L48 | 0.300 | 0.000 | 0.0001 | 0.976 | yes | grid |
+| L48 | 0.450 | 0.083 | 0.2836 | 0.881 | yes | task 24 knee d1 up |
+| L48 | 0.525 | 0.000 | 0.8309 | 0.762 | yes | task 24 knee d2 up |
+| L48 | 0.600 | 0.083 | 0.9534 | 0.714 | yes | grid |
+| L49 | 0.150 | 0.000 | 0.0000 | 1.024 | yes | grid |
+| L49 | 0.300 | 0.000 | 0.0000 | 0.976 | yes | grid |
+| L49 | 0.450 | 0.167 | 0.0678 | 1.000 | yes | task 24 knee d1 up |
+| L49 | 0.525 | 0.083 | 0.7624 | 0.976 | yes | task 24 knee d2 up |
+| L49 | 0.600 | 0.250 | 0.5708 | 0.952 | yes | grid |
+| L50 | 0.150 | 0.000 | 0.0000 | 1.024 | yes | grid |
+| L50 | 0.300 | 0.000 | 0.0000 | 0.976 | yes | grid |
+| L50 | 0.450 | 0.083 | 0.0494 | 0.976 | yes | task 24 knee d1 up |
+| L50 | 0.525 | 0.250 | 0.8060 | 0.929 | yes | task 24 knee d2 down |
+| L50 | 0.600 | 0.417 | 0.5002 | 0.881 | yes | grid |
+| L51 | 0.150 | 0.000 | 0.0000 | 1.000 | yes | grid |
+| L51 | 0.300 | 0.000 | 0.0000 | 0.976 | yes | grid |
+| L51 | 0.450 | 0.167 | 0.0251 | 0.952 | yes | task 24 knee d1 up |
+| L51 | 0.525 | 0.250 | 0.9997 | 0.976 | yes | task 24 knee d2 down |
+| L51 | 0.600 | 0.500 | 0.5867 | 0.929 | yes | grid |
+| L52 | 0.150 | 0.000 | 0.0000 | 0.976 | yes | grid |
+| L52 | 0.300 | 0.000 | 0.0003 | 1.000 | yes | grid |
+| L52 | 0.375 | 0.167 | 0.0163 | 0.976 | yes | task 24 knee d2 up |
+| L52 | 0.450 | 0.500 | 0.2699 | 1.000 | yes | task 24 knee d1 down |
+| L52 | 0.600 | 1.000 | 0.9787 | 0.952 | yes | grid |
+| L53 | 0.150 | 0.000 | 0.0000 | 0.976 | yes | grid |
+| L53 | 0.300 | 0.167 | 0.0012 | 0.905 | yes | grid |
+| L53 | 0.375 | 0.250 | 0.0357 | 0.952 | yes | task 24 knee d2 up |
+| L53 | 0.450 | 0.667 | 0.4507 | 0.976 | yes | task 24 knee d1 down |
+| L53 | 0.600 | 1.000 | 0.9985 | 1.000 | yes | grid |
+| L54 | 0.150 | 0.000 | 0.0000 | 0.976 | yes | grid |
+| L54 | 0.300 | 0.167 | 0.0012 | 0.952 | yes | grid |
+| L54 | 0.375 | 0.417 | 0.0394 | 0.952 | yes | task 24 knee d2 up |
+| L54 | 0.450 | 0.750 | 0.5980 | 0.952 | yes | task 24 knee d1 down |
+| L54 | 0.600 | 1.000 | 1.0000 | 0.905 | yes | grid |
+| L55 | 0.150 | 0.000 | 0.0000 | 0.976 | yes | grid |
+| L55 | 0.300 | 0.167 | 0.0049 | 0.929 | yes | grid |
+| L55 | 0.375 | 0.500 | 0.1630 | 0.929 | yes | task 24 knee d2 down |
+| L55 | 0.450 | 0.667 | 0.8682 | 0.929 | yes | task 24 knee d1 down |
+| L55 | 0.600 | 1.000 | 0.9961 | 0.905 | yes | grid |
+| L56 | 0.150 | 0.000 | 0.0000 | 0.976 | yes | grid |
+| L56 | 0.300 | 0.167 | 0.0001 | 0.929 | yes | grid |
+| L56 | 0.450 | 0.667 | 0.0801 | 0.905 | yes | task 24 knee d1 up |
+| L56 | 0.525 | 0.917 | 0.8914 | 0.929 | yes | task 24 knee d2 down |
+| L56 | 0.600 | 1.000 | 0.9999 | 0.929 | yes | grid |
+| L57 | 0.150 | 0.000 | 0.0000 | 1.000 | yes | grid |
+| L57 | 0.300 | 0.333 | 0.0018 | 0.976 | yes | grid |
+| L57 | 0.375 | 0.667 | 0.1993 | 0.952 | yes | task 24 knee d2 down |
+| L57 | 0.450 | 1.000 | 0.9882 | 0.929 | yes | task 24 knee d1 down |
+| L57 | 0.600 | 1.000 | 1.0000 | 0.952 | yes | grid |
+| L58 | 0.150 | 0.000 | 0.0000 | 1.000 | yes | grid |
+| L58 | 0.300 | 0.417 | 0.0265 | 0.976 | yes | grid |
+| L58 | 0.375 | 1.000 | 0.9987 | 0.952 | yes | task 24 knee d2 down |
+| L58 | 0.450 | 1.000 | 1.0000 | 0.929 | yes | task 24 knee d1 down |
+| L58 | 0.600 | 1.000 | 1.0000 | 0.929 | yes | grid |
+| L59 | 0.150 | 0.083 | 0.0003 | 0.976 | yes | grid |
+| L59 | 0.300 | 1.000 | 0.9999 | 0.976 | yes | grid |
+| L59 | 0.600 | 1.000 | 1.0000 | 0.952 | yes | grid |
+| L60 | 0.150 | 0.083 | 0.0000 | 0.976 | yes | grid |
+| L60 | 0.300 | 1.000 | 0.9992 | 0.952 | yes | grid |
+| L60 | 0.600 | 1.000 | 1.0000 | 0.952 | yes | grid |
+| L61 | 0.150 | 0.083 | 0.0002 | 0.976 | yes | grid |
+| L61 | 0.300 | 0.917 | 1.0000 | 0.952 | yes | grid |
+| L61 | 0.600 | 1.000 | 1.0000 | 0.952 | yes | grid |
+
+## D. Lowest observed positive-`e6` cell per layer
+
+“Onset” here means the lowest **sampled** `r` with `e6` reach above zero. Intuitively, it is
+the first rung of this ladder where the signal appears, not an estimate of the exact transition:
+for example, an onset cell at 0.300 places the transition in the sampled interval
+`(0.150, 0.300]`. “Not observed” means every reachable sampled cell at that layer had zero reach.
+
+| Layer | Lowest sampled r with e6 reach > 0 | e6 reach | s3 | Sane | Provenance |
+|---:|---:|---:|---:|:---:|---|
+| L13 | not observed | — | — | — | — |
+| L14 | not observed | — | — | — | — |
+| L15 | not observed | — | — | — | — |
+| L16 | not observed | — | — | — | — |
+| L17 | not observed | — | — | — | — |
+| L18 | not observed | — | — | — | — |
+| L19 | not observed | — | — | — | — |
+| L20 | not observed | — | — | — | — |
+| L21 | not observed | — | — | — | — |
+| L22 | not observed | — | — | — | — |
+| L23 | not observed | — | — | — | — |
+| L24 | not observed | — | — | — | — |
+| L25 | not observed | — | — | — | — |
+| L26 | not observed | — | — | — | — |
+| L27 | not observed | — | — | — | — |
+| L28 | not observed | — | — | — | — |
+| L29 | not observed | — | — | — | — |
+| L30 | not observed | — | — | — | — |
+| L31 | not observed | — | — | — | — |
+| L32 | not observed | — | — | — | — |
+| L33 | not observed | — | — | — | — |
+| L34 | not observed | — | — | — | — |
+| L35 | not observed | — | — | — | — |
+| L36 | not observed | — | — | — | — |
+| L37 | not observed | — | — | — | — |
+| L38 | not observed | — | — | — | — |
+| L39 | not observed | — | — | — | — |
+| L40 | not observed | — | — | — | — |
+| L41 | not observed | — | — | — | — |
+| L42 | not observed | — | — | — | — |
+| L43 | 0.600 | 0.167 | 0.619 | no | grid |
+| L44 | not observed | — | — | — | — |
+| L45 | not observed | — | — | — | — |
+| L46 | not observed | — | — | — | — |
+| L47 | 0.450 | 0.083 | 1.000 | yes | task 24 knee d1 up |
+| L48 | 0.450 | 0.083 | 0.881 | yes | task 24 knee d1 up |
+| L49 | 0.450 | 0.167 | 1.000 | yes | task 24 knee d1 up |
+| L50 | 0.450 | 0.083 | 0.976 | yes | task 24 knee d1 up |
+| L51 | 0.450 | 0.167 | 0.952 | yes | task 24 knee d1 up |
+| L52 | 0.375 | 0.167 | 0.976 | yes | task 24 knee d2 up |
+| L53 | 0.300 | 0.167 | 0.905 | yes | grid |
+| L54 | 0.300 | 0.167 | 0.952 | yes | grid |
+| L55 | 0.300 | 0.167 | 0.929 | yes | grid |
+| L56 | 0.300 | 0.167 | 0.929 | yes | grid |
+| L57 | 0.300 | 0.333 | 0.976 | yes | grid |
+| L58 | 0.300 | 0.417 | 0.976 | yes | grid |
+| L59 | 0.150 | 0.083 | 0.976 | yes | grid |
+| L60 | 0.150 | 0.083 | 0.976 | yes | grid |
+| L61 | 0.150 | 0.083 | 0.976 | yes | grid |
+
+The current run therefore does **not** support the older statement that `e6` reach is zero at
+`r = 0.150` for every layer: L59–L61 each read 1/12 = 0.083 at that dose. For L53–L58 the
+unmeasured interior of 0.150–0.300 still brackets the first observed positive cell; for L47–L52
+the first observed positive cell is later, at 0.375 or 0.450.
+
+## E. `e6`-reach monotonicity
+
+Strict monotonicity fails at two layers when all reachable sampled doses are ordered by `r`:
+
+| Layer | Decrease | Provenance of decreasing step |
+|---:|---|---|
+| L48 | `r 0.450: 0.083 -> r 0.525: 0.000` | task-24 knee d1 to knee d2 |
+| L49 | `r 0.450: 0.167 -> r 0.525: 0.083` | task-24 knee d1 to knee d2 |
+
+Every other layer is non-decreasing over its reachable sampled cells. This means the onset table
+is valid as a descriptive “first positive sampled cell,” but it is **not** a globally valid
+monotone-threshold model: after onset, reach can fall on the next rung.
+
+## F. Lowest observed `s3` sanity failure per layer
+
+The boundary is the lowest reachable sampled `r` with `s3 < 0.70`. “Not observed” does not mean
+the layer has no boundary; it means no sampled reachable dose crossed it.
+
+| Layer | Lowest sampled r with s3 < 0.70 | s3 | Provenance |
+|---:|---:|---:|---|
+| L13 | not observed | — | — |
+| L14 | not observed | — | — |
+| L15 | 0.300 | 0.595 | grid |
+| L16 | 0.300 | 0.667 | grid |
+| L17 | 0.150 | 0.667 | grid |
+| L18 | 0.300 | 0.333 | grid |
+| L19 | 0.300 | 0.476 | grid |
+| L20 | 0.300 | 0.476 | grid |
+| L21 | 0.300 | 0.405 | grid |
+| L22 | 0.150 | 0.643 | grid |
+| L23 | 0.300 | 0.548 | grid |
+| L24 | 0.300 | 0.476 | grid |
+| L25 | 0.300 | 0.405 | grid |
+| L26 | 0.300 | 0.429 | grid |
+| L27 | 0.300 | 0.310 | grid |
+| L28 | 0.150 | 0.667 | grid |
+| L29 | 0.300 | 0.476 | grid |
+| L30 | 0.300 | 0.405 | grid |
+| L31 | 0.300 | 0.429 | grid |
+| L32 | 0.300 | 0.357 | grid |
+| L33 | 0.300 | 0.286 | grid |
+| L34 | 0.300 | 0.524 | grid |
+| L35 | 0.600 | 0.476 | grid |
+| L36 | 0.600 | 0.524 | grid |
+| L37 | 0.450 | 0.643 | task 24 knee d1 down |
+| L38 | 0.525 | 0.643 | task 24 knee d2 down |
+| L39 | 0.375 | 0.667 | task 24 knee d2 down |
+| L40 | 0.375 | 0.690 | task 24 knee d2 down |
+| L41 | 0.450 | 0.667 | task 24 knee d1 down |
+| L42 | 0.525 | 0.595 | task 24 knee d2 down |
+| L43 | 0.450 | 0.690 | task 24 knee d1 down |
+| L44 | 0.600 | 0.667 | grid |
+| L45 | not observed | — | — |
+| L46 | not observed | — | — |
+| L47 | not observed | — | — |
+| L48 | not observed | — | — |
+| L49 | not observed | — | — |
+| L50 | not observed | — | — |
+| L51 | not observed | — | — |
+| L52 | not observed | — | — |
+| L53 | not observed | — | — |
+| L54 | not observed | — | — |
+| L55 | not observed | — | — |
+| L56 | not observed | — | — |
+| L57 | not observed | — | — |
+| L58 | not observed | — | — |
+| L59 | not observed | — | — |
+| L60 | not observed | — | — |
+| L61 | not observed | — | — |
+
+## G. What the SHORTLIST unit count and 30-cell cap count
+
+`D2_SELECT_MAX = 30` is applied **inside each eligibility pass** to that pass’s still-new cells.
+It is not a global phase cap. In `phase2_shortlist`, `planned += len(chosen)` accumulates the
+chosen cells and sends that cumulative number to the board. The phase therefore replans from
+30 to 37 to 46 as it relaxes eligibility.
+
+The board numerator is narrower than “completed `d2` calls.” For each cell, the code measures
+`d2`, derives `s2_forced`, then appends `selection_d2.jsonl`, and only **after that successful
+append** calls the board tick. In plain language: the denominator counts selected cell jobs
+across passes; the numerator counts jobs whose scalar selection row made it to disk.
+
+| Eligibility pass | Floor | Cumulative eligible cells | New cells presented to this pass | Chosen under the per-pass cap | Persisted selection rows | Outcome |
+|---:|---:|---:|---:|---:|---:|---|
+| 0 | 3/12 | 34 | 34 | 30 | 30 | Completed; no selectable cell |
+| 1 | 2/12 | 41 | 7 | 7 | 7 | Completed; no selectable cell |
+| 2 | 1/12, report-only | 50 | 9 | 9 | 0 | Entered; first cell completed `d2`, then its selection-row append failed |
+
+Thus `30 + 7 + 9 = 46` planned units and `30 + 7 = 37` persisted/ticked units. These are
+**eligibility passes**, not the later shortlist verification tiers: SHORTLIST never produced a
+tier plan, so no later BISECT/VERIFY tier ran.
+
+Four tier-0-eligible cells were intentionally not measured because the first pass had 34 cells
+and the cap retained an evenly reach-spaced subset of 30:
+
+- L58@0.300 (`e6` reach 0.417)
+- L54@0.450 (`e6` reach 0.750)
+- L57@0.450 (`e6` reach 1.000)
+- L60@0.600 (`e6` reach 1.000)
+
+The nine report-only tier-2 cells planned after the second relaxation were:
+
+- L47@0.450, L47@0.525, L48@0.450, L48@0.600, L49@0.525
+- L50@0.450, L59@0.150, L60@0.150, L61@0.150
+
+L47@0.450 completed five generation/judge trials, all five were identified, so its recoverable
+`d2` is 1.000. The `selection_d2` append for that cell is the write that raised. The other eight
+tier-2 cells were not measured. Across the 50 cells eligible by the final report-only floor,
+**12 had no real `d2` measurement**: the four tier-0 cap omissions plus those eight unattempted
+tier-2 cells. L47@0.450 is the separate thirteenth persistence gap: `d2` exists, but its scalar
+selection row does not.
+
+**Task-26 omission recording did not survive this failure.** The four cap omissions would normally
+be written by name in `shortlist.json` under `d2_measurement_omissions`, but the payload is written
+only after all eligibility passes finish, and no `shortlist.json` exists. The eight unattempted
+tier-2 cells likewise have no named incomplete-work manifest. Their identities can be
+reconstructed deterministically from `scan.jsonl` and the code, as above, but they are not
+recorded *as omissions* by the run. L47@0.450 is named in the transcript/judge rows, but has no
+persisted scalar selection row.
+
+## H. What `d3` tracks on this run
+
+Method: use all SCAN cells that are reachable, have `e6` reach above zero, have non-null `d3`,
+and are cheap-sane (`s3 >= 0.70`). This leaves `n = 50`. Spearman ranks use average ranks for
+ties.
+
+| Comparison | Spearman rho | n |
+|---|---:|---:|
+| `d3` against `e6` reach | **0.733** | 50 |
+| `d3` against `s3` | **-0.190** | 50 |
+
+`d3` was not correlated with `d2`: all 37 persisted `d2` values are 1.000, so the `d2` rank
+variance is zero and Spearman rho is undefined. This confirms TODO 23.
+
+**Interpretation.** Within the deliberately sane, reached subset, `d3` co-moves strongly with
+`e6` reach and only weakly and negatively with the remaining `s3` variation. This particular
+test therefore does not support the stronger claim that `d3` is primarily tracking degeneration
+*within the sane region*. It also does not rehabilitate `d3` as a detection proxy: real `d2` is
+constant, so there is no detection variation for `d3` to validate against. Because the filter
+removes the broken side of each sanity boundary, this correlation does not retest the separate
+task-25 observation that `d3` changes sharply when a cell crosses into damage.
+
+## I. Failures
+
+The supplied crash file, verbatim:
+
+~~~text
+concept Garlic | phase SHORTLIST | config b252ac4af2fe
+
+Traceback (most recent call last):
+  File "/workspace/steering-optimization/m2/driver.py", line 524, in phase
+    value = fn()
+            ^^^^
+  File "/workspace/steering-optimization/m2/driver.py", line 855, in <lambda>
+    "SHORTLIST", lambda: _phases().phase2_shortlist(
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/steering-optimization/m2/phases.py", line 1302, in phase2_shortlist
+    _append_row(SELECTION_D2_FILE, selection_row)
+  File "/workspace/steering-optimization/m2/phases.py", line 220, in _append_row
+    with open(path, "a", encoding="utf-8") as fh:
+OSError: [Errno 5] Input/output error
+~~~
+
+The console records the SHORTLIST failure at 14:29:59 UTC. The final successfully written
+`selection_d2` cell tick was 37. The five `D2_transcripts.jsonl` and `judge_d2.jsonl` rows for
+the next cell, L47@0.450, are stamped 14:20:37 UTC, showing that its expensive measurement
+finished before the subsequent scalar append remained blocked and finally raised.
+
+The scientific consequence is limited but important: the persisted `d2` rows remain readable,
+while `operating_point.json`’s “no operating point” is computed from **zero verified cells** after
+the infrastructure failure. It is not evidence that a completed search found no operating point.
+
+Gate 7’s `TypeError` is separate. In `gate7_d2_transcript_capture`, the data half builds:
+
+~~~python
+cells = sorted({(r["layer"], r["r"]) for r in rows if "layer" in r and "r" in r})
+~~~
+
+`D2_transcripts.jsonl` contains 25 `CAL_NULL_D2` rows whose `layer` and `r` values are both
+`None`, plus 190 SHORTLIST rows with integer layers and float doses. The keys are present in both,
+so the filter admits `(None, None)`. Sorting that tuple beside, for example,
+`(47, 0.45)` compares the first elements and attempts `None < 47`, producing:
+
+~~~text
+TypeError: '<' not supported between instances of 'NoneType' and 'int'
+~~~
+
+Gate 7a passes because the writer filename is wired correctly. Gate 7b raises before it can report
+its data measurement. This is **independent of SHORTLIST dying early**: any run file containing
+both the null-control rows and at least one ordinary `d2` cell will take the same mixed-type sort
+path, even if every phase completes.
+
+## J. Direct confirmations and corrections
+
+- **Confirmed:** `scan.jsonl` has 189 unique cells: 147 grid cells and 42 task-24 knee-search
+  cells.
+- **Confirmed:** `selection_d2.jsonl` has 37 rows and every one reads `d2 = 1.000`.
+- **Confirmed with a precision correction:** the final board is 37/46, but 37 is the number of
+  persisted/ticked selection rows. A 38th cell, L47@0.450, completed five `d2` trials and also
+  reads `d2 = 1.000`; its summary append is what failed.
+- **Corrected:** `D2_SELECT_MAX = 30` is a cap per eligibility pass over new cells, not a global
+  cap. Passes 0, 1 and 2 contributed plans of 30, 7 and 9 cells.
+- **Corrected:** not every layer has `e6` reach 0 at `r = 0.150` in this run. L59, L60 and L61
+  each have reach 0.083 there.
+- **Corrected:** `e6` reach is not monotone in dose at L48 or L49. Therefore an onset cell is a
+  lowest observed positive rung, not proof of a one-way threshold.
+- **Confirmed within scope:** every cell on which real `d2` completed is at `r >= 0.300` and reads
+  `d2 = 1.000`. This statement applies to the `d2`-measured eligible cells, not to every SCAN cell,
+  because most SCAN cells never received real `d2`.
+- **Missing provenance:** no Git commit is present in `provenance.jsonl` or elsewhere in the
+  supplied bundle/log. It cannot be supplied without guessing.
+- **Bundle detail:** archive and export data are identical; only the export `lab.log` adds the
+  expected archive-created line.
+- **Failure semantics:** the null operating-point record is an infrastructure-cascade result over
+  zero verified cells, not a completed scientific null.
+
+---
+
 # M1 Results — Origami
 
 **Run:** 2026-08-05, config `4be280ab0919`, Gemma3-27B bf16 on 1×A100 80GB, judge
