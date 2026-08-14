@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import os
 import queue
+import sys
 import threading
 import time
 import urllib.parse
@@ -901,6 +902,7 @@ class RunStatus:
         self.last_unit_at = time.time()    # the stall detector's clock
         self._t_cur: float | None = None
         self._last_render = 0.0
+        self._tty_rows = 0
         self._sticky = False
         self._display_id = "m2runstatus"
         self._lock = threading.Lock()
@@ -944,7 +946,7 @@ class RunStatus:
             self.skipped[phase] = int(already)
             self._t_cur = time.time()
             self.last_unit_at = time.time()
-        self.render(force=True)
+        self.render(force=True, transition=True)
 
     def size_phase(self, phase: str, total: int) -> None:
         """Set a phase's unit count once the phase itself knows it.
@@ -985,7 +987,7 @@ class RunStatus:
             if self.state[phase] == "running":
                 self.state[phase] = "done"
             self._t_cur = None
-        self.render(force=True)
+        self.render(force=True, transition=True)
         if notify:
             self.notifier.phase_completed(self, phase)
 
@@ -1001,14 +1003,14 @@ class RunStatus:
             self.errors[phase] = f"{type(exc).__name__}: {exc}"[:70]
             self.labels[phase] = classify_exc(exc)
             self._t_cur = None
-        self.render(force=True)
+        self.render(force=True, transition=True)
         self.notifier.phase_failed(self, phase, exc)
 
     def skip_phase(self, phase: str, why: str = "") -> None:
         with self._lock:
             self.state[phase] = "skipped"
             self.note[phase] = why
-        self.render(force=True)
+        self.render(force=True, transition=True)
 
     # ---- the M2 verdict inputs --------------------------------------------------------
     def record_judge_fpr(self, fpr: float, notify: bool = True) -> bool:
@@ -1212,27 +1214,113 @@ class RunStatus:
         L.append("=" * 74)
         return chr(10).join(L)
 
-    def render(self, force: bool = False) -> None:
-        """Redraw the in-notebook block. Throttled to 5 s unless forced.
+    def heartbeat_text(self) -> str:
+        """One grep-safe line for redirected stdout between phase landmarks."""
+        running = next((phase for phase in self.order
+                        if self.state[phase] == "running"), None)
+        phase = running or "idle"
+        if running is None:
+            units = "-/-"
+        else:
+            total = self.total[running] or "?"
+            units = f"{self.done[running] + self.skipped[running]}/{total}"
+        return (f"M2 heartbeat | phase {phase} | units {units} | "
+                f"elapsed {fmt_time(time.time() - self.t0)} | ETA {fmt_time(self.eta())}")
+
+    @staticmethod
+    def _terminal_columns(stream: Any) -> int | None:
+        """Terminal width, or None when cursor movement would require a guess."""
+        try:
+            columns = int(os.get_terminal_size(stream.fileno()).columns)
+            return columns if columns > 0 else None
+        except Exception:                       # noqa: BLE001 - plain output is the fallback
+            return None
+
+    @staticmethod
+    def _visual_rows(txt: str, columns: int) -> int:
+        """Rows occupied by a frame, including deterministic terminal wrapping."""
+        return sum(max(1, (len(line) + columns - 1) // columns)
+                   for line in txt.splitlines())
+
+    @staticmethod
+    def _streams() -> tuple[Any, Any]:
+        """(normal stdout, real terminal), explicitly unwrapping `_Tee` for redraws."""
+        output = sys.stdout
+        terminal = output.stream if isinstance(output, _Tee) else output
+        return output, terminal
+
+    def _remember_tty_frame(self, txt: str, terminal: Any) -> None:
+        columns = self._terminal_columns(terminal)
+        self._tty_rows = 0 if columns is None else self._visual_rows(txt, columns)
+
+    def render(self, force: bool = False, transition: bool = False) -> None:
+        """Render one board update without flooding or corrupting redirected logs.
+
+        A phase transition is always a full, plain-text landmark. Between transitions a TTY
+        redraws the last frame in place, while a non-TTY receives only `heartbeat_text()`.
+        When stdout is `_Tee` over a terminal, redraw frames bypass the wrapper so its file
+        can never receive ANSI; transition landmarks still pass through the wrapper.
 
         NOTE: this does NOT write status.txt. The file is written only by
         `write_status_txt`, on the heartbeat's 10 s timer (spec 14.5). One writer on a clock
         is what makes a stale timestamp there mean the process is stuck; if progress also
         wrote the file, a frozen file and a frozen run would stop being the same thing.
         """
-        now = time.time()
-        if not force and now - self._last_render < 5.0:
-            return
-        self._last_render = now
-        txt = self.text()
-        if self._sticky:
-            try:
-                from IPython.display import update_display
-                update_display({"text/plain": txt}, raw=True, display_id=self._display_id)
+        try:
+            now = time.time()
+            if not force and now - self._last_render < 5.0:
                 return
-            except Exception:        # noqa: BLE001 - frontend cannot update; fall back
-                self._sticky = False
-        print(txt, flush=True)
+            self._last_render = now
+            txt = self.text()
+            if self._sticky:
+                try:
+                    from IPython.display import update_display
+                    update_display({"text/plain": txt}, raw=True, display_id=self._display_id)
+                    return
+                except Exception:    # noqa: BLE001 - frontend cannot update; fall back
+                    self._sticky = False
+
+            output, terminal = self._streams()
+            try:
+                is_tty = bool(terminal.isatty())
+            except Exception:        # noqa: BLE001 - an unknown stream is not a terminal
+                is_tty = False
+
+            if transition:
+                print(txt, file=output, flush=True)
+                if is_tty:
+                    self._remember_tty_frame(txt, terminal)
+                else:
+                    self._tty_rows = 0
+                return
+
+            if not is_tty:
+                self._tty_rows = 0
+                print(self.heartbeat_text(), file=output, flush=True)
+                return
+
+            columns = self._terminal_columns(terminal)
+            if columns is None or self._tty_rows <= 0:
+                # No cursor arithmetic without a measured width. Bypass a tee here too:
+                # its file side is reserved for plain transition landmarks.
+                print(txt, file=terminal, flush=True)
+                self._tty_rows = 0 if columns is None else self._visual_rows(txt, columns)
+                return
+
+            # Clear only the rows occupied by the previous board. CSI J would erase
+            # everything below the cursor, including unrelated diagnostic output.
+            terminal.write(f"\x1b[{self._tty_rows}A\r")
+            for index in range(self._tty_rows):
+                terminal.write("\x1b[2K")
+                if index + 1 < self._tty_rows:
+                    terminal.write("\x1b[1B\r")
+            if self._tty_rows > 1:
+                terminal.write(f"\x1b[{self._tty_rows - 1}A\r")
+            terminal.write(txt + "\n")
+            terminal.flush()
+            self._tty_rows = self._visual_rows(txt, columns)
+        except Exception:            # noqa: BLE001 - a board must never take down the run
+            return
 
     def write_status_txt(self) -> Path | None:
         """Write the board to `status.txt`. Never raises; returns the path it wrote.
@@ -1275,7 +1363,7 @@ class RunStatus:
                 print(self.text(), flush=True)
         else:
             self._sticky = False
-            print(self.text(), flush=True)
+            self.render(force=True, transition=True)
         self.write_status_txt()      # one write immediately, so the file exists from t=0
         self._stop.clear()
         self._beat = threading.Thread(target=self._heartbeat, daemon=True)
@@ -1285,10 +1373,10 @@ class RunStatus:
         self.notifier.run_started(self)
 
     def _heartbeat(self) -> None:
-        """File, phone and dead man's switch. Never the display.
+        """File, redirected-stdout heartbeat, phone and dead man's switch.
 
-        Writing to a display from a non-main thread is not reliable across frontends, and a
-        wrong-cell write would be worse than no beat.
+        Writing to a notebook display or interactive terminal from a non-main thread is not
+        reliable, so only the plain one-line non-TTY heartbeat is rendered here.
 
         This thread is why the alerts work at all during a stall: the main thread is inside
         a generation and cannot redraw anything, while this one keeps evaluating the verdict
@@ -1297,6 +1385,15 @@ class RunStatus:
         while not self._stop.wait(10.0):
             # status.txt first: it is the one signal that survives a broken network.
             self.write_status_txt()
+            # Redirected stdout has no unit-completion redraw during a long call. Give
+            # `tail -f` one compact line on this existing timer. Notebook display writes
+            # remain main-thread-only, and a TTY is refreshed by normal progress calls.
+            try:
+                _, terminal = self._streams()
+                if not self._sticky and not bool(terminal.isatty()):
+                    self.render()
+            except Exception:        # noqa: BLE001 - rendering is never run-critical
+                pass
             now = time.time()
             try:
                 self.notify_check()
@@ -1316,7 +1413,7 @@ class RunStatus:
     def detach(self) -> None:
         """Stop the heartbeat and leave a final board on screen and on disk."""
         self._stop.set()
-        self.render(force=True)
+        self.render(force=True, transition=True)
         self.write_status_txt()
 
 

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import ast
 import dataclasses
+import io
 import json
 import math
 import os
@@ -993,6 +994,96 @@ def test_phase_priors_cover_every_phase_and_price_verify_highest():
     assert monitor.PHASE_UNITS_PRIOR["SHORTLIST"] == config.CONFIG["D2_SELECT_MAX"]
     assert monitor.PHASE_UNITS_PRIOR["BISECT"] == 11  # candidates, incl. audit tier
     assert monitor.PHASE_UNITS_PRIOR["VERIFY"] == 11  # cells, incl. audit tier
+
+
+def _board_for_render_test():
+    return monitor.RunStatus(
+        order=("CAL",), totals={"CAL": 4}, priors={"CAL": 10.0})
+
+
+class _TTYBuffer(io.StringIO):
+    def isatty(self):
+        return True
+
+
+def test_task27_redirected_render_never_emits_ansi(monkeypatch):
+    output = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", output)
+    board = _board_for_render_test()
+
+    board.render(force=True)
+    board.render(force=True)
+
+    captured = output.getvalue()
+    assert "\x1b[" not in captured
+    assert captured.count("M2 heartbeat") == 2
+
+
+@pytest.mark.parametrize("tty", [False, True])
+def test_task27_phase_transition_prints_the_full_board_in_both_modes(
+        monkeypatch, tty):
+    output = _TTYBuffer() if tty else io.StringIO()
+    monkeypatch.setattr(sys, "stdout", output)
+    monkeypatch.setattr(
+        monitor.RunStatus, "_terminal_columns", staticmethod(lambda _stream: 80))
+    board = _board_for_render_test()
+
+    board.start_phase("CAL", total=4)
+
+    captured = output.getvalue()
+    assert "M2 RUN STATUS" in captured
+    assert "CAL       running" in captured
+    assert "\x1b[" not in captured, "a transition is a plain-text landmark"
+
+
+def test_task27_tty_redraw_bypasses_tee_file(monkeypatch, tmp_path):
+    terminal = _TTYBuffer()
+    log_path = tmp_path / "console.log"
+    tee = monitor._Tee(log_path, terminal)
+    monkeypatch.setattr(sys, "stdout", tee)
+    monkeypatch.setattr(
+        monitor.RunStatus, "_terminal_columns", staticmethod(lambda _stream: 80))
+    board = _board_for_render_test()
+
+    board.start_phase("CAL", total=4)  # plain full landmark goes to terminal and file
+    board.done["CAL"] = 1
+    board.render(force=True)            # ANSI redraw goes only to the real terminal
+    tee.flush()
+    logged = log_path.read_text(encoding="utf-8")
+    tee.file.close()
+
+    assert "\x1b[" in terminal.getvalue()
+    assert "\x1b[" not in logged
+    assert logged.count("M2 RUN STATUS") == 1
+
+
+def test_task27_unknown_terminal_size_degrades_to_plain_append(monkeypatch):
+    terminal = _TTYBuffer()
+    monkeypatch.setattr(sys, "stdout", terminal)
+    monkeypatch.setattr(
+        monitor.RunStatus, "_terminal_columns", staticmethod(lambda _stream: None))
+    board = _board_for_render_test()
+
+    board.start_phase("CAL", total=4)
+    board.render(force=True)
+
+    captured = terminal.getvalue()
+    assert "\x1b[" not in captured
+    assert captured.count("M2 RUN STATUS") == 2
+
+
+def test_task27_non_tty_heartbeat_has_only_operator_fields(monkeypatch):
+    output = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", output)
+    board = _board_for_render_test()
+    board.state["CAL"] = "running"
+    board.done["CAL"] = 2
+
+    board.render(force=True)
+
+    line = output.getvalue().strip()
+    assert line.startswith("M2 heartbeat | phase CAL | units 2/4 | elapsed ")
+    assert " | ETA " in line and "\n" not in line
 
 
 def test_classify_exc_returns_a_label_never_the_message():
