@@ -1214,7 +1214,8 @@ def test_run_cli_checks_for_archive_only_resume_before_public_surface(
     from m2 import run as m2run
 
     called: list[tuple[list[str], dict]] = []
-    monkeypatch.setattr(m2run, "check_environment", lambda strict=True: {})
+    monkeypatch.setattr(m2run, "check_environment",
+                        lambda strict=True, required=None: {})
     monkeypatch.setattr(
         m2run, "print_archive_restore_notices",
         lambda concepts, cfg: called.append((list(concepts), cfg)) or [])

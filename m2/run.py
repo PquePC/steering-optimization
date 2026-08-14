@@ -113,6 +113,18 @@ def _parser() -> argparse.ArgumentParser:
                    help="run disposable task-25 d3/d2 diagnostics instead of the pipeline. "
                         "With no value uses 57@0.30,58@0.30,59@0.30,52@0.60; every override "
                         "must retain positive-control cell 59@0.30.")
+    p.add_argument("--probe-cells", nargs="?", const="", default=None,
+                   metavar="LAYERS@DOSES;...",
+                   help="run the task-29 judge-free probe instead of the pipeline. NO judge is "
+                        "called and no cell is selected or filtered; every response is written "
+                        "to a transcript file for the operator to read. With no value uses "
+                        "37-46@0.15,0.20,0.25,0.30 -- the mid band the shortlist gate excluded. "
+                        "Segments are separated by ';', layers may be ranges: "
+                        "'37-46@0.15,0.30;52@0.60'.")
+    p.add_argument("--no-probe-references", action="store_true",
+                   help="with --probe-cells: omit the L57@0.22 and L59@0.30 anchors from the "
+                        "2026-08-14 autopsy. They cost two cells and are what lets this run be "
+                        "read against a known sane cell and a known collapsed one.")
 
     p.add_argument("--setup", action="store_true",
                    help="report what this pod already has and what it needs, then exit. "
@@ -240,13 +252,36 @@ def print_archive_restore_notices(concepts: Sequence[str], cfg: dict) -> list[st
     return notices
 
 
-def check_environment(strict: bool = True) -> dict:
-    """Report which credentials are present, and refuse to start without the load-bearing two."""
-    missing_required = [k for k in REQUIRED_ENV if not os.environ.get(k)]
+def check_environment(strict: bool = True, required: Sequence[str] | None = None) -> dict:
+    """Report which credentials are present, and refuse to start without the load-bearing ones.
+
+    `required` narrows which of `REQUIRED_ENV` is actually refused on, for modes that cannot
+    spend one of them. It never widens the set: an unknown name raises rather than being
+    treated as a new requirement, so a typo cannot quietly disable the check it was meant to
+    tighten. Every key is still PRINTED whatever the mode, because "the run started" should not
+    be the first time an operator learns a credential was absent.
+    """
+    if required is None:
+        gating = tuple(REQUIRED_ENV)
+    else:
+        gating = tuple(required)
+        unknown = [k for k in gating if k not in REQUIRED_ENV]
+        if unknown:
+            raise ValueError(
+                f"check_environment(required=...) names {unknown}, which are not in "
+                f"REQUIRED_ENV {sorted(REQUIRED_ENV)}. This argument narrows the existing "
+                "requirement set; it does not define a new one.")
+    missing_required = [k for k in gating if not os.environ.get(k)]
     print("credentials")
     for key, consequence in REQUIRED_ENV.items():
-        state = "set" if os.environ.get(key) else "MISSING"
-        print(f"  {key:<22} {state:<8}" + ("" if os.environ.get(key) else f"-> {consequence}"))
+        if os.environ.get(key):
+            print(f"  {key:<22} {'set':<8}")
+        elif key in gating:
+            print(f"  {key:<22} {'MISSING':<8}-> {consequence}")
+        else:
+            # Absent and not gating: say why it is tolerated here, so the line is not read as
+            # the check having been switched off.
+            print(f"  {key:<22} {'unused':<8}-> not required by this mode; nothing will call it")
     for key, consequence in OPTIONAL_ENV.items():
         state = "set" if os.environ.get(key) else "unset"
         print(f"  {key:<22} {state:<8}" + ("" if os.environ.get(key) else f"-> {consequence}"))
@@ -319,7 +354,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"transcripts  : {'OVERRIDE ON (spec 14.3)' if args.transcripts_override else 'benign concepts only'}")
     print("")
 
-    check_environment(strict=not (args.dry_run or args.preflight))
+    # `--probe-cells` is judge-free by construction (`m2.unjudged.no_judges` makes a judge call
+    # raise), so OPENROUTER_API_KEY is not load-bearing for it and requiring one would block the
+    # mode on a credential it can never spend. HF_TOKEN still is: without it the model does not
+    # load. The relaxation is scoped to this flag rather than added to OPTIONAL_ENV, because on
+    # the pipeline path a missing judge key still fails forty minutes in at Phase 4.
+    judge_free = args.probe_cells is not None
+    check_environment(strict=not (args.dry_run or args.preflight),
+                      required=("HF_TOKEN",) if judge_free else None)
 
     # ---- imports and the public-surface assertion ---------------------------------------
     # Pattern 8: "the cell ran without error" is not evidence the cell did anything. Bug 24's
@@ -344,7 +386,26 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"  task 25    : d3 autopsy on "
               f"{', '.join(f'L{layer}@{r:.2f}' for layer, r in autopsy_cells)}")
 
-    if not args.dry_run and not args.preflight and autopsy_cells is None:
+    probe_cells = None
+    if args.probe_cells is not None:
+        if autopsy_cells is not None:
+            print("  --probe-cells and --autopsy-cells are two different standalone modes; "
+                  "pass one.")
+            return EXIT_CONFIG
+        from m2 import unjudged as probe         # noqa: PLC0415 - disposable standalone mode
+        probe_cells = probe.prepare(
+            concepts, config.CONFIG, args.probe_cells, log_path=args.log,
+            with_references=not args.no_probe_references)
+        print(f"  task 29    : judge-free probe on {len(probe_cells)} cells "
+              f"(L{min(c[0] for c in probe_cells)}-L{max(c[0] for c in probe_cells)}), "
+              f"{probe.PROBE_N} trials per noticing channel")
+        print("               NO judge is called; transcripts are the deliverable")
+
+    # One name for "this invocation is a standalone diagnostic, not the pipeline". Both modes
+    # skip the archive notices, the tier-config validation and every phase.
+    standalone = autopsy_cells is not None or probe_cells is not None
+
+    if not args.dry_run and not args.preflight and not standalone:
         print_archive_restore_notices(concepts, config.CONFIG)
 
     surface = gates.check_public_surface()
@@ -381,7 +442,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     # Validate the ordering and the relationship among the tier knobs before loading the
     # model. An invalid string must never survive until Phase 2 and quietly become another
     # ordering after paid work has started.
-    if autopsy_cells is None:
+    if not standalone:
         phases._tier_config(config.CONFIG)
 
     log_path = args.log or None
@@ -399,7 +460,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"  {config.CONFIG['model']}  {ctx.n_layers} layers  "
           f"padding={ctx.tok.padding_side}  ({time.time() - t0:.0f}s)")
 
-    if autopsy_cells is None and config.CONFIG["SHORTLIST_EXHAUSTIVE"]:
+    if not standalone and config.CONFIG["SHORTLIST_EXHAUSTIVE"]:
         n_cells = len(phases.layers_in_scope(int(ctx.n_layers),
                                              float(config.CONFIG["D_MIN"])))
         estimate = exhaustive_cost_estimate(n_cells)
@@ -415,6 +476,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     if autopsy_cells is not None:
         print("\nTASK 25 STANDALONE MODE - diagnostic numbers are not reportable run results")
         autopsy.run_autopsy(autopsy_cells)
+        return EXIT_OK
+
+    if probe_cells is not None:
+        print("\nTASK 29 STANDALONE MODE - judge-free. Nothing here is a scored measurement: "
+              "influence\nis a mechanical mention count and detection is a transcript. "
+              "The rig checks above\nstill apply, because a probe on an unsteered model would "
+              "read exactly like a null result.")
+        probe.record_provenance()
+        probe.run_probe(probe_cells)
+        bundle = probe.export_bundle()
+        print(f"\nbundle: {bundle}")
         return EXIT_OK
 
     if args.preflight:
