@@ -631,3 +631,18 @@ infrastructure failure and must not be read as a completed scientific null. The 
 records config `b252ac4af2fe` but no Git commit.
 **Result:** the dated 2026-08-14 section at the top of `docs/RESULTS.md`; no transcripts or run
 artifacts entered the repository.
+
+## 2026-08-14 — Low-dose Garlic autopsy found misses but no established covert cell
+**By:** Tomás (scope), Sol (analysis)
+**Kind:** phase complete
+
+Fifty paired AUTOPSY rows reconstructed ten `d2` cells at five fixed trials each. L59@0.15 was
+4/5, L59@0.18 was 1/5 and L61@0.18 was 4/5; every other cell was 5/5. Five of the six misses were
+degenerate forced-ID output and the sixth coherently named a different concept.
+
+**Why:** the low L59 `d2` values measure incapacity rather than covertness. L61@0.18 is the only
+non-incapacity miss, but the autopsy did not persist `e6` reach or a sanity scalar, so one miss at
+`n = 5` cannot establish a covert regime. The mandatory L59@0.30 rank-1/`p > 0.90` guard passed,
+although its exact stdout-only probabilities were lost.
+**Result:** the second dated 2026-08-14 Garlic section in `docs/RESULTS.md`; no transcript text or
+run artifact entered the repository.

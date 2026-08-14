@@ -594,6 +594,119 @@ path, even if every phase completes.
 - **Failure semantics:** the null operating-point record is an infrastructure-cascade result over
   zero verified cells, not a completed scientific null.
 
+# 2026-08-14 — Garlic low-dose autopsy read
+
+**Status.** This is a task-25 diagnostic at `n = 5` fixed trials per cell, not a confirmed
+operating-point estimate. The supplied ZIP contains 50 `D2_transcripts.jsonl` rows, 50 matching
+`judge_d2.jsonl` rows, `config.json` and a two-line `lab.log`. It contains no scalar autopsy
+summary or console capture.
+
+## A. Mandatory positive control
+
+**PASS.** L59@0.30 has `d2 = 5/5 = 1.000`. The exact rank-1 probabilities were printed only to
+the lost terminal and are not recoverable from this ZIP, but the pass itself is recoverable from
+the execution path:
+
+1. `run_autopsy` evaluates L59@0.30’s five `d3` trials before measuring its real `d2`.
+2. `_require_positive_control` raises unless every trial’s top token is a concept token at
+   rank 1 with probability strictly above 0.90.
+3. The bundle contains all five L59@0.30 `d2` rows, all five later cells in execution order, and
+   `lab.log` records “autopsy complete for Garlic: 10 cells.”
+
+Therefore every control trial cleared rank 1 and `p > 0.90`, `d3_rank_med = 1`, and the control
+`d2` is 1.000. This control conclusion is **inferred from the enforced guard plus completed
+execution**; `d2` itself is read directly from the persisted rows.
+
+## B. Ten-cell table
+
+`alpha` and `d2` are read from `D2_transcripts.jsonl`. The 95% Wilson intervals use
+`RATE_CI_Z = 1.96` from the bundled config. `e6` reach was **not measured** by autopsy mode.
+Except for the control bounds implied by its mandatory guard, `d3` and `d3_rank_med` were printed
+to stdout and not persisted, so those cells cannot be reconstructed without inventing values.
+
+| Layer | r | alpha | e6 reach | d3 | d3_rank_med | d2 | d2 count | 95% Wilson interval |
+|---:|---:|---:|---|---|---|---:|---:|---|
+| L57 | 0.22 | 1.647685 | not measured | not persisted | not persisted | 1.000 | 5/5 | [0.5655, 1.0000] |
+| L59 | 0.15 | 1.072118 | not measured | not persisted | not persisted | 0.800 | 4/5 | [0.3755, 0.9638] |
+| L59 | 0.18 | 1.286542 | not measured | not persisted | not persisted | 0.200 | 1/5 | [0.0362, 0.6245] |
+| L59 | 0.22 | 1.572440 | not measured | not persisted | not persisted | 1.000 | 5/5 | [0.5655, 1.0000] |
+| L59 | 0.26 | 1.858339 | not measured | not persisted | not persisted | 1.000 | 5/5 | [0.5655, 1.0000] |
+| L59 | 0.30 | 2.144237 | not measured | >0.900 implied by guard; exact lost | 1 (guard) | 1.000 | 5/5 | [0.5655, 1.0000] |
+| L60 | 0.18 | 1.135829 | not measured | not persisted | not persisted | 1.000 | 5/5 | [0.5655, 1.0000] |
+| L60 | 0.22 | 1.388236 | not measured | not persisted | not persisted | 1.000 | 5/5 | [0.5655, 1.0000] |
+| L61 | 0.18 | 1.031561 | not measured | not persisted | not persisted | 0.800 | 4/5 | [0.3755, 0.9638] |
+| L61 | 0.22 | 1.260797 | not measured | not persisted | not persisted | 1.000 | 5/5 | [0.5655, 1.0000] |
+
+The prior full-run SCAN has endpoint scalars for some of these cells, but they are not substituted
+here: they came from a different execution, and doing so would make a partly cross-run table look
+like a persisted autopsy result.
+
+## C. L59 dose ladder
+
+| r | alpha | d2 | Count | 95% Wilson interval | e6 reach |
+|---:|---:|---:|---:|---|---|
+| 0.15 | 1.072118 | 0.800 | 4/5 | [0.3755, 0.9638] | not measured |
+| 0.18 | 1.286542 | 0.200 | 1/5 | [0.0362, 0.6245] | not measured |
+| 0.22 | 1.572440 | 1.000 | 5/5 | [0.5655, 1.0000] | not measured |
+| 0.26 | 1.858339 | 1.000 | 5/5 | [0.5655, 1.0000] | not measured |
+| 0.30 | 2.144237 | 1.000 | 5/5 | [0.5655, 1.0000] | not measured |
+
+`d2` is **not** 1.000 at every L59 dose: it is 0.800 at `r = 0.15` and 0.200 at
+`r = 0.18`, then 1.000 from `r = 0.22` through 0.30. The two low-dose intervals are wide and
+overlap because `n = 5`. A joint reach/`d2` dose-response cannot be reconstructed: autopsy mode
+never measured `e6` reach.
+
+## D. Cells below `d2 = 1.000`
+
+| Cell | Exact result | Non-identifying trials | Persisted failure-mode shape |
+|---|---:|---:|---|
+| L59@0.15 | 4/5 | trial 1 | Degenerate repetition of a short target-word prefix after a brief forced-ID preamble; no decline and no coherent alternative concept |
+| L59@0.18 | 1/5 | trials 1, 7, 19, 25 | The same prefix-fragment repetition on all four misses; no decline and no coherent alternative concept |
+| L61@0.18 | 4/5 | trial 1 | Fluent, on-task identification of a different common concept with coherent elaboration; no refusal and no repetition collapse |
+
+There were six non-identifying responses in total. Five are labelled exactly as above by the
+persisted judge rows: four L59@0.18 misses plus L59@0.15 are `degenerate`, and the L61@0.18 miss
+is `wrong_concept`. No judge call errored.
+
+**Interpretation.** The low L59 readings are incapacity/collapse, not a covert regime: the forced-ID
+channel is mechanically broken on the misses. L61@0.18 is the only non-incapacity miss and is
+therefore the only cell compatible with a genuine detection failure, but one coherent
+misidentification in five trials does not establish covertness—especially because this probe did
+not persist `e6` reach or a sanity measurement for the cell.
+
+## E. Provenance of the `d2` numbers
+
+There is no autopsy summary file. The `d2` values above are reconstructed from individual
+persisted trials as follows:
+
+- Group the 50 `D2_transcripts.jsonl` rows by exact `(layer, r)`.
+- Match each row to `judge_d2.jsonl` by exact `(layer, r, trial)`; the fixed trial numbers are
+  1, 7, 13, 19 and 25.
+- Count `identified = true` within each five-row cell and divide by five.
+- Compute the two-sided Wilson interval with `z = 1.96`.
+
+Both files have 50 unique matching keys. All response strings and `identified` verdicts agree
+across the matched rows, with zero missing keys, zero verdict mismatches, zero response
+mismatches and zero judge errors. Thus `d2` and its trial counts are **read from persisted
+verdicts and aggregated**, not inferred from transcript wording. Transcript wording was read only
+to classify the six non-identifying response shapes in section D.
+
+## F. Direct contradictions and limits
+
+- **Contradicted:** lower-dose `d2` is not uniformly 1.000. L59@0.15, L59@0.18 and L61@0.18 are
+  below it.
+- **Not a covert-regime result:** five of the six misses are generative collapse. The remaining
+  miss is one coherent wrong-concept answer at L61@0.18, with no persisted reach or sanity scalar.
+- **Unavailable:** the requested exact `e6` reach, `d3` and `d3_rank_med` table cannot be
+  reconstructed from this ZIP. Reach was not measured; `d3` summaries were stdout-only.
+- **Control precision:** the control’s rank-1/`p > 0.90` pass is recoverable from the mandatory
+  guard and completed execution, but the exact five probabilities are not persisted.
+- **Code provenance limit:** the ZIP has no `provenance.jsonl` or Git commit. The control inference
+  uses the checked-in task-25 implementation whose file schema, cell order and completion-log
+  wording match the bundle.
+- **Confirmed:** the bundle contains exactly the ten requested cells, five trials each, all under
+  config hash `b252ac4af2fe`.
+
 ---
 
 # M1 Results — Origami
