@@ -502,3 +502,67 @@ Note the resolution limit before spending on it: `reach` is `k/12`, so a covert 
 would show `reach` of 1/12 or 2/12 — at or below task 26's tier-1 floor, with a Wilson interval
 wide enough that "influence" would be a weak claim on 12 prompts. **If this is the region, the
 prompt count has to go up before the result means anything.** That is the real cost, not the scan.
+
+### 19 — A transient volume EIO killed a phase and cascaded into a null run
+
+2026-08-14 Garlic run. `phases._append_row` raised `OSError: [Errno 5] Input/output error` writing
+`selection_d2.jsonl` at 14:29:59, after `judge_d2.jsonl`, `selection_d2.jsonl` and
+`D2_transcripts.jsonl` had all frozen at **14:20:37** — three unrelated writers stopping in the
+same instant, so this was the RunPod network volume, not a hung judge call.
+
+Consequences, none of them scientific:
+
+- SHORTLIST died at **37 of 46** cells, all 37 already measured and persisted;
+- BISECT and VERIFY had no tier plan, REFINE ran over 0 cells, CONFIRM and CONTROLS skipped;
+- the run reported **no operating point** for an I/O reason, which reads identically to a null
+  scientific result in `operating_point.json`.
+
+**Fixes, none built.** `_append_row` should retry a transient `OSError` with backoff before giving
+up — the write is a few hundred bytes and the volume recovered. SHORTLIST should resume from
+`selection_d2.jsonl` rather than restart, since the expensive part is already on disk. And a phase
+that fails for an infrastructure reason must be distinguishable in `operating_point.json` from one
+that completed and found nothing.
+
+### 20 — Gate 7 fails by raising, not by measuring
+
+`gate 7 D2 transcript capture: FAIL - the gate itself raised TypeError: '<' not supported between
+instances of 'NoneType' and 'int'`. Gate 7a passed, so the writer is wired correctly; 7b is
+comparing something to `None`, plausibly a count that is unset when SHORTLIST dies early. A gate
+that raises reports FAIL, which is indistinguishable in the summary from the property being
+violated. Not built.
+
+### 21 — The stall alarm fires inside the retry envelope and cannot name what stalled
+
+The alarm fired `STOP THE POD - SHORTLIST has not completed a unit in 3m05s`. The judge layer's
+own worst case for one item is `JUDGE_MAX_ATTEMPTS`=5 x `JUDGE_TIMEOUT_S`=60 plus backoff capped
+at 30 s — several minutes of *designed* behaviour. **An alarm that fires during normal rate-limit
+recovery trains the operator to ignore it.**
+
+It also misattributed the cause: it said "stuck inside a generation or a judge call" when the GPU
+was at 0% and every writer had stopped, which is the filesystem. And it reported
+`Last unit attempted: unknown`. Not built. Three parts: raise the threshold above the retry
+envelope, distinguish a stalled writer from a stalled call, and name the cell.
+
+### 22 — Gate 5's input now exists at Phase 2, and it still looks for Phase 4
+
+Gate 5 skipped for want of `verified.jsonl`. Since task 26, `selection_d2.jsonl` carries `d3` and
+measured `d2` **on the same cell** from Phase 2 onward — exactly what gate 5 correlates, an hour
+earlier and without needing the run to complete. It should read that file when present. Not built.
+
+### 23 — `d2` had no variance, so `d3` cannot be validated on this concept
+
+All 37 measured cells read `d2` = 1.000 while `d3` ranged 0.0001 to 1.0000. Spearman ρ against a
+constant is undefined, so **gate 5 could not have passed or failed here even with its input**.
+
+This is not a defect, it is a constraint on the experiment: validating the proxy requires cells
+where `d2` actually varies. Every such cell would have to be less detectable, which is the same
+unsampled region as item 18. **Item 18 is now the prerequisite for gate 5, not merely a coverage
+gap** — and the resolution caveat there still applies: `reach` is `k/12`, so the prompt count has
+to rise before anything found in that band means much.
+
+### 24 — Raw float doses reach the output
+
+`selection_d2.jsonl` carries `r` values of `0.44999999999999996` and `0.5249999999999999` from the
+knee search's bisection. Task 18 normalised the judge *cache key*; the stored and displayed dose
+is still the raw float. Cosmetic, but it makes tables unreadable and it is the same family as the
+defect that crashed the shakedown. Not built.
