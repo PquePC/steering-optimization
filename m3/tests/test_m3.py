@@ -280,3 +280,95 @@ def test_the_boundary_phase_is_decided_by_a_judge_not_by_a_mechanical_measure():
     The boundary phase is the one place that was not true, so it is judged."""
     assert "BOUNDARY_COHERENCE_MIN" in config.SETTINGS
     assert "BOUNDARY_DEGENERATION" not in config.SETTINGS
+
+
+# =====================================================================================
+# sweep / run — offline parts only (the rest needs a GPU)
+# =====================================================================================
+
+from m3 import run as m3run, sweep  # noqa: E402
+
+
+def test_trial_numbers_are_fixed_and_spread():
+    """Fixed so a rerun builds the same prompts and the rows join; spread because the framing
+    says trials run to 50, and trials 1-6 is a different question from trials across the range."""
+    assert sweep._trials(6) == [1, 7, 13, 19, 25, 31]
+    assert sweep._trials(3) == [1, 7, 13]
+
+
+def test_a_missing_judged_measure_prints_as_absent_not_as_zero():
+    """Printing 0.00 for a measure whose every call failed puts a number on the console that
+    was never measured — the same error as a parser defaulting a bad answer to zero."""
+    cell = dict(layer=41, dose=0.297, identification=dict(rate=0.833), effectiveness=None,
+                coherence=dict(mean=8.5), capability=dict(rate=1.0),
+                mechanical=dict(effect=dict(degeneration=dict(rate=0.25))), judge_errors=3)
+    line = sweep._cell_line(cell)
+    assert "eff=   -" in line and "0.00" not in line
+    assert "[3 judge errors]" in line
+
+
+def test_the_cost_estimate_scales_with_the_grid():
+    cfg = dict(config.SETTINGS)
+    full = m3run.estimate(62, cfg)
+    assert full["cells"] == 49 * len(cfg["DOSE_FRACTIONS"])
+    thin = m3run.estimate(62, dict(cfg, LAYER_STRIDE=2))
+    assert thin["cells"] < full["cells"]
+    assert thin["judge_usd"] < full["judge_usd"]
+    assert full["judge_usd"] < 5.0, "a run this size should not cost five dollars"
+
+
+def test_the_cli_refuses_a_non_benign_concept_before_loading_anything(capsys):
+    assert m3run.main(["--concept", "weapon", "--dry-run"]) == m3run.EXIT_CONFIG
+    assert "BENIGN_CONCEPTS" in capsys.readouterr().out
+
+
+def test_the_cli_rejects_an_unknown_override(capsys):
+    assert m3run.main(["--concept", "Garlic", "--dry-run",
+                       "--set", "NOT_A_SETTING=1"]) == m3run.EXIT_CONFIG
+    assert "unknown setting" in capsys.readouterr().out
+
+
+def test_a_judge_key_is_required_because_every_decision_is_judged(monkeypatch):
+    """M2 had judge-free modes; M3 does not. A missing key here is no run, not a degraded one."""
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setenv("HF_TOKEN", "x")
+    assert m3run.check_environment(strict=False) == ["OPENROUTER_API_KEY"]
+    with pytest.raises(SystemExit, match="OPENROUTER_API_KEY"):
+        m3run.check_environment(strict=True)
+
+
+def test_the_cell_list_is_fixed_before_any_measurement_happens():
+    """The one architectural claim: what gets measured is decided by the grid and the resume
+    set, never by a measured value. If `plan` or `todo` could see a judged field, the sweep
+    would have a shortlist by another name.
+
+    Checked structurally rather than by banning keywords — `sorted` appears in this module to
+    order label sets for display, which is not selection, and a test that cannot tell those
+    apart would just get weakened until it passed.
+    """
+    import ast
+    import inspect
+    tree = ast.parse(inspect.getsource(sweep.run_sweep))
+
+    plan_src = ""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.For):
+            targets = ast.dump(node)
+            if "'plan'" in targets or "plan" in ast.unparse(node):
+                plan_src += ast.unparse(node)
+
+    judged_fields = ("identification", "effectiveness", "coherence", "capability",
+                     "self_report", "judged", "degeneration")
+    leaked = [f for f in judged_fields if f in plan_src]
+    assert not leaked, (
+        f"the cell plan reads judged field(s) {leaked}; what gets measured must depend only on "
+        "the grid, the per-layer boundary, and what is already on disk")
+
+
+def test_a_layer_without_a_boundary_is_named_rather_than_dropped():
+    """Work a run did not do reads later as work it did and found nothing in — which is how
+    M2's empty operating point was nearly read as a scientific null."""
+    import inspect
+    src = inspect.getsource(sweep.run_sweep)
+    assert "skipped.append" in src and "reason=" in src
+    assert "skipped=skipped" in src, "the skip list must reach the summary file"
