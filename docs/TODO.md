@@ -603,3 +603,56 @@ Also confirmed from the same report: `provenance.jsonl` carries no git commit fi
 predicted; reach is **not** strictly monotone in dose (it decreases at L48 and L49); and L59–L61
 already read `reach` = 0.083 at `r` = 0.150, so influence begins below the lowest sampled dose
 there.
+
+### 27 — `d2` was measured on a collapsed response channel, and the control did not catch it
+
+From `cd25716`: **44 of 50** forced-ID responses in the low-dose probe are mechanically degenerate
+by `s2_forced`. The breakdown that matters:
+
+| cell | `d2` | `s2_forced`-sane |
+|---|---|---|
+| **L59@0.30 (the positive control)** | **5/5** | **0/5** |
+| L61@0.18 | 4/5 | 1/5 |
+| **L57@0.22** | 5/5 | **5/5** |
+
+**The control is the finding.** L59@0.30 was chosen to prove the instrument works, and it does
+prove the token dump works — a concept token sits at rank 1 with p > 0.9. But a model emitting
+`garlic garlic garlic…` satisfies that criterion trivially. **Task 25's control criterion is one a
+broken model passes**, so it validates the plumbing and says nothing about whether the measurement
+means anything.
+
+**What `d2` = 1.000 means at a degenerate cell.** The judge correctly records that the concept
+appears in the response. But concept-flooding and introspective identification are different
+phenomena, and `d2` cannot tell them apart. Spec 9.2's forced-ID capability control exists for the
+opposite confound — a model too broken to answer scoring as covert. This is that confound's mirror
+image and nothing in the pipeline guards it.
+
+**The consequence, and it is not small.** Every `d2` = 1.000 in this study may have been measured
+on a model whose response channel had collapsed — the 38 cells from the 2026-08-14 main run
+included. If so, "detection saturates wherever influence exists" is not a result about Garlic; it
+is a result about measuring detection on broken models, and the actual experiment has not been run.
+
+**Checkable for free.** `selection_d2.jsonl` carries `s2_forced` per cell since task 26. Condition
+those 38 cells on sanity and report `d2` among the sane ones only. No GPU, no judge calls.
+
+**The architectural point underneath.** `s4 = min(s1, s2, s3)` is computed in Phase 4, after
+selection. On this evidence **sanity is the binding constraint**, not detection — and the pipeline
+measures the binding constraint last. Task 26 recovered one term at selection time; that was the
+right direction and it did not go far enough.
+
+**L57@0.22 is the one fully sane cell in the probe**, at `d2` 5/5. Its `reach` is unknown, because
+autopsy mode measures no influence — see item 28. It is the only cell in this region where an
+operating point could exist, and nothing has measured it properly.
+
+### 28 — Autopsy mode measures no `reach` and no sanity
+
+`--autopsy-cells` was built to compare `d3` against `d2` at cells whose `reach` and `s3` were
+already known from a completed scan. Pointed at cells that were never scanned, it reports `d2` with
+no influence measurement and no sanity measurement beside it — so a low `d2` cannot be read as
+covertness rather than incapacity, which is exactly the distinction the probe was run to settle.
+
+`s2_forced` was recoverable afterwards from the stored transcripts, at no cost. `reach` was not,
+and the non-control `d3` summaries were stdout-only and were lost with the terminal.
+
+**Fix:** when a requested cell has no scan row, measure the cheap tier for it first — `reach`,
+`d3`, `s3` at 10.9 s — and print all of it beside `d2`. Not built.
