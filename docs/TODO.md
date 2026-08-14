@@ -451,3 +451,54 @@ up, because a published operating point should name the code that produced it.
 - **Item 13:** Gate 11 now passes `OPENROUTER_API_KEY` to the upstream rubric and scopes every
   constructor-time and batch-time OpenAI-SDK client to OpenRouter. No `OPENAI_API_KEY` is needed;
   preflight still constructs the judge before measurement, and the gate remains enabled.
+
+### 17 — The knee search admits layers with no influence at either endpoint
+
+Observed live on the 2026-08-14 Garlic run. Task 24's band criterion is
+`|Δreach| >= 0.20 OR |Δd3| >= 0.30`, and on this run 21 of 49 layers entered the band — but only
+**eleven** qualified on reach. The other ten came in on `|Δd3|` alone:
+
+| admitted on | layers |
+|---|---|
+| `|Δreach| >= 0.20` | L47, L49, L50, L51, L52, L53, L54, L55, L56, L57, L58 |
+| `|Δd3|` alone | L37–L42 and L45, L46 (all `|Δreach| = 0.000`), plus L43 (0.167) and L48 (0.083) |
+
+Eight of those ten show **zero behavioural influence at both endpoints**. A knee between two doses
+that each read `reach = 0.00` cannot yield an eligible cell, so the probe cannot pay for itself.
+
+This is a consequence of task 25: `d3` tracks the onset of degeneracy rather than detection, so
+`|Δd3|` lights up exactly where the model breaks between doses. Task 26 deliberately left the term
+alone on the grounds that it still detects the output *shape* changing, which is what a band
+criterion needs — and it does work correctly, L37 going `down` on `s3 0.643 < 0.7` then `up` on
+`reach 0.000`. What it maps there is the damage boundary, which is not useless, just not what the
+band is for.
+
+**Cost: 10 layers x 2 levels x 10.6 s ≈ 3.5 min per concept.** Cheap enough that it was left to
+run rather than interrupting.
+
+**Fix, one clause:** require `reach > 0` at the **upper** endpoint before admitting a layer on
+`|Δd3|`. Keep the `|Δreach|` route untouched. Not built — decide alongside item 18, since both
+change what the scan grid covers.
+
+### 18 — The dose region where covertness could still exist is not probed
+
+Every cell measured with real `d2` so far reads **1.000**: task 25's four cells, and whatever
+Phase 2 returns on this run. All of them sit at `r >= 0.30`.
+
+Task 24's knee search bisects **0.30–0.60**, a band chosen from `d3` readings that task 25 showed
+were measuring the model's preamble. If a regime exists where the concept influences output but
+the model cannot name it, the evidence points **below** 0.30, not above:
+
+- at `r = 0.15` every layer reads `reach = 0.00` — nothing is happening;
+- at `r = 0.30` influence has arrived and detection is already total;
+- so the transition, if there is one, is inside `0.15–0.30`, which nothing has sampled.
+
+**Not built, and it needs this run's Phase 2 result first.** If the frontier comes back saturated
+at `d2` = 1.000 across every eligible cell, retargeting the knee search to `0.15–0.30` is the next
+run rather than a patch to this one. If some cell reads low, the region is already found and this
+becomes unnecessary.
+
+Note the resolution limit before spending on it: `reach` is `k/12`, so a covert cell in that band
+would show `reach` of 1/12 or 2/12 — at or below task 26's tier-1 floor, with a Wilson interval
+wide enough that "influence" would be a weak claim on 12 prompts. **If this is the region, the
+prompt count has to go up before the result means anything.** That is the real cost, not the scan.
