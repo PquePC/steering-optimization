@@ -78,6 +78,61 @@ def test_config_hash_changes_when_a_science_constant_changes():
     assert config.config_hash(a) != config.config_hash(b)
 
 
+def test_model_load_heartbeat_explains_file_count_and_ticks(monkeypatch, capsys):
+    """The status line must remain informative while the upstream call cannot return."""
+    from m2 import model as model_module
+
+    class FakeStop:
+        def __init__(self):
+            self.waits = 0
+            self.was_set = False
+
+        def wait(self, _timeout):
+            self.waits += 1
+            return self.waits > 1
+
+        def set(self):
+            self.was_set = True
+
+    class InlineThread:
+        def __init__(self, *, target, name, daemon):
+            assert name == "m2-model-load-heartbeat" and daemon is True
+            self.target = target
+
+        def start(self):
+            self.target()
+
+        def join(self, timeout=None):
+            assert timeout is not None
+
+    stop = FakeStop()
+    monkeypatch.setattr(model_module.threading, "Event", lambda: stop)
+    monkeypatch.setattr(model_module.threading, "Thread", InlineThread)
+    with model_module._model_load_progress(interval_seconds=30):
+        pass
+
+    output = capsys.readouterr().out
+    assert "counts files, not bytes" in output
+    assert "still active" in output
+    assert "reading weights into VRAM" in output
+    assert stop.was_set is True
+
+
+def test_model_load_heartbeat_interval_guard_actually_trips():
+    from m2 import model as model_module
+
+    with pytest.raises(ValueError, match="interval must be positive"):
+        with model_module._model_load_progress(interval_seconds=0):
+            pass
+
+
+def test_model_load_elapsed_label_is_readable():
+    from m2 import model as model_module
+
+    assert model_module._elapsed_label(9.9) == "9s"
+    assert model_module._elapsed_label(65.2) == "1m 05s"
+
+
 def test_task22_relaxes_only_d2_and_keeps_the_primary_reference_explicit():
     assert config.CONFIG["D2_MAX"] == 0.50
     assert config.CONFIG["D2_SCREENING_REFERENCE"] == 0.20

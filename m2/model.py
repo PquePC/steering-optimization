@@ -22,6 +22,9 @@ import hashlib
 import math
 import os
 import sys
+import threading
+import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -198,6 +201,57 @@ def _input_device() -> Any:
 # Model load
 # =====================================================================================
 
+# Frequent enough that a stationary 11/12 file-count bar cannot look like a dead pod, while
+# adding at most two plain log lines per minute during the expected 15-25 minute first load.
+_MODEL_LOAD_HEARTBEAT_SECONDS: float = 30.0
+
+
+def _elapsed_label(seconds: float) -> str:
+    """A compact wall-clock label for the model-loader heartbeat."""
+    total = max(0, int(seconds))
+    minutes, secs = divmod(total, 60)
+    return f"{minutes}m {secs:02d}s" if minutes else f"{secs}s"
+
+
+@contextmanager
+def _model_load_progress(interval_seconds: float = _MODEL_LOAD_HEARTBEAT_SECONDS):
+    """Keep the terminal visibly alive while the upstream loader blocks.
+
+    Hugging Face's ``Fetching N files`` percentage counts completed *files*, not bytes. The
+    last file can therefore contain most of the remaining bytes. The same blocking upstream
+    call then reconstructs cached files and reads weight shards into VRAM without exposing a
+    stage callback. A status line cannot honestly distinguish those stages, so this heartbeat
+    names all of them and claims only that the Python loader thread is still active.
+
+    This deliberately wraps rather than replaces the upstream loader: download concurrency,
+    cache paths, authentication, model construction and device placement remain unchanged.
+    """
+    interval = float(interval_seconds)
+    if interval <= 0.0:
+        raise ValueError(f"model-load heartbeat interval must be positive, got {interval!r}")
+
+    print("model load : starting download/cache check and weight load", flush=True)
+    print("             'Fetching N files' counts files, not bytes; the final file may be "
+          "the largest.", flush=True)
+    stop = threading.Event()
+    started = time.monotonic()
+
+    def _heartbeat() -> None:
+        while not stop.wait(interval):
+            elapsed = _elapsed_label(time.monotonic() - started)
+            print(f"model load : still active after {elapsed} — downloading/reconstructing "
+                  "a file or reading weights into VRAM", flush=True)
+
+    worker = threading.Thread(
+        target=_heartbeat, name="m2-model-load-heartbeat", daemon=True)
+    worker.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        worker.join(timeout=min(1.0, interval))
+
+
 def load_model(cfg: dict) -> Any:
     """Load the model through Macar's wrapper and populate `config.RUN`.
 
@@ -215,7 +269,8 @@ def load_model(cfg: dict) -> Any:
     require_repo_path()
     from model_utils import load_model as _repo_load_model  # noqa: WPS433 (deferred by design)
 
-    mw = _repo_load_model(cfg["model"], dtype=cfg["dtype"])
+    with _model_load_progress():
+        mw = _repo_load_model(cfg["model"], dtype=cfg["dtype"])
     hf, tok = mw.model, mw.tokenizer
 
     # DEFENCE 5. `model_utils.py:125` sets padding_side='left', and S3 depends on it: it
