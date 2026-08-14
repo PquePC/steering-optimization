@@ -83,7 +83,7 @@ def build_items(judge_id: str, gold: Sequence[dict], by_id: dict[str, dict],
                                    response_unsteered=base, response_steered=response)
             model_text = (base, response)
         items.append(judge.build_item(judge_id, payload=payload,
-                                      cache_key=("CALIBRATE", g["id"], judge_id),
+                                      cache_key=judge.cache_key("CALIBRATE", judge_id, unit=g["id"]),
                                       concept=concept, model_text=model_text))
         used.append(g)
     return items, used

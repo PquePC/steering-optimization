@@ -142,13 +142,13 @@ def _judge_items(rows: Sequence[dict], *, concept: str, baselines: dict[str, str
 
     for idx, row in enumerate(rows):
         ch, response = row["channel"], row["response"]
-        key_base = (phase, layer, dose, row["unit"])
 
         if ch == "identify":
             payload = judge.render("identify", text_chars=text_chars,
                                    concept=concept, response=response)
             items.append(dict(judge.build_item("identify", payload=payload,
-                                               cache_key=key_base + ("identify",),
+                                               cache_key=judge.cache_key(phase, "identify", layer=layer, dose=dose,
+                                                        unit=row["unit"]),
                                                concept=concept, model_text=(response,)),
                               row_index=idx, judge_kind="identify"))
 
@@ -156,7 +156,8 @@ def _judge_items(rows: Sequence[dict], *, concept: str, baselines: dict[str, str
             payload = judge.render("self_report", text_chars=text_chars,
                                    concept=concept, response=response)
             items.append(dict(judge.build_item("self_report", payload=payload,
-                                               cache_key=key_base + ("self_report",),
+                                               cache_key=judge.cache_key(phase, "self_report", layer=layer, dose=dose,
+                                                        unit=row["unit"]),
                                                concept=concept, model_text=(response,)),
                               row_index=idx, judge_kind="self_report"))
 
@@ -171,7 +172,8 @@ def _judge_items(rows: Sequence[dict], *, concept: str, baselines: dict[str, str
                                    prompt=row["source"], response_unsteered=baseline,
                                    response_steered=response)
             items.append(dict(judge.build_item("effect", payload=payload,
-                                               cache_key=key_base + ("effect",),
+                                               cache_key=judge.cache_key(phase, "effect", layer=layer, dose=dose,
+                                                        unit=row["unit"]),
                                                concept=concept,
                                                model_text=(baseline, response)),
                               row_index=idx, judge_kind="effect"))
@@ -183,7 +185,8 @@ def _judge_items(rows: Sequence[dict], *, concept: str, baselines: dict[str, str
                 payload = judge.render("coherence", text_chars=text_chars,
                                        prompt=row["source"], response=response)
                 items.append(dict(judge.build_item("coherence", payload=payload,
-                                                   cache_key=key_base + ("coherence",),
+                                                   cache_key=judge.cache_key(phase, "coherence", layer=layer, dose=dose,
+                                                        unit=row["unit"]),
                                                    concept=concept, model_text=(response,)),
                                   row_index=idx, judge_kind="coherence"))
     return items
@@ -311,7 +314,8 @@ def find_boundary(layer: int, concept: str, cfg: dict | None = None) -> dict:
             "coherence",
             payload=judge.render("coherence", text_chars=int(cfg["JUDGE_TEXT_CHARS"]),
                                  prompt=r["source"], response=t),
-            cache_key=("BOUNDARY", layer, round(mid, 6), r["unit"], "coherence"),
+            cache_key=judge.cache_key("BOUNDARY", "coherence", layer=layer,
+                                      dose=round(mid, 6), unit=r["unit"]),
             concept=concept, model_text=(t,)), row_index=i, judge_kind="coherence")
             for i, (r, t) in enumerate(zip(rows_spec, responses))]
         results = judge.run_judges([{k: v for k, v in it.items()

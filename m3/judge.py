@@ -275,19 +275,54 @@ def render(judge_id: str, *, text_chars: int | None = None, **fields: Any) -> st
 
 
 def configure_transport(cfg: dict) -> dict:
-    """Push M3's token caps into the reused M2 transport, once, explicitly.
+    """Push EVERY M3 judge setting into the reused M2 transport, once, explicitly.
 
-    `m2.judges` holds these as module constants because M2 had one setting for all of them.
-    M3's config is the source of truth, so it writes them in rather than inheriting M2's
-    values -- 400 output tokens is slack for M2's six-line rubrics and three times what any M3
-    judge is asked to produce.
+    `m2.judges` reads its model and concurrency from `m2.config.CONFIG` and holds its token cap
+    as a module constant. M3's config is the source of truth for all three, so all three are
+    written in rather than inherited.
+
+    Pushing the model and concurrency matters even though M3's defaults currently match M2's,
+    and *because* they match: nothing would look wrong. `--set JUDGE_MODEL=...` would change the
+    number in M3's config, print it in the plan, write it into the config hash and the run
+    folder name -- and then silently score everything with M2's model. A setting that is
+    displayed but not applied is worse than one that is missing.
     """
-    from m2 import judges as transport
+    from m2 import config as m2config, judges as transport
 
     transport.JUDGE_MAX_TOKENS = int(cfg["JUDGE_MAX_TOKENS"])
-    return dict(judge_max_tokens=transport.JUDGE_MAX_TOKENS,
+    m2config.CONFIG["judge_model"] = str(cfg["JUDGE_MODEL"])
+    m2config.CONFIG["judge_concurrent"] = int(cfg["JUDGE_CONCURRENT"])
+
+    # Register M3's judges with the transport. Without this NOTHING runs: `call_judge` and
+    # `judge_many` both validate `judge_id` against M2's hardcoded ("E5", "S1", "D2") and raise
+    # on anything else, and `call_judge` then parses through a `PARSERS` dict keyed the same
+    # way. M3's ids are none of those, so every call would raise before a request was sent.
+    #
+    # The parser is wrapped so that a bad judge answer raises the transport's OWN
+    # `JudgeParseError`. M3's parse errors are a different class, and an exception the
+    # transport does not recognise escapes its handler and kills the whole batch instead of
+    # being recorded as one excluded call.
+    for jid in JUDGE_IDS:
+        if jid not in transport.JUDGE_IDS:
+            transport.JUDGE_IDS = tuple(transport.JUDGE_IDS) + (jid,)
+        transport.PARSERS[jid] = _transport_parser(jid, transport.JudgeParseError)
+
+    return dict(judge_model=m2config.CONFIG["judge_model"],
+                judge_concurrent=m2config.CONFIG["judge_concurrent"],
+                judge_max_tokens=transport.JUDGE_MAX_TOKENS,
                 judge_temperature=transport.JUDGE_TEMPERATURE,
-                text_chars=int(cfg["JUDGE_TEXT_CHARS"]))
+                text_chars=int(cfg["JUDGE_TEXT_CHARS"]),
+                registered=list(JUDGE_IDS))
+
+
+def _transport_parser(judge_id: str, error_class: type) -> Any:
+    """Adapt `parse` to the transport's contract: one argument, and its own exception type."""
+    def _parse_one(text: str) -> dict:
+        try:
+            return parse(judge_id, text)
+        except (JudgeParseError, ValueError) as exc:
+            raise error_class(f"{judge_id}: {exc}") from exc
+    return _parse_one
 
 
 def estimate_payload_tokens(judge_id: str, cfg: dict) -> int:
@@ -412,6 +447,22 @@ def classify_self_report(parsed: dict, *, degenerate: bool) -> str:
 # =====================================================================================
 # Issuing
 # =====================================================================================
+
+def cache_key(phase: str, judge_id: str, *, layer: int | None = None,
+              dose: float | None = None, unit: str = "") -> tuple:
+    """The transport's contracted 6-field cache key: (phase, layer, r, unit, judge_id, vec).
+
+    The transport validates the arity and rejects anything else, so this exists to be the one
+    place that shape is written down.
+
+    The last field is `vec_fingerprint` upstream, where it stops one concept's cached verdict
+    being served to another. M3 does not need a fingerprint there: the concept already
+    namespaces the whole cache inside the transport, and `(layer, dose)` fully determine the
+    vector for a given concept, so both are already in the key. A literal marker is honest
+    about that; inventing a fingerprint that nothing computes would not be.
+    """
+    return (phase, layer, dose, unit, judge_id, "m3")
+
 
 def build_item(judge_id: str, *, payload: str, cache_key: tuple,
                concept: str | None = None, model_text: Sequence[str] = ()) -> dict:
