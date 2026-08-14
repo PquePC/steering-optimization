@@ -278,6 +278,25 @@ tail -f /workspace/m2_garlic.out
 **`--no-stop-pod` matters.** Without it the pod stops the moment the concept finishes and you
 cannot read the result or start the next one without a restart.
 
+### Anything run in the foreground goes through `tee`
+
+The background form above redirects, so it keeps a log by construction. **Every other invocation
+does not** — the preflight, the autopsy, `m2.setup` — and their output exists only in terminal
+scrollback:
+
+```bash
+python -m m2.run --concepts Garlic --autopsy-cells "59@0.30,59@0.22" 2>&1 | tee /workspace/autopsy.out
+```
+
+This has cost real work twice. Task [27](handoff/27-board-rendering.md) stopped the status board
+from reprinting itself hundreds of times, but that only helps the pipeline: **the autopsy is
+inherently long** — ten cells x five trials x two token dumps each — and no redraw shrinks it. A
+2026-08-14 low-dose probe finished, scrolled off, and had to be reconstructed from
+`D2_transcripts.jsonl` and `judge_d2.jsonl` afterwards.
+
+`tee` shows you the output live *and* keeps it. There is no reason to run anything here without
+it, and the cost of forgetting is re-running on a GPU.
+
 ### Where the ~1h20m goes
 
 | Phase | Basis | Time |
