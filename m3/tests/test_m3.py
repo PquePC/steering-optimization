@@ -286,7 +286,8 @@ def test_the_boundary_phase_is_decided_by_a_judge_not_by_a_mechanical_measure():
 # sweep / run — offline parts only (the rest needs a GPU)
 # =====================================================================================
 
-from m3 import run as m3run, sweep  # noqa: E402
+from m3 import run as m3run, sweep
+from m3 import scoring as scoring_mod  # noqa: E402
 
 
 def test_trial_numbers_are_fixed_and_spread():
@@ -397,3 +398,25 @@ def test_the_character_rule_does_not_fire_on_healthy_text(text):
     strings that are perfectly fine. A length floor could not make this distinction, which is
     why M2's five-word rule scored `Garlic.` as degenerate."""
     assert not battery.is_degenerate(text)
+
+
+def test_every_full_claim_can_come_out_false():
+    """A check that cannot fail is worse than no check — the most frequent defect class in this
+    project's history. Each claim must exclude some achievable value."""
+    from m3 import scoring
+    assert scoring.CLAIMS
+    for c in scoring.CLAIMS:
+        lo, hi = c["expect"]
+        assert 0.0 <= lo <= hi, c["id"]
+        assert not (lo == 0.0 and hi >= 10.0), f"{c['id']} admits every value"
+        assert c["why"].strip(), f"{c['id']} has no stated reason"
+        assert c["field"] in scoring._FIELD_JUDGE, c["id"]
+
+
+def test_full_resumes_rather_than_paying_twice(tmp_path):
+    """1,720 calls is real money; a network blip halfway through must not cost the first half
+    again."""
+    import inspect
+    src = inspect.getsource(scoring_mod.run_full)
+    assert "done" in src and "already on disk" in src
+    assert "out.open(\"a\"" in src, "results must be appended, not overwritten"

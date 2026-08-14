@@ -270,6 +270,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     p.add_argument("--out", type=Path, default=Path("worksheets"))
     p.add_argument("--gold", type=Path, default=LABELS_DIR)
     p.add_argument("--concept", default="Garlic")
+    p.add_argument("--full-out", type=Path, default=None,
+                   help="where `full` writes its scored rows. Defaults to judged_full.jsonl "
+                        "inside the probe directory. Re-running resumes from it rather than "
+                        "paying twice.")
     args = p.parse_args(argv)
 
     records = load_probe(args.probe)
@@ -284,6 +288,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     from m3 import scoring          # noqa: PLC0415 - only needed on the scoring path
+    if args.command == "full":
+        return scoring.run_full(records, concept=args.concept,
+                                out=Path(args.full_out or (Path(args.probe) / "judged_full.jsonl")))
     return scoring.run(args.command, records, gold_dir=Path(args.gold),
                        concept=args.concept)
 
