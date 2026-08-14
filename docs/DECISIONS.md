@@ -601,3 +601,18 @@ behind one blocking API. Splitting or replacing it would change working model-lo
 a truthful heartbeat fixes the operator-facing ambiguity without touching concurrency, caching,
 authentication, device placement, or model weights.
 **Result:** `1681fa0` on `pareto`; 157 tests passed, 2 environment-dependent tests skipped.
+
+## 2026-08-14 — Task 27 split status-board rendering by output mode
+**By:** Tomás (requirements), Sol (execution)
+**Kind:** task complete
+
+TTY output now redraws the board in place, while redirected stdout prints a full board only at
+phase transitions and a one-line phase/units/elapsed/ETA heartbeat between them. With
+`tee_stdout` on a terminal, in-place frames bypass `_Tee` and only plain transition landmarks
+reach its file.
+
+**Why:** stripping ANSI in `_Tee` would be fewer lines but would make the logging transport parse
+display syntax. Routing redraws explicitly is cleaner: board rendering owns cursor movement, and
+the log remains plain by construction. Unknown terminal size falls back to plain appending.
+**Result:** `c576edf` on `pareto`; redirected offline suite 149 passed, 2 environment-dependent
+skips, with zero ANSI CSI sequences in the captured file.

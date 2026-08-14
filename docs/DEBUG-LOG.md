@@ -1507,3 +1507,29 @@ and possible-stage wording, and trip the invalid-interval guard.
 
 **Result.** Silent? No. The terminal now distinguishes “the blocking loader is still active” from
 “no output,” while deliberately not claiming that a UI heartbeat proves GPU health.
+
+### 2026-08-14 — Status-board copies buried the run's diagnostic output
+
+**Symptom.** `RunStatus.render` appended a complete board on every update. Hundreds of copies in
+the redirected 1h20m run log buried Phase 0's dose map and made the operator recover it with
+`grep -A 60` while the run was live.
+
+**Root cause.** One `print(txt)` path served notebooks, terminals, redirected files and `_Tee`.
+Those destinations have incompatible redraw semantics, and `_Tee.isatty()` reports the terminal
+side while also copying the same bytes into a file.
+
+**Why nothing caught it.** Existing tests covered board state and failure isolation, not the byte
+stream produced by two renders. No test redirected stdout or searched the resulting file for ANSI
+control sequences and duplicate frames.
+
+**Fix.** Task 27 selects rendering by the real terminal stream. TTY frames redraw only that stream;
+non-TTY output receives full phase landmarks plus compact heartbeats. TTY redraws bypass `_Tee`,
+so its file side receives no escape sequences, and an unknown terminal width disables cursor
+movement.
+
+**Check.** Tests render twice into `StringIO`, exercise both transition modes and the tee split,
+and force terminal-size failure. The full offline suite was redirected to a file: 149 passed,
+2 skipped, zero `\x1b[` matches.
+
+**Result.** Silent? No. Grep-visible landmarks remain, ordinary diagnostics are untouched, and
+board churn is reduced to one line between phases in the workflow the operator actually uses.

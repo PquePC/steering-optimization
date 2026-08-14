@@ -1,6 +1,6 @@
 # 27 — The board redraws in place on a terminal, and stops flooding the log
 
-**Status: BUILD NOW.** Branch `pareto`. Cosmetic in the sense that no measurement changes, and
+**Status: DONE — `c576edf`.** Branch `pareto`. Cosmetic in the sense that no measurement changes, and
 not cosmetic in the sense that it already cost the operator the CAL dose map on a live run.
 
 ## The symptom
