@@ -566,3 +566,40 @@ to rise before anything found in that band means much.
 knee search's bisection. Task 18 normalised the judge *cache key*; the stored and displayed dose
 is still the raw float. Cosmetic, but it makes tables unreadable and it is the same family as the
 defect that crashed the shakedown. Not built.
+
+### 25 — The original Pareto frontier plotted influence against influence
+
+From `ae179a9`: over 50 sane, positive-reach cells, **`d3` vs `reach` ρ = 0.733**, while
+`d3` vs `s3` ρ = −0.190.
+
+This corrects task 25's reading. `d3` does not primarily track the onset of degeneracy — it tracks
+**influence**, strongly. It is a second measure of the same quantity `reach` measures, wearing a
+detection name because of where it is read.
+
+Which explains the frontier's real defect, and it is worse than "unvalidated axis": task 21 built
+a Pareto frontier on `reach` ascending versus `d3` descending — **two positively correlated
+measures of influence.** A trade-off curve between a quantity and itself is not a trade-off curve.
+Every "covert" cell it selected was simply a low-influence cell, which is why measuring real `d2`
+found 1.000 at all of them.
+
+Nothing to build; task 26 already replaced the axis with measured `d2`. Recorded because the
+retrospective matters for the write-up: the frontier was not merely ranking on a blind axis, it
+was ranking on the wrong quantity entirely.
+
+### 26 — Two acceptance criteria from task 26 did not survive the run
+
+1. **Twelve eligible cells received no real `d2`, and the named omission manifest was not
+   preserved.** Task 26 requires every unmeasured eligible cell to be named with its reason. The
+   manifest is evidently written at phase end, so a crash loses exactly the record that says what
+   the search skipped — the failure mode the requirement exists to prevent. **Write it
+   incrementally, as each cell is skipped.**
+2. **`D2_SELECT_MAX = 30` applies per eligibility pass**, giving 30 + 7 + 9 = 46. Confirm what the
+   third pass was: if it measured tier-2 (`1/12`) cells, that contradicts task 26's rule that tier
+   2 is report-only, and it spent judge calls on cells that can never be selected. If the passes
+   are not tiers, the board's growing denominator needs a different explanation. **Unresolved —
+   read the code before the next run.**
+
+Also confirmed from the same report: `provenance.jsonl` carries no git commit field, as item 16
+predicted; reach is **not** strictly monotone in dose (it decreases at L48 and L49); and L59–L61
+already read `reach` = 0.083 at `r` = 0.150, so influence begins below the lowest sampled dose
+there.
