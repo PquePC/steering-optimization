@@ -227,7 +227,16 @@ def wilson_interval(successes: int, n: int, z: float = 1.96) -> tuple[float, flo
     denom = 1.0 + z * z / n
     centre = (p + z * z / (2 * n)) / denom
     half = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / denom
-    return max(0.0, centre - half), min(1.0, centre + half)
+    lo, hi = centre - half, centre + half
+    # At p=0 the lower bound is exactly 0 and at p=1 the upper bound is exactly 1 -- both are
+    # exact properties of the interval, not rounding. In floating point the algebra leaves
+    # 0.9999999999999999, which is the bound that gets compared against a threshold and written
+    # into JSON, so it is pinned rather than left to drift.
+    if successes == 0:
+        lo = 0.0
+    if successes == n:
+        hi = 1.0
+    return max(0.0, lo), min(1.0, hi)
 
 
 def rate(successes: int, n: int, z: float = 1.96) -> dict:
