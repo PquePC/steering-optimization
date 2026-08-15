@@ -420,3 +420,28 @@ def test_full_resumes_rather_than_paying_twice(tmp_path):
     src = inspect.getsource(scoring_mod.run_full)
     assert "done" in src and "already on disk" in src
     assert "out.open(\"a\"" in src, "results must be appended, not overwritten"
+
+
+def test_run_full_only_reads_fields_that_load_probe_actually_produces():
+    """The bug that threw away 1,720 paid judge calls: run_full read `concept_mentions` while
+    load_probe writes `concept_hits`. Nothing caught it until the money was gone."""
+    import ast, inspect
+    src = inspect.getsource(scoring_mod.run_full)
+    reads = {n.slice.value for n in ast.walk(ast.parse(src))
+             if isinstance(n, ast.Subscript) and isinstance(n.slice, ast.Constant)
+             and isinstance(n.value, ast.Name) and n.value.id == "rec"
+             and isinstance(n.slice.value, str)}
+    produced = {"channel", "layer", "r", "trial", "prompt_id", "response", "words",
+                "concept_hits", "degenerate", "degeneration_reason", "steered", "id"}
+    assert reads <= produced, f"run_full reads fields load_probe never writes: {reads - produced}"
+
+
+def test_the_paid_judge_reply_is_written_before_anything_derived_from_it():
+    """A typo in a derived column must not be able to cost a whole run."""
+    import inspect
+    src = inspect.getsource(scoring_mod.run_full)
+    write_row = src.index('row = dict(id=rec["id"]')
+    enrich = src.index("row.update(")
+    assert write_row < enrich, "the minimal row must be built before enrichment"
+    assert "except Exception" in src and "row_error" in src
+    assert "fh.flush()" in src

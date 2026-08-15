@@ -291,14 +291,27 @@ def run_full(records: Sequence[dict], *, concept: str, out: Path) -> int:
         results = judge.run_judges(items, concurrency=int(cfg["JUDGE_CONCURRENT"]))
         with out.open("a", encoding="utf-8") as fh:
             for (rec, jid), result in zip(meta, results):
-                parsed, error = judge.verdict(result)
-                row = dict(id=rec["id"], judge=jid, channel=rec["channel"], layer=rec["layer"],
-                           r=rec["r"], parsed=(_normalise(jid, parsed) if parsed else None),
-                           error=error, degenerate=rec["degenerate"],
-                           concept_mentions=rec["concept_mentions"], raw=result.get("raw"))
+                # The judge reply is the thing money was spent on. Write it FIRST, from fields
+                # that cannot be wrong, then enrich. Every derived column goes inside the try.
+                #
+                # This is not defensive habit: the first version built the whole row in one
+                # expression, mistyped one mechanical column, and threw away 1,720 already-paid
+                # calls on the first iteration. Persisting the paid artefact before deriving
+                # anything from it makes that class of mistake cost nothing.
+                row = dict(id=rec["id"], judge=jid, raw=result.get("raw"),
+                           ok=bool(result.get("ok")))
+                try:
+                    parsed, error = judge.verdict(result)
+                    row.update(channel=rec["channel"], layer=rec["layer"], r=rec["r"],
+                               parsed=(_normalise(jid, parsed) if parsed else None),
+                               error=error, degenerate=rec["degenerate"],
+                               concept_mentions=rec["concept_hits"])
+                except Exception as exc:                       # noqa: BLE001
+                    row["row_error"] = f"{type(exc).__name__}: {exc}"
                 fh.write(json.dumps(row) + "\n")
+                fh.flush()          # a kill mid-loop keeps everything already written
                 scored.append(row)
-        errs = sum(1 for r in scored if r["error"])
+        errs = sum(1 for r in scored if r.get("error") or r.get("row_error"))
         print(f"scored {len(scored)} calls, {errs} errors -> {out}\n")
 
     _full_report(scored)
@@ -328,10 +341,17 @@ def _full_report(rows: Sequence[dict]) -> None:
     from collections import defaultdict
 
     by = defaultdict(list)
+    incomplete = 0
     for r in rows:
-        if r["parsed"]:
+        if r.get("row_error") or "channel" not in r:
+            incomplete += 1
+            continue
+        if r.get("parsed"):
             dose = None if r["r"] is None else round(r["r"], 2)
             by[(r["channel"], r["layer"], dose, r["judge"])].append(r)
+    if incomplete:
+        print(f"NOTE: {incomplete} row(s) hold a paid judge reply that could not be enriched; "
+              "their `raw` is on disk and they are excluded from every aggregate below.\n")
 
     print("=" * 78)
     print("DO THE HAND FINDINGS REPRODUCE UNDER THE JUDGES?")
@@ -353,7 +373,7 @@ def _full_report(rows: Sequence[dict]) -> None:
     print("would have caught a judge scoring '## ## ## ##' as coherent, and it is what the")
     print("mechanical measures earn their keep by producing.\n")
 
-    coh = [r for r in rows if r["judge"] == "coherence" and r["parsed"]]
+    coh = [r for r in rows if r["judge"] == "coherence" and r.get("parsed")]
     n_deg = sum(1 for r in coh if r["degenerate"])
     a = [r for r in coh if r["degenerate"] and r["parsed"]["coherence"] >= 5]
     b = [r for r in coh if not r["degenerate"] and r["parsed"]["coherence"] <= 2]
@@ -364,8 +384,8 @@ def _full_report(rows: Sequence[dict]) -> None:
     for r in b[:8]:
         print(f"      {r['id']:<30} coherence={r['parsed']['coherence']}")
 
-    eff = [r for r in rows if r["judge"] == "effect" and r["parsed"]]
-    c = [r for r in eff if r["concept_mentions"] == 0 and r["parsed"]["influence"] >= 4]
+    eff = [r for r in rows if r["judge"] == "effect" and r.get("parsed")]
+    c = [r for r in eff if r.get("concept_mentions") == 0 and r["parsed"]["influence"] >= 4]
     print(f"\n  zero concept mentions, judged influential (>=4): {len(c)} of {len(eff)}")
     print("      the responses a mention count scores 0 and cannot see. If this is large, the")
     print("      mechanical count is not a usable stand-in for effectiveness at any threshold.")
