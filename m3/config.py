@@ -57,6 +57,10 @@ SETTINGS: dict[str, Any] = dict(
     # which is expressed as a fraction of depth so that it ports.
     MODEL="gemma3_27b",
 
+    # Weight dtype at load. bfloat16 is what every measurement in this project has been made in;
+    # changing it changes the numbers, not just the memory footprint.
+    DTYPE="bfloat16",
+
     # =================================================================================
     # 2. SEARCH SPACE
     # =================================================================================
@@ -351,9 +355,18 @@ def m2_config(concept: str, cfg: dict | None = None) -> dict:
     cfg = CONFIG if cfg is None else cfg
     from m2 import config as m2cfg
 
-    out = dict(m2cfg.CONSTANTS)          # every key M2 code might index, so none can be missing
+    # Start from M2's COMPLETE assembled config, not from `CONSTANTS`. `CONSTANTS` is only the
+    # spec's tunables; the assembled config adds six runtime keys (`model`, `concept`, `dtype`,
+    # `judge_model`, `judge_concurrent`, `config_hash`) that M2 code indexes hard.
+    #
+    # The first version enumerated those six by hand and missed `dtype`, which `model.load_model`
+    # reads -- so the run died at model load. Enumerating by hand is the bug: it has to be redone
+    # correctly every time M2 gains a key. Copying the whole config and overriding what M3 owns
+    # cannot miss one, and `test_the_m2_bridge_supplies_every_key_m2_defines` pins it.
+    out = dict(m2cfg.CONFIG)
     out.update(
         model=cfg["MODEL"],
+        dtype=cfg["DTYPE"],
         concept=concept,
         judge_model=cfg["JUDGE_MODEL"],
         judge_concurrent=int(cfg["JUDGE_CONCURRENT"]),

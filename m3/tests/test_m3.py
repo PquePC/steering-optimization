@@ -445,3 +445,26 @@ def test_the_paid_judge_reply_is_written_before_anything_derived_from_it():
     assert write_row < enrich, "the minimal row must be built before enrichment"
     assert "except Exception" in src and "row_error" in src
     assert "fh.flush()" in src
+
+
+def test_the_m2_bridge_supplies_every_key_m2_defines():
+    """M3 hands this dict to M2's model, generation, judge and I/O layers, which index it hard.
+    A missing key is a crash at whatever depth first reads it.
+
+    This failed once for real: the bridge enumerated M2's runtime keys by hand and missed
+    `dtype`, so a pod run died at model load after the weights had downloaded. Enumerating by
+    hand is the defect -- it has to be redone correctly every time M2 gains a key."""
+    from m2 import config as m2c
+    built = config.m2_config("Garlic", dict(config.SETTINGS))
+    missing = set(m2c.CONFIG) - set(built)
+    assert not missing, f"m2_config omits key(s) M2 defines: {sorted(missing)}"
+
+
+def test_the_bridge_applies_m3s_values_over_m2s():
+    from m2 import config as m2c
+    built = config.m2_config("Garlic", dict(config.SETTINGS, MODEL="other", DTYPE="float16",
+                                            MAX_NEW_TOKENS=64))
+    assert built["model"] == "other" and built["dtype"] == "float16"
+    assert built["MAX_NEW_TOKENS"] == 64
+    assert built["concept"] == "Garlic"
+    assert built["config_hash"] != m2c.CONFIG.get("config_hash")
