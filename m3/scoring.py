@@ -148,6 +148,19 @@ def run(command: str, records: Sequence[dict], *, gold_dir: Path, concept: str) 
         all_results[judge_id] = scored
 
     _report(all_results, disagreements)
+
+    # The exit code carries the verdict. `verdicts()` exists so that "the judge was validated" is
+    # a claim with a number behind it rather than an impression -- and it computed PASS/FAIL,
+    # printed it, and returned 0 either way. A bar that nothing acts on is the same shape as a
+    # check that cannot fail: it looks like validation from every angle except the one that
+    # matters. A FAIL now has to be dismissed deliberately rather than scrolled past.
+    failed = [row for row in verdicts(all_results) if row["verdict"] != "PASS"]
+    if failed:
+        print(f"\n{len(failed)} criteria did not pass: "
+              f"{', '.join(r['criterion'] for r in failed)}")
+        print("Iterate on the prompts in m3.judge and re-run before trusting these judges "
+              "on a pod.")
+        return 1
     return 0
 
 

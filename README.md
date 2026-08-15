@@ -19,7 +19,7 @@ same question, that is a defect — say so.
 
 | Question | Document |
 |---|---|
-| How do I run it, from a bare pod to a result? | [`docs/RUNBOOK.md`](docs/RUNBOOK.md) |
+| How do I run it, from a bare pod to a result? | [`docs/RUNBOOK-M3.md`](docs/RUNBOOK-M3.md) — M2's is [`docs/RUNBOOK.md`](docs/RUNBOOK.md) |
 | What does each measure mean, and why is it defined that way? | [`docs/SPECIFICATION.md`](docs/SPECIFICATION.md) |
 | Where does each piece of code live, and what is it called? | [`docs/CONTRACT.md`](docs/CONTRACT.md) |
 | Why is it built this way? What was decided, and against what? | [`docs/DESIGN-RATIONALE.md`](docs/DESIGN-RATIONALE.md) |
@@ -104,15 +104,21 @@ label so a screening number can never be read as a confirmation.
 
 ## Quick start
 
-Full instructions in [`docs/RUNBOOK.md`](docs/RUNBOOK.md). The short version, on a fresh
-A100/H100 80GB pod with `/workspace` mounted:
+Full instructions in [`docs/RUNBOOK-M3.md`](docs/RUNBOOK-M3.md) — M2's are in
+[`docs/RUNBOOK.md`](docs/RUNBOOK.md). The short version, on a fresh A100/H100 80GB pod with
+`/workspace` mounted. Bring an `HF_TOKEN` (with the Gemma licence accepted) and an
+`OPENROUTER_API_KEY`; nothing else, and no GitHub credential — both repositories clone anonymously.
 
 ```bash
-export HF_HOME=/workspace/hf
-cd /workspace/steering-optimization
+export HF_HOME=/workspace/hf M2_BRANCH=m3
+git clone https://github.com/PquePC/steering-optimization.git /workspace/steering-optimization
+cd /workspace/steering-optimization && git checkout m3
 python -m m2.setup --repair
-python -m m2.run --concepts Garlic --preflight
+python -m m3.run --concept Garlic --dry-run
 ```
+
+The last line prices the run and loads nothing. `python -m m3.run --concept Garlic` then measures
+it; Phase 0 is the preflight, and its `R14 pass` line is what says the injection hook is live.
 
 Missing Python packages install automatically even without `--repair`. The flag remains in this
 fresh-pod example because it also clones the upstream harness and applies other explicit repairs.

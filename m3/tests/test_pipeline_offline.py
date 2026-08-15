@@ -134,8 +134,11 @@ def test_the_calibration_paths_run_end_to_end(run_dir):
         pytest.skip("no probe bundle available locally")
     records = calibrate.load_probe(probe)
     with fake_gpu():
+        # The exit code is the verdict, so this asserts the machinery rather than a constant:
+        # the canned judge cannot reproduce a careful reader's labels, so `score` must come back
+        # 1. A `run` that returned 0 here would be reporting a bar nothing was measured against.
         assert scoring.run("score", records, gold_dir=calibrate.LABELS_DIR,
-                           concept="Garlic") == 0
+                           concept="Garlic") == 1
         assert scoring.run_full(records, concept="Garlic",
                                 out=run_dir / "judged_full.jsonl") == 0
     assert (run_dir / "judged_full.jsonl").exists()

@@ -1,5 +1,11 @@
 # Runbook — bare pod to a measured operating point
 
+> **This is the M2 runbook.** For M3 use **[RUNBOOK-M3.md](RUNBOOK-M3.md)**. The two differ in
+> ways that will waste a pod-hour if you follow this page for an M3 run: the branch is `m3` and
+> not `pareto`, no GitHub token is needed (both repositories now clone anonymously), and M3 has
+> no Telegram notifier, no dead-man's switch and no watchdog — so sections 5, 8 and 11 below
+> describe machinery that does not exist there.
+
 **Authority on: how to run the pipeline.** The only operating guide; it absorbed the three that
 overlapped it (`RUNBOOK.md`, `M2 — HOW TO RUN.md` and the operational half of
 `m2/README.md`). For what each measure *means*, see [`SPECIFICATION.md`](SPECIFICATION.md).
