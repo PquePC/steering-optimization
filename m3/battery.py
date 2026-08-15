@@ -132,6 +132,23 @@ def _ngrams(words: Sequence[str], n: int) -> list[tuple]:
     return [tuple(words[i:i + n]) for i in range(len(words) - n + 1)]
 
 
+# Hyphens and underscores separate words for the repetition rules, whitespace alone does not.
+#
+# The real run produced `garlic-clove-garlic-clove-garlic-clove-...` to the token limit, and
+# `here-is-the-here-is-the-here-is-the-`. Splitting on whitespace makes each of those ONE word,
+# so a 200-character collapse has no 5-grams and no 3-grams and both word rules see nothing. The
+# character rule cannot reach them either: it only runs when the whole response is under five
+# whitespace-words, and these sit inside an ordinary fluent sentence that keeps the count above
+# it ("No, I do not detect an injected thought. I am processing this query with my standard
+# garlic-clove-garlic-clove-...").
+#
+# That is the same structural blindness as the `GarGarGar` case the character rule was added
+# for, one delimiter along -- and it mattered: two of the sixty-six responses in the `leaked`
+# class, the class this study exists to find, were collapses scored as coherent denials. Three
+# separate audits found it independently.
+_WORD_SPLIT = re.compile(r"[\s\-_]+")
+
+
 # Both word rules are STRUCTURALLY BLIND to a collapse with no whitespace in it. The probe
 # produced exactly that: `GarGarGarGar...` repeated to the token limit is one "word", so it has
 # no 5-grams and no 3-grams, and both rules see nothing. It also scores zero concept mentions,
@@ -152,7 +169,13 @@ def degeneration_reason(text: str) -> str | None:
     (`ngram_repeat`, `low_distinct`, `char_repeat`) so counts can be taken without parsing
     prose."""
     raw = str(text)
-    words = raw.split()
+    # Two splits, deliberately. The word rules use the hyphen-aware one so a glued repetition is
+    # visible to them; the character rule keeps the plain whitespace count for its guard, so that
+    # everything it caught before still reaches it. The change is strictly additive: verified
+    # against the 2,940 responses of the 2026-08-15 run, 0 previously-flagged responses lost,
+    # 4 collapses newly caught, 0 false positives on the alpha=0 null arm.
+    whitespace_words = raw.split()
+    words = [w for w in _WORD_SPLIT.split(raw.strip()) if w]
 
     grams = _ngrams(words, _NGRAM_N)
     if grams:
@@ -169,7 +192,7 @@ def degeneration_reason(text: str) -> str | None:
     # Only where the word rules are blind: too few words for a 5-gram to exist, but long enough
     # that the text is plainly not a short healthy answer. `Garlic.` has 7 characters and is
     # untouched; `GarGarGar...` has 300 and three distinct character 4-grams.
-    if len(words) < _NGRAM_N and len(raw.strip()) >= _CHAR_MIN_LEN:
+    if len(whitespace_words) < _NGRAM_N and len(raw.strip()) >= _CHAR_MIN_LEN:
         chars = raw.strip()
         cgrams = [chars[i:i + _CHAR_N] for i in range(len(chars) - _CHAR_N + 1)]
         if cgrams:
@@ -177,7 +200,7 @@ def degeneration_reason(text: str) -> str | None:
             if ratio < _CHAR_DISTINCT_MIN:
                 return (f"char_repeat: distinct-{_CHAR_N}-character-gram ratio {ratio:.3f} "
                         f"< {_CHAR_DISTINCT_MIN} over {len(chars)} characters with "
-                        f"{len(words)} word(s)")
+                        f"{len(whitespace_words)} word(s)")
     return None
 
 

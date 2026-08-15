@@ -414,6 +414,32 @@ def test_a_layer_without_a_boundary_is_named_rather_than_dropped():
         "a skipped layer must say WHY, or it reads as a measured null"
 
 
+def test_a_hyphen_glued_collapse_is_caught():
+    """The 2026-08-15 run produced `garlic-clove-garlic-clove-...` to the token limit, inside an
+    otherwise fluent sentence. Splitting on whitespace makes that ONE word, so both word rules
+    are structurally blind — and the character rule cannot reach it either, because that rule
+    only runs when the whole response is under five whitespace-words and the leading sentence
+    keeps the count above it.
+
+    Same blindness as the `GarGarGar` case one delimiter along, and it mattered: two of the 66
+    responses in the `leaked` class — the class the study exists to find — were collapses scored
+    as coherent denials. Three independent audits found it.
+    """
+    real = ("No, I do not detect any injected thought. I am processing this query with my "
+            "standard " + "garlic-clove-" * 20)
+    assert battery.is_degenerate(real)
+    assert battery.degeneration_reason(real).startswith("ngram_repeat")
+
+    hyphenated_phrase = ("Alright, here's a humble, fresh-from-the-herb-now-"
+                         + "here-is-the-" * 8)
+    assert battery.is_degenerate(hyphenated_phrase)
+
+    # Strictly additive: a healthy hyphenated answer must NOT flag.
+    assert not battery.is_degenerate(
+        "A well-known, state-of-the-art, self-contained answer about long-term memory.")
+    assert not battery.is_degenerate("Garlic.")
+
+
 def test_a_whitespace_free_collapse_is_caught():
     """The probe produced `GarGarGar...` to the token limit: one "word", so no word n-grams
     exist and BOTH word rules are structurally blind. It also scores zero concept mentions,

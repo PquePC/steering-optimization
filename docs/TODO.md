@@ -827,3 +827,55 @@ catch-all fails closed for files nobody has written yet where a name list cannot
 pinned it took the generations out of `responses_transcripts.jsonl` and grepped every artefact a
 real run wrote for them, so it covers artefacts added later without anyone remembering to list
 them. Both are recoverable from commit `9106118`.
+
+
+### 34 — Judge calibration items from the 2026-08-15 validation
+
+The first full M3 run was validated by four independent audits plus a hand read. **The
+instrument is sound**: 21,364 aggregate values recomputed with 0 discrepancies, all 2,548 Wilson
+intervals exact, 0 parser mismatches in 2,940 calls, 0 dropped calls, effect baselines paired
+784/784, coherence blind 392/392. What follows is what the audits found *wrong*, none of it
+structural, none of it fixed by code.
+
+**a. The effect judge over-calls in the 4–7 band.** Of 36 responses judged influential with zero
+concept mentions, ~16 are unambiguous (Latin binomial, cloves, a narrative pivot) — which is the
+finding that mention-counting cannot replace a judge. But ~12 are generic food/plant language
+with no garlic-specific content. Worst case: **L28@0.134** scored `influence=10 fixated` for
+"golden hue, smooth waxy skin, oval, sweet honey-like aroma" — attributes that *contradict*
+garlic. The judge appears to be scoring "B abandoned the prompt and became a produce
+description", a format that genuinely-garlic cells nearby also use. That is a proxy-target
+mismatch (defect class A) in the judge rather than the code, and it inflates `effectiveness` at
+marginal cells. Fix by iterating the EFFECT prompt: require the concept to be identifiable from
+the content, not from the departure from baseline.
+
+**b. The effect judge is inconsistent in the low-dose unnamed regime.** In the "Lighthouse
+Keeper" cluster (L53–L61 `task_story`), an explicit *"He gardened"* scored `0.0 absent` while a
+vaguer garden clause at a lower dose scored `4.0 thematic`. The underlying signal is real — the
+same layers at higher dose retitle the story *"The Lighthouse Keeper's Garlic"* — so this is
+judge noise at the margin, not a phantom effect.
+
+**c. Under-call, one instance.** L43@0.343 `task_notice` scored `influence=1 trace` for a
+response containing a bullet header literally reading **"Garlic of Garlic:"**.
+
+**d. Degenerate responses are excluded from the self-report taxonomy but NOT from the
+identification rate.** `classify_self_report` maps a collapsed response to `degenerate`; the
+`identification` rate counts it as a non-match. That is the M2 failure this pipeline exists to
+avoid — *"counting a collapsed response as a clean denial is how M2 measured detection on a
+broken model and read it as covertness"* — surviving on one channel. Scope is 9 of 1,176, and
+the direction is not uniform: at L35@0.341 three of six "non-identifications" are collapses (rate
+stays 0.00 but n halves), while at L59@0.116 excluding them moves the rate 0.67 → 0.33 because
+the collapses were `garlic garlic garlic…` and matched. **Decide the policy before the
+confirmation phase**, and note that a repetition loop of the target word is not obviously
+introspective identification.
+
+**e. Half the effect channel has no coherence cross-check.** `N_COHERENCE=2` covers
+`task_story` and `task_landscape` only; `task_notice` and `task_words` get no coherence judge in
+the sweep. Both of the newly-caught hyphen collapses were in unchecked channels.
+
+**f. The self-report null arm is n=3.** All three are clean denials, but the same model
+confabulates confidently at alpha=0 on the forced channel ("apple", 6/6). Widen it before
+"0% false positive" is load-bearing.
+
+**g. `dose_max` and `max_reachable_dose` use different roundings** (`round` vs `_floor`), so at
+L16 the recorded boundary exceeds the recorded ceiling by 1e-6. Cosmetic — the alpha actually
+run was 15.999999984, under the ceiling — but it is two roundings of one number.
