@@ -687,3 +687,44 @@ source-level test rejects any call to a judged measurement. The unsteered arm is
 the noticing framing invites a yes on its own; M1 recorded exactly that confabulation.
 **Result:** `docs/handoff/29-judge-free-probe.md`; run it with
 `python -m m2.run --concepts Garlic --probe-cells`.
+
+## 2026-08-14 — M3's judges validated against hand labels, then against the whole probe
+**By:** Tomás (scope), Claude (labels and harness)
+**Kind:** task complete
+
+Phase −1 ran in two stages on the 2026-08-14 Garlic probe, offline, for about $0.40 total.
+
+Stage one scored the four judges against 110 hand-labelled responses, stratified across null arm,
+degenerate, no-concept, concept-present and concept-heavy. All six criteria passed:
+`identify.matches` κ = 1.000 (n=30, both categories well represented), `self_report.claims`
+κ = 0.874, `self_report.matches` κ = 0.802, coherence MAE 0.40 with `on_task` κ = 1.000, effect
+influence MAE 0.36. Zero judge or parse errors. Every `self_report` disagreement was on a response
+the mechanical detector already flags degenerate, so the taxonomy returns `degenerate` either way
+and none of them changes a classification.
+
+Stage two scored all 1,204 responses (1,720 calls, 0 errors) and checked six findings from the
+hand analysis. All six reproduced, including `L40@0.30` leaked rate at 0.62 — 5/8, matching the
+hand count exactly — and `L41@0.30` judged influential at 4.0 where the M2 effectiveness proxy
+reads 0.000.
+
+**Why:** the judge is M3's primary instrument, and M2's defining failure was trusting an
+unvalidated measure to decide what got measured. Agreement with one reader is not ground truth,
+which is why the labels are stored as coordinates anyone can re-read and disagree with, and why
+ambiguous items are marked and scored separately.
+
+**Result:** `m3/labels/`, `m3/scoring.py`. Judges ship unchanged. Two defects were found by the
+labelling itself before any judge ran — a whitespace-free collapse invisible to every mechanical
+measure, and a coherence prompt that penalised token-limit truncation.
+
+## 2026-08-14 — A mention count cannot screen for effectiveness
+**By:** Claude (measurement)
+**Kind:** decision
+
+Across 516 task responses, 76 were judged influential at ≥4 and **10 of those (13.2%) contain zero
+mentions of the concept**. Five of the seven genuine misses are the same open-ended story prompt.
+
+**Why:** the blind spot is structured, not random, and concentrated where influence is most subtle
+— which is exactly M2's failure shape. The mechanical count stays a recorded diagnostic and gates
+nothing. This is the calibration the mechanical measures were kept in order to earn, and they did
+not earn it.
+**Result:** §3 of `docs/M3-DESIGN.md`.

@@ -122,6 +122,28 @@ metric for free (§7).
 counts are recorded on every response and are **analysis tools only** — they alter no dose, no
 cell, no category and no promotion. Every decision a run makes is made on judged data.
 
+That rule is now measured rather than argued. Scoring all 1,204 probe responses with the judges
+(2026-08-14, `m3.calibrate full`) gives:
+
+| | |
+|---|---:|
+| task responses judged influential (≥4) | 76 of 516 |
+| **of those, with ZERO concept mentions** | **10 (13.2%)** |
+| mechanically degenerate but judged coherent | 0 of 18 |
+| judged incoherent but mechanically clean | 2 of 498 |
+
+**A mention count misses 13.2% of influential responses, and the blind spot is structured.** Five
+of the seven genuine misses are the *same open-ended story prompt*; three more are whitespace-free
+fragment loops that the degeneration flag already catches separately. So the loss is concentrated
+exactly where influence is most subtle and most interesting — which is M2's failure shape, a cheap
+measure whose blind spot correlates with the phenomenon. It cannot gate anything. As a companion
+signal beside a judge, it is fine.
+
+The disagreement runs both ways, which is the point of recording both: the judge never once scored
+a mechanically-degenerate response as coherent (M2's `## ## ## ##` failure), and the mechanical
+detector missed two collapses the judge caught — fluent repetition that varies slightly between
+iterations, which an exact n-gram rule cannot see.
+
 That rule cost a redesign. The boundary phase originally bisected on mechanical degeneration,
 which would have let a judge-free measure choose the entire dose ladder for every layer — the
 largest single decision in the run. It bisects on judged coherence instead. The mechanical
