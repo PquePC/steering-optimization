@@ -836,3 +836,57 @@ find different classes of defect and neither substitutes for the other. Executio
 do not work. Reading finds paths that work and lie about what they measured.
 **Result:** twenty-one defects, 304 tests, full-depth offline run at the shipped defaults —
 49 layers, 196/196 cells, exit 0. Ready for a pod.
+
+---
+
+## 2026-08-15 — Audit the tests the same way, and find six that certify nothing
+
+**By:** Claude (the pass), Tomás (the instruction to finish the review before running)
+**Kind:** correction
+
+The production code was audited for "a check that cannot fail" and the tests were not. Six
+instances, four of them **verified by mutation**: the guarantee each test names was broken on
+purpose, and the test stayed green.
+
+| test | broken on purpose | old | new |
+|---|---|---|---|
+| paid judge reply survives a bad enrichment | moved the write inside the `try` it exists to survive | PASS | FAIL |
+| `full` resumes rather than paying twice | disabled the skip-if-already-scored check | PASS | FAIL |
+| the cell list is fixed before measurement | measured half the planned cells | PASS | FAIL |
+| `RATE_CI_Z` reaches the interval | hardcoded z=1.96 inside `wilson_interval` | PASS | FAIL |
+
+**The common cause is source introspection.** Four tests asserted on `inspect.getsource` output —
+substring checks and AST walks — rather than on behaviour. Each failed in the same way: the text
+they looked for was in `run_full` while the logic was in `_all_items`; or an AST search keyed on a
+variable named `plan` matched nothing once the variable was renamed, making the assertion
+vacuously true; or the ordering of two source lines was a proxy for a guarantee that the proxy
+could not actually see. A test that reads the source is a test of how the code is *spelled*.
+
+Two more of the same family, without mutation:
+
+- The `RATE_CI_Z` witness read `ci_z`, which `battery.rate` echoes straight from its argument —
+  so it differed whether or not `wilson_interval` ever saw the value. That is reading the echo
+  instead of the effect, in the one file whose entire stated rule is to observe at the consuming
+  site. Now reads `ci_low`/`ci_high`.
+- `test_a_bad_judge_answer_raises_and_is_never_defaulted` had no `match=`, and
+  `JudgeParseError` subclasses `ValueError`, so it passed on any `ValueError` at all. Two of its
+  five payloads omitted an *earlier* required field, so `_field` raised before `_yesno` was
+  reached: both cases were named for a validation they never exercised. Nothing in the suite
+  checked `_yesno` rejecting a bad value on an otherwise well-formed answer.
+
+**And one weak test was left in place beside its own replacement.** The bundle test asserting the
+null arm passed only because the fixture's grid produced fewer findings than the cap. The
+regression test written yesterday says so in its own docstring — "the small grid these tests use
+is the only reason the existing assertion passed" — and the fix was added *alongside* the weak
+assertion rather than removing it. Reintroducing the truncation bug left the old test green.
+
+Two harness leaks closed: `expensive.GEN_BATCH_MAX`, `judges.JUDGE_IDS` and `judges.PARSERS` are
+mutated by `open_run` and were never restored, so they leaked past the context manager for the
+rest of the process. And `_load` used `next(glob(...))`, which resolves in enumeration order, not
+creation order — a test that runs the pipeline twice was reading whichever folder's hash happened
+to sort first.
+
+**Why:** this project has catalogued eighteen instances of a check that cannot fail, and treated
+it as a property of production code. It is a property of *checks*, and the test suite is nothing
+but checks. Auditing the code and trusting the tests that cover it is auditing half the system.
+**Result:** 306 tests. Four mutations that used to pass now fail.

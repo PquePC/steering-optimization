@@ -43,8 +43,16 @@ def run_dir(tmp_path, monkeypatch):
 
 
 def _load(d: Path, name: str) -> list[dict]:
-    path = next(d.glob(f"garlic_*/{name}"))
-    return [json.loads(l) for l in path.open(encoding="utf-8")]
+    """Rows from the MOST RECENT run folder under `d`.
+
+    Was `next(d.glob(...))`, which returns the first match in enumeration order — not creation
+    order. A test that runs the pipeline twice with different settings creates two
+    `garlic_<hash>` folders, and which one that read resolved to was decided by how the two
+    hash strings happened to sort. It grades the right run today by accident, not by rule.
+    """
+    hits = sorted(d.glob(f"garlic_*/{name}"), key=lambda p: p.stat().st_mtime)
+    assert hits, f"no run folder under {d} contains {name}"
+    return [json.loads(l) for l in hits[-1].open(encoding="utf-8")]
 
 
 def test_the_whole_pipeline_runs_end_to_end(run_dir):
@@ -179,14 +187,20 @@ def test_an_unreachable_layer_is_not_reported_as_incoherent(run_dir):
 def test_the_read_this_bundle_surfaces_judge_versus_mechanical_disagreement(run_dir):
     """Every deep defect this project found was found by reading raw generations, and none by a
     gate or a rate. The bundle is the required output that makes that possible, and it selects
-    by disagreement because random sampling would have found none of them."""
+    by disagreement because random sampling would have found none of them.
+
+    The `null arm` half of this assertion used to live here too, and it was the weakest test in
+    the suite: it passed only because this fixture's grid produces fewer findings than the cap,
+    so the cap never bound. Reintroducing the truncation bug left it green. It now lives in
+    `test_the_null_arm_survives_a_bundle_full_of_disagreements`, on a grid where the cap does
+    bind — where it goes red. What is left here is the part this grid can actually test.
+    """
     with fake_gpu(judge_disagree_every=5):
         m3run.main(["--concept", "Garlic"])
     text = next(run_dir.glob("garlic_*/read_this.md")).read_text(encoding="utf-8")
     reasons = {l for l in text.splitlines() if l.startswith("### ")}
     assert any("degenerate" in r or "incoherent" in r for r in reasons), \
         f"no judge/detector disagreement surfaced; got {reasons}"
-    assert any("null arm" in r for r in reasons), "the null arm must always be included"
     assert "```" in text, "the bundle must contain the actual response text"
 
 

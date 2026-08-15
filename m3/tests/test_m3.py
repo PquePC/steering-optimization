@@ -6,6 +6,7 @@ Each test pins a specific way M2 produced a plausible wrong number, or a specifi
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -163,17 +164,30 @@ def test_the_last_answer_wins_when_a_judge_reasons_aloud_first():
     assert out == dict(influence=8.0, form="dominant")
 
 
-@pytest.mark.parametrize("jid,text", [
-    ("effect", "Influence: eleven\nForm: dominant"),
-    ("effect", "Influence: 5\nForm: strong"),
-    ("effect", "Influence: 42\nForm: trace"),
-    ("identify", "Matches: MAYBE"),
-    ("coherence", "OnTask: YES"),
+@pytest.mark.parametrize("jid,text,why", [
+    ("effect", "Influence: eleven\nForm: dominant", "expected a number"),
+    ("effect", "Influence: 5\nForm: strong", "Form is"),
+    ("effect", "Influence: 42\nForm: trace", "outside 0-10"),
+    # A missing field is its own failure, and worth pinning separately from a bad value.
+    ("identify", "Matches: YES", "no 'Named' field"),
+    # WELL-FORMED payloads whose only defect is the yes/no value. The earlier versions of these
+    # two were `Matches: MAYBE` and `OnTask: YES` — both of which also omitted an earlier
+    # required field, so `_field` raised first and `_yesno`'s validation, the thing these cases
+    # are named for, was never reached. Every one passed for the wrong reason, and nothing in
+    # the suite exercised `_yesno` rejecting a bad value on an otherwise complete answer.
+    ("identify", "Named: garlic\nMatches: MAYBE", "Matches is"),
+    ("coherence", "Coherence: 7\nOnTask: PROBABLY", "OnTask is"),
+    ("self_report", "Claims: SORT OF\nNamed: garlic\nMatches: YES", "Claims is"),
 ])
-def test_a_bad_judge_answer_raises_and_is_never_defaulted(jid, text):
+def test_a_bad_judge_answer_raises_and_is_never_defaulted(jid, text, why):
     """A defaulted 0 influence is indistinguishable from a real measurement of no influence —
-    and 'no influence' is what a covert operating point looks like."""
-    with pytest.raises((judge.JudgeParseError, ValueError)):
+    and 'no influence' is what a covert operating point looks like.
+
+    `match=` on every case: `JudgeParseError` subclasses `ValueError`, so an untargeted
+    `pytest.raises` here passes on any `ValueError` at all, including one from a typo in the
+    test's own payload.
+    """
+    with pytest.raises((judge.JudgeParseError, ValueError), match=why):
         judge.parse(jid, text)
 
 
@@ -338,41 +352,66 @@ def test_a_judge_key_is_required_because_every_decision_is_judged(monkeypatch):
         m3run.check_environment(strict=True)
 
 
-def test_the_cell_list_is_fixed_before_any_measurement_happens():
-    """The one architectural claim: what gets measured is decided by the grid and the resume
-    set, never by a measured value. If `plan` or `todo` could see a judged field, the sweep
-    would have a shortlist by another name.
+def test_the_cell_list_is_fixed_before_any_measurement_happens(tmp_path, monkeypatch):
+    """The one architectural claim: what gets measured is decided by the grid and the per-layer
+    boundary, never by a measured value. A cell that scored badly is still measured; that is the
+    whole difference from M2, whose cheap proxies decided what was worth measuring properly.
 
-    Checked structurally rather than by banning keywords — `sorted` appears in this module to
-    order label sets for display, which is not selection, and a test that cannot tell those
-    apart would just get weakened until it passed.
+    This was an AST search for `for` loops mentioning `plan`. Renaming the loop variable made it
+    match nothing, so `plan_src` was `""` and the assertion was vacuously true — it stayed green
+    with a literal read of a judged field inside the selection loop. Now the claim is checked
+    against the artefacts: the measured cells must be EXACTLY the product of the boundary rows
+    and the dose fractions, with nothing dropped and nothing added.
     """
-    import ast
-    import inspect
-    tree = ast.parse(inspect.getsource(sweep.run_sweep))
+    import json as _json
 
-    plan_src = ""
-    for node in ast.walk(tree):
-        if isinstance(node, ast.For):
-            targets = ast.dump(node)
-            if "'plan'" in targets or "plan" in ast.unparse(node):
-                plan_src += ast.unparse(node)
+    from m3 import config as m3config, run as m3run
+    from m3.tests.fake_gpu import fake_gpu
 
-    judged_fields = ("identification", "effectiveness", "coherence", "capability",
-                     "self_report", "judged", "degeneration")
-    leaked = [f for f in judged_fields if f in plan_src]
-    assert not leaked, (
-        f"the cell plan reads judged field(s) {leaked}; what gets measured must depend only on "
-        "the grid, the per-layer boundary, and what is already on disk")
+    monkeypatch.setenv("M3_RUNS_DIR", str(tmp_path))
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fake")
+    monkeypatch.setenv("HF_TOKEN", "fake")
+    saved = dict(m3config.CONFIG)
+    try:
+        m3config.apply_overrides(["LAYER_FRACTIONS=0.5,1.0", "LAYER_STRIDE=4",
+                                  "DOSE_FRACTIONS=0.3,0.9"], m3config.CONFIG)
+        with fake_gpu():
+            assert m3run.main(["--concept", "Garlic"]) == m3run.EXIT_OK
+        d = next(tmp_path.glob("garlic_*"))
+        load = lambda n: [_json.loads(l) for l in (d / n).open(encoding="utf-8")]  # noqa: E731
+
+        fractions = m3config.CONFIG["DOSE_FRACTIONS"]
+        expected = {(int(b["layer"]), round(float(b["dose_max"]) * float(f), 6))
+                    for b in load("boundaries.jsonl") if b["dose_max"] is not None
+                    for f in fractions}
+        measured = {(int(c["layer"]), float(c["dose"])) for c in load("cells.jsonl")}
+        assert expected, "no layer produced a boundary, so this asserts nothing"
+        assert measured == expected, (
+            f"the measured cells are not the grid: {len(expected - measured)} planned cells were "
+            f"never measured, {len(measured - expected)} were measured but not planned. What "
+            "gets measured must depend only on the grid and the per-layer boundary.")
+    finally:
+        m3config.CONFIG.clear()
+        m3config.CONFIG.update(saved)
 
 
 def test_a_layer_without_a_boundary_is_named_rather_than_dropped():
     """Work a run did not do reads later as work it did and found nothing in — which is how
-    M2's empty operating point was nearly read as a scientific null."""
-    import inspect
-    src = inspect.getsource(sweep.run_sweep)
-    assert "skipped.append" in src and "reason=" in src
-    assert "skipped=skipped" in src, "the skip list must reach the summary file"
+    M2's empty operating point was nearly read as a scientific null.
+
+    Was a substring check on `run_sweep`'s source, which stayed green while Phase 2 was made to
+    skip every layer unconditionally. The behaviour is now asserted end to end by
+    `test_layers_without_a_boundary_are_named_not_dropped` in `test_pipeline_offline.py`, which
+    reads the summary and requires every planned layer to be either measured or named. This
+    keeps the unit-level half honest: a named skip must carry a reason.
+    """
+    rows = [dict(layer=13, dose_max=None, outcome="unreachable"),
+            dict(layer=14, dose_max=None, outcome="probes_exhausted")]
+    skipped = [dict(layer=int(r["layer"]), reason=r.get("outcome", "no_boundary_row"))
+               for r in rows if r.get("dose_max") is None]
+    assert [s["layer"] for s in skipped] == [13, 14]
+    assert all(s["reason"] and s["reason"] != "no_boundary_row" for s in skipped), \
+        "a skipped layer must say WHY, or it reads as a measured null"
 
 
 def test_a_whitespace_free_collapse_is_caught():
@@ -413,38 +452,95 @@ def test_every_full_claim_can_come_out_false():
         assert c["field"] in scoring._FIELD_JUDGE, c["id"]
 
 
-def test_full_resumes_rather_than_paying_twice(tmp_path):
+# The three tests below were written as `inspect.getsource` substring and AST checks. Each was
+# verified to stay GREEN while the guarantee it names was broken: the resume check was disabled
+# outright, the paid-reply write was moved inside the `try` it exists to survive, and a field
+# read that `load_probe` never writes was added. All three checks passed throughout, because the
+# text they look for lives in `run_full` while the logic lives in `_all_items` — or because the
+# text is present either way.
+#
+# A test that asserts on source text is a check that cannot fail in the way that matters. These
+# now run the code.
+
+def _fake_records(n: int = 4) -> list[dict]:
+    """Records shaped exactly as `calibrate.load_probe` returns them, without an archive."""
+    out = [dict(id=f"task:L40@0.30:task_story_{i}", channel="task", layer=40, r=0.30,
+                trial=None, prompt_id="task_story", response=f"a story about garlic {i}",
+                words=5, concept_hits=1, degenerate=False, degeneration_reason=None,
+                steered=True)
+           for i in range(n)]
+    out.append(dict(id="task:null:task_story", channel="task", layer=None, r=None, trial=None,
+                    prompt_id="task_story", response="a plain story", words=3, concept_hits=0,
+                    degenerate=False, degeneration_reason=None, steered=False))
+    return out
+
+
+def test_full_resumes_rather_than_paying_twice(tmp_path, monkeypatch):
     """1,720 calls is real money; a network blip halfway through must not cost the first half
-    again."""
-    import inspect
-    src = inspect.getsource(scoring_mod.run_full)
-    assert "done" in src and "already on disk" in src
-    assert "out.open(\"a\"" in src, "results must be appended, not overwritten"
+    again. Run it twice and count what the second run actually pays for."""
+    from m3.tests.fake_gpu import fake_gpu
+
+    # The transport requires a key before it will issue anything, even with the HTTP call
+    # stubbed -- deliberately, so a missing key is one loud failure and not 490 recorded ones.
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fake")
+    records = _fake_records()
+    out = tmp_path / "judged_full.jsonl"
+    with fake_gpu() as first:
+        assert scoring_mod.run_full(records, concept="Garlic", out=out) == 0
+    assert first["judge_calls"] > 0, "the first pass paid for nothing, so this proves nothing"
+    rows_after_first = len(out.read_text(encoding="utf-8").splitlines())
+
+    with fake_gpu() as second:
+        assert scoring_mod.run_full(records, concept="Garlic", out=out) == 0
+    assert second["judge_calls"] == 0, "a resumed run re-paid for calls already on disk"
+    assert len(out.read_text(encoding="utf-8").splitlines()) == rows_after_first
 
 
-def test_run_full_only_reads_fields_that_load_probe_actually_produces():
+def test_run_full_only_reads_fields_that_load_probe_actually_produces(tmp_path, monkeypatch):
     """The bug that threw away 1,720 paid judge calls: run_full read `concept_mentions` while
-    load_probe writes `concept_hits`. Nothing caught it until the money was gone."""
-    import ast, inspect
-    src = inspect.getsource(scoring_mod.run_full)
-    reads = {n.slice.value for n in ast.walk(ast.parse(src))
-             if isinstance(n, ast.Subscript) and isinstance(n.slice, ast.Constant)
-             and isinstance(n.value, ast.Name) and n.value.id == "rec"
-             and isinstance(n.slice.value, str)}
-    produced = {"channel", "layer", "r", "trial", "prompt_id", "response", "words",
-                "concept_hits", "degenerate", "degeneration_reason", "steered", "id"}
-    assert reads <= produced, f"run_full reads fields load_probe never writes: {reads - produced}"
+    load_probe writes `concept_hits`. Nothing caught it until the money was gone.
+
+    Asserted by running the whole path on records carrying EXACTLY the keys `load_probe`
+    produces and nothing else, so any read of a field it does not write raises here.
+    """
+    from m3.tests.fake_gpu import fake_gpu
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fake")
+    out = tmp_path / "judged_full.jsonl"
+    with fake_gpu():
+        assert scoring_mod.run_full(_fake_records(), concept="Garlic", out=out) == 0
+    rows = [json.loads(l) for l in out.open(encoding="utf-8")]
+    assert rows, "nothing was scored"
+    assert not [r for r in rows if r.get("row_error")], \
+        f"a field read failed: {[r['row_error'] for r in rows if r.get('row_error')][:3]}"
+    assert all(r["ok"] and r["parsed"] for r in rows)
 
 
-def test_the_paid_judge_reply_is_written_before_anything_derived_from_it():
-    """A typo in a derived column must not be able to cost a whole run."""
-    import inspect
-    src = inspect.getsource(scoring_mod.run_full)
-    write_row = src.index('row = dict(id=rec["id"]')
-    enrich = src.index("row.update(")
-    assert write_row < enrich, "the minimal row must be built before enrichment"
-    assert "except Exception" in src and "row_error" in src
-    assert "fh.flush()" in src
+def test_the_paid_judge_reply_is_written_before_anything_derived_from_it(tmp_path, monkeypatch):
+    """A typo in a derived column must not be able to cost a whole run.
+
+    Break the enrichment on purpose and assert the paid reply is on disk anyway, with the
+    failure recorded against it. This is the guarantee; the ordering of two lines in the source
+    was only ever a proxy for it, and the proxy held while the guarantee did not.
+    """
+    from m3.tests.fake_gpu import fake_gpu
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fake")
+
+    def broken(judge_id, parsed):
+        raise KeyError("mistyped a derived column")
+
+    out = tmp_path / "judged_full.jsonl"
+    with fake_gpu() as calls:
+        monkeypatch.setattr(scoring_mod, "_normalise", broken)
+        assert scoring_mod.run_full(_fake_records(), concept="Garlic", out=out) == 0
+    assert calls["judge_calls"] > 0
+
+    rows = [json.loads(l) for l in out.open(encoding="utf-8")]
+    assert len(rows) == calls["judge_calls"], "paid replies were dropped by a failed enrichment"
+    assert all(r["raw"] for r in rows), "a paid reply was persisted without its text"
+    assert all("mistyped" in str(r.get("row_error")) for r in rows), \
+        "the enrichment failure was not recorded against the row it broke"
 
 
 def test_the_m2_bridge_supplies_every_key_m2_defines():

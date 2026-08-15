@@ -249,7 +249,13 @@ def _w_cell(value, tmp, name, read):
     cell, calls, judged = _cell(_cfg(name, value), tmp)
     return {"max_tokens": lambda: sorted({c["max_tokens"] for c in calls["seen"]}),
             "temperature": lambda: sorted({c["temperature"] for c in calls["seen"]}),
-            "ci_z": lambda: cell["identification"]["ci_z"],
+            # The INTERVAL, not `ci_z`. `battery.rate` echoes its `z` argument straight into
+            # `ci_z=z`, so that field differs whether or not `wilson_interval` ever saw it --
+            # this witness passed with the interval hardcoded to 1.96. Reading the echo instead
+            # of the effect is exactly the mistake this whole file exists to catch, committed
+            # inside the file itself.
+            "ci_bounds": lambda: (round(cell["identification"]["ci_low"], 6),
+                                  round(cell["identification"]["ci_high"], 6)),
             "payload_len": lambda: max(len(r["payload"]) for r in judged)}[read]()
 
 
@@ -319,7 +325,7 @@ WITNESSES = {
     "JUDGE_CONCURRENT": lambda v, t: _w_transport(v, t, "JUDGE_CONCURRENT", "judge_concurrent"),
     "JUDGE_MAX_TOKENS": lambda v, t: _w_transport(v, t, "JUDGE_MAX_TOKENS", "max_tokens"),
     "JUDGE_TEXT_CHARS": lambda v, t: _w_cell(v, t, "JUDGE_TEXT_CHARS", "payload_len"),
-    "RATE_CI_Z": lambda v, t: _w_cell(v, t, "RATE_CI_Z", "ci_z"),
+    "RATE_CI_Z": lambda v, t: _w_cell(v, t, "RATE_CI_Z", "ci_bounds"),
     "BENIGN_CONCEPTS": _w_benign,
     "READ_BUNDLE_N": _w_read_bundle,
 }

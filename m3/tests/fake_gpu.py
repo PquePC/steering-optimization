@@ -355,6 +355,17 @@ def fake_gpu(n_layers: int = 62, probe_dir: Path | None = None,
     # what makes one process host many runs.
     judges.cache_clear()
 
+    # `open_run` calls `configure_generation` and `configure_transport`, which mutate three
+    # module-level objects that `patch` never saw, because nothing here patched them:
+    # `expensive.GEN_BATCH_MAX` (a plain int), and the transport's `JUDGE_IDS` and `PARSERS`.
+    # They therefore leaked past the context manager's exit and stayed changed for the rest of
+    # the process. Nothing depends on it today only because every consumer re-applies its own
+    # config before reading -- which is luck, and the same luck that made two benign-concept
+    # lists look safe.
+    batch_snapshot = expensive.GEN_BATCH_MAX
+    judge_ids_snapshot = tuple(judges.JUDGE_IDS)
+    parsers_snapshot = dict(judges.PARSERS)
+
     try:
         yield calls
     finally:
@@ -365,3 +376,7 @@ def fake_gpu(n_layers: int = 62, probe_dir: Path | None = None,
         m2config.CONFIG.update(config_snapshot)
         for field, value in run_snapshot.items():
             setattr(m2config.RUN, field, value)
+        expensive.GEN_BATCH_MAX = batch_snapshot
+        judges.JUDGE_IDS = judge_ids_snapshot
+        judges.PARSERS.clear()
+        judges.PARSERS.update(parsers_snapshot)
