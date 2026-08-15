@@ -43,18 +43,44 @@ In the deploy form's **Environment Variables** section, set these — not by han
 non-interactive `ssh pod "command"` never sources `~/.bashrc`, so anything exported by hand is
 invisible to it.
 
-| Variable | Value |
-|---|---|
-| `HF_HOME` | `/workspace/hf` |
-| `M2_BRANCH` | `m3` |
-| `HF_TOKEN` | `hf_...` |
-| `OPENROUTER_API_KEY` | `sk-or-v1-...` |
+| Variable | Value | If you skip it |
+|---|---|---|
+| `HF_HOME` | `/workspace/hf` | the 54 GB model lands on container disk and is lost on every stop |
+| `M2_BRANCH` | `m3` | setup reports `BLOCK ... expected 'main'` and refuses to proceed |
+| `M2_VOLUME_GB` | `150` | nothing, unless RunPod's allocation API is unreadable |
+| `HF_TOKEN` | `hf_...` | the model will not download |
+| `OPENROUTER_API_KEY` | `sk-or-v1-...` | nothing can be scored |
 
-`HF_HOME` is the one that costs you if it is wrong: without it the 54 GB download lands on
-container disk and evaporates the next time the pod stops.
+**Already on a running pod?** Set them by hand, in *every* shell, before anything else. The
+leading space keeps the credentials out of `~/.bash_history`:
 
-`M2_BRANCH=m3` is what setup checks the checkout against. It defaults to `main`, so leaving it
-unset makes setup report `BLOCKED` — correct behaviour, but confusing if you were not expecting it.
+```bash
+export HF_HOME=/workspace/hf M2_BRANCH=m3 M2_VOLUME_GB=150
+```
+
+```bash
+ export HF_TOKEN=hf_... OPENROUTER_API_KEY=sk-or-v1-...
+```
+
+**The two that actually bite:**
+
+**`HF_HOME`** is the expensive one. Without it the 54 GB model downloads to *container* disk
+instead of the volume, and evaporates the next time you stop the pod — so you pay to download it
+again on every restart.
+
+**`M2_BRANCH=m3`** is the one that stops setup dead. It defaults to `main`, so on the `m3` branch
+setup reports:
+
+```
+[BLOCK ] project repo    on branch 'm3', expected 'main'
+```
+
+That is **not** a problem with the branch — `m3` is the branch you want. It is setup refusing to
+guess which line of work you meant, because which code runs is your decision and provenance
+carries no git sha. Export `M2_BRANCH=m3` and re-run; it reads `ok`. It is never switched for you.
+
+`M2_VOLUME_GB` is inert unless RunPod's allocation API cannot be read, in which case it prevents
+a stall. It never overrides a working reading.
 
 Deploy → wait for **Running** → **Connect → Jupyter Lab** → **File → New → Terminal**.
 

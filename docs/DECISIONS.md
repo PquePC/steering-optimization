@@ -890,3 +890,45 @@ to sort first.
 it as a property of production code. It is a property of *checks*, and the test suite is nothing
 but checks. Auditing the code and trusting the tests that cover it is auditing half the system.
 **Result:** 306 tests. Four mutations that used to pass now fail.
+
+---
+
+## 2026-08-15 — M3 walked through the dual-use export gate
+
+**By:** Claude, prompted by Tomás asking what the run actually exports
+**Kind:** correction, security
+
+Answering "does the bundle contain the judge responses too?" surfaced that **two M3 artefacts
+carrying model generations were not behind the export gate at all**: `judge_calls.jsonl` and
+`read_this.md`.
+
+The gate resolves by **filename**. `m2.runio.TRANSCRIPT_NAMES` lists `judge_e5.jsonl`,
+`judge_s1.jsonl` and `judge_d2.jsonl` explicitly, because M2's authors knew a judge payload
+quotes the model's generation in full — that is what the judge is being asked about — and every
+judge row keeps its payload so a drifting judge can be audited against what it actually saw. M3
+names its file `judge_calls.jsonl`. On no list, matching none of `("transcript", "generation",
+"completions")`, shipped. `read_this.md` is worse: it exists specifically to put raw generations
+in front of a human, in fenced blocks, and it matched nothing either.
+
+So for a harmful concept the gate would have withheld `responses_transcripts.jsonl` and exported
+the same generations twice over — inside the judge payloads and inside the read-this bundle.
+CLAUDE.md hard rule 3, defeated by a filename.
+
+This is the same defect shape as the two benign-concept lists closed a day earlier, in the same
+gate, found the same way: a safety property that depended on a name matching a list nobody
+updated when a new pipeline arrived. Twice now the gate has been correct only because of what
+happened to be true rather than what was enforced.
+
+The fix adds `judge` and `read_this` to the substring catch-all rather than adding two names to
+the by-name list, because the by-name list is what failed. `test_every_artefact_carrying_model_
+text_is_behind_the_export_gate` runs a real sweep, takes the generations out of the transcript
+file, and greps **every artefact the run actually wrote** for them — so a file added later is
+covered by the same check without anyone remembering to list it.
+
+No effect on a benign run: transcripts are allowed for `Garlic`, so the bundle is unchanged and
+complete. The whole change is in what happens for a concept that must never reach one.
+
+**Why:** the failure this gate prevents is one-way, and it is latent right up until the run that
+matters. "Only benign concepts have run" is exactly the condition under which a one-way gate has
+to already be correct.
+**Result:** 307 tests. The gate now fails closed on files nobody has written yet.
