@@ -728,3 +728,19 @@ mentions of the concept**. Five of the seven genuine misses are the same open-en
 nothing. This is the calibration the mechanical measures were kept in order to earn, and they did
 not earn it.
 **Result:** §3 of `docs/M3-DESIGN.md`.
+
+## 2026-08-14 — The M2/M3 seam is logged for audit, not audited now
+**By:** Tomás (raised it), Claude (checked the immediate risk)
+**Kind:** decision
+
+M3 reuses M2's hook, generation, judge transport and run I/O. Five wiring defects have been found
+in that seam so far and three were found by accident. Two remain open, both latent: `GEN_BATCH_MAX`
+is declared in M3 and read from M2's module constant, and the dual-use export gate consults M2's
+benign-concept list while M3's run gate consults M3's.
+
+**Why not now:** both were checked against the pending first M3 run and are inert. Garlic passes
+both gates, M3's benign list is a strict subset of M2's so divergence can only go the safe way, and
+the battery is 15 against a chunk cap of 25 in both copies. Auditing the seam properly means
+enumerating every config read across seven M2 modules, which is a task, not a patch, and doing it
+half-way before a run is worse than doing it after with the run's evidence in hand.
+**Result:** task [30](handoff/30-m2-m3-seam-audit.md), open item 31 in `TODO.md`.

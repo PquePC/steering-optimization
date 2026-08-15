@@ -715,3 +715,32 @@ is unusable as a selection surface.
 generations already exist there. Whether the scan tier can afford a generative sanity term at all
 is the open question, and it is the one that decides whether the shortlist rule can be repaired or
 has to be replaced.
+
+
+### 31 — The M2/M3 seam has been sampled, not audited
+
+M3 reuses M2's injection hook, batched generation, judge transport and run I/O. That decision is
+right and stands. What has not happened is anyone checking the wiring between them.
+
+Five defects found so far, **three of them by accident while doing something else**: judge ids
+rejected by the transport, cache keys of the wrong arity, and three separate settings that M3
+declares, displays, writes into its config hash — and does not apply. The general form is *a value
+M3 owns that some M2 code path reads from somewhere else*, and it produces no error, because the
+defaults currently agree.
+
+Two are open and both are latent rather than active:
+
+- `GEN_BATCH_MAX` is declared in `m3.config` and used only for the battery-size assertion; the
+  chunking reads `expensive.GEN_BATCH_MAX`. Both are 25 and the battery is 15, so no effect.
+  Raising M3's to 40 would pass the check and still chunk at 25, silently doubling sweep time.
+- The dual-use transcript export gate resolves through **M2's** `BENIGN_CONCEPTS` while
+  `m3.sweep.open_run` refuses on **M3's**. M3's list is currently a strict subset, so divergence
+  can only go the safe way. That is luck, and it is the one gate that must not be approximate once
+  the harmful arm exists.
+
+Also: `m2.setup.check_run_data` reports on `/workspace/m2_runs` while M3 writes to
+`/workspace/m3_runs`, so it says "no previous runs" on a pod that has one. And the environment
+variable that selects M3's branch is called `M2_BRANCH`.
+
+**Not scheduled before the first M3 run** — every item above is verified inert under the current
+settings. Task [30](handoff/30-m2-m3-seam-audit.md) carries the work.
