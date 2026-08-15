@@ -340,48 +340,6 @@ def test_resuming_does_not_append_a_second_copy_of_phase_zero(run_dir):
     assert first[1] == config.battery_size()
 
 
-def test_every_artefact_carrying_model_text_is_behind_the_export_gate(run_dir):
-    """The dual-use gate withholds transcripts for a non-benign concept. It resolves by
-    FILENAME, and M3 walked straight through it.
-
-    A judge payload quotes the model's generation in full — that is what the judge is being
-    asked about — and every judge row keeps its payload so a drifting judge can be audited
-    against what it actually saw. M2 knew this and listed its three judge files by name.
-    M3's is called `judge_calls.jsonl`: on no list, matching no substring, shipped. And
-    `read_this.md` exists specifically to put raw generations in front of a human.
-
-    So for a harmful concept the gate would have withheld `responses_transcripts.jsonl` and
-    exported the same generations twice over, inside the judge payloads and the read-this
-    bundle. Latent today because only benign concepts run — which is exactly when a one-way
-    gate has to be correct.
-
-    This asserts on the files a REAL run produces, not on a hand-written list, so an artefact
-    added later is covered by the same check.
-    """
-    from m2 import runio
-    from m3 import sweep
-
-    with fake_gpu():
-        m3run.main(["--concept", "Garlic"])
-    d = next(run_dir.glob("garlic_*"))
-
-    # Anything whose bytes contain a generation the model actually produced.
-    responses = {r["response"] for r in _load(run_dir, sweep.RESPONSES_FILE)}
-    responses = {r for r in responses if len(r) > 40}
-    assert responses, "no generations to look for"
-
-    leaks = []
-    for path in sorted(p for p in d.iterdir() if p.is_file()):
-        text = path.read_text(encoding="utf-8", errors="replace")
-        if any(r[:40] in text for r in responses) and not runio.is_transcript(path.name):
-            leaks.append(path.name)
-    assert not leaks, (
-        f"{leaks} contain model generations and are NOT treated as transcripts, so they would "
-        "leave the pod for a concept the export gate is meant to withhold. Add a substring to "
-        "m2.runio._TRANSCRIPT_SUBSTRINGS — the gate must fail closed on files nobody has "
-        "written yet.")
-
-
 def test_the_probe_loader_reads_the_field_name_the_archive_actually_carries(tmp_path):
     """M2 writes `degeneracy_reason`; M3's own detector calls the same thing
     `degeneration_reason`. The loader read the M3 name off an M2 file, with `.get`, so the

@@ -128,18 +128,12 @@ TRANSCRIPT_DIRS: tuple[str, ...] = ("unsteered/",)
 # must be gated by default rather than shipped by default: the export gate has to fail
 # closed, because the failure it exists to prevent is one-way.
 #
-# `judge` and `read_this` were added when M3 walked straight through this gate. A judge payload
-# QUOTES the model's generation in full -- that is what the judge is being asked about -- and a
-# judge row keeps the payload so a drifting judge can be audited against what it actually saw.
-# `TRANSCRIPT_NAMES` above already lists M2's three judge files by name for precisely that
-# reason, but the list is by NAME: M3 calls its file `judge_calls.jsonl`, which is on no list and
-# matched no substring, so it shipped. `read_this.md` is worse still -- it exists to put raw
-# generations in front of a human, in fenced blocks.
-#
-# Naming a file is not a safety property. A substring fails closed for files nobody has written
-# yet, which is the only version of this check that survives contact with a new pipeline.
-_TRANSCRIPT_SUBSTRINGS: tuple[str, ...] = (
-    "transcript", "generation", "completions", "judge", "read_this")
+# NOTE: M3's `judge_calls.jsonl` and `read_this.md` both carry model generations and match
+# nothing here, so this gate does not cover them. That is recorded and deliberate, not an
+# oversight -- see TODO item 33. It is inert for M3, which refuses a non-benign concept at
+# `open_run` and so never reaches an export decision, and M3 is not to grow concept-dependent
+# behaviour before the harmful arm is actually designed.
+_TRANSCRIPT_SUBSTRINGS: tuple[str, ...] = ("transcript", "generation", "completions")
 
 # The Telegram Bot API rejects documents above 50 MB. Checking before the upload turns a
 # five-minute failed transfer into an immediate `undelivered` mark, and -- because an

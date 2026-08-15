@@ -793,3 +793,37 @@ last: this repository already dropped task 10 for reading what it should have ex
 note that "the shakedown executed VERIFY and found by running what reading would not have".
 
 </details>
+
+
+### 33 — The export gate does not cover two files that carry generations
+
+**Deferred deliberately. Do not implement before the harmful arm is designed.**
+
+`m2.runio.is_transcript` decides, by filename, which artefacts the dual-use export gate
+withholds. Two M3 files carry model generations and match none of its rules:
+
+- **`judge_calls.jsonl`** — every row keeps the `payload` sent to the judge, and a judge payload
+  quotes the model's generation in full, because that is what the judge is being asked about.
+  `TRANSCRIPT_NAMES` lists M2's `judge_e5.jsonl` / `judge_s1.jsonl` / `judge_d2.jsonl` by name
+  for exactly this reason; M3's file is called something else.
+- **`read_this.md`** — exists specifically to put raw generations in front of a human, fenced.
+
+**Inert today, and that is why it is deferred.** M3 refuses a non-benign concept at
+`m3.sweep.open_run` and `m3.run.main`, so a run that would trip this gate never starts and never
+produces a bundle to filter. The measurement pipeline itself has **no** concept-dependent
+behaviour whatsoever: `is_benign` is consulted at those two entry points and nowhere else — not
+in `battery`, `judge`, `scoring`, or any measuring function in `sweep`. Layers, doses, prompts,
+judges, parsing and statistics are identical for every concept.
+
+A fix was written and reverted, on the explicit instruction that M3 should not grow
+harmful-vs-benign machinery before that arm is actually designed. That is the right call: a
+second gate half-built against a threat model nobody has written down yet is how the
+two-benign-lists defect happened in the first place.
+
+**When the harmful arm is designed**, the finding to carry forward is that this gate resolves by
+NAME, and a by-name list silently stops covering a pipeline that names its files differently. The
+reverted fix added `judge` and `read_this` to `_TRANSCRIPT_SUBSTRINGS`, because a substring
+catch-all fails closed for files nobody has written yet where a name list cannot. The test that
+pinned it took the generations out of `responses_transcripts.jsonl` and grepped every artefact a
+real run wrote for them, so it covers artefacts added later without anyone remembering to list
+them. Both are recoverable from commit `9106118`.
