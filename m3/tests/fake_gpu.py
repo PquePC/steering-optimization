@@ -103,6 +103,18 @@ def install_torch_stub() -> bool:
 # Norms, shaped like the real ones
 # =====================================================================================
 
+def true_boundary(layer: int, n_layers: int) -> float:
+    """The dose at which this fake model "breaks", as a function of depth.
+
+    A harness whose model is coherent at every dose never makes the boundary search descend, so
+    the search stops at its first probe and the test proves only that one probe runs. Giving the
+    fake a real, known, depth-varying boundary is what turns "does it execute" into "does it find
+    the right answer" -- and the value being different per layer is what would catch a search
+    that returns one number for everything.
+    """
+    return 0.15 + 0.85 * (layer / max(n_layers - 1, 1)) ** 2
+
+
 def _norm_pair(layer: int, n_layers: int) -> dict:
     """`||v||` and `||h||` at one layer, on M2's measured curve.
 
@@ -256,11 +268,22 @@ def fake_gpu(n_layers: int = 62, probe_dir: Path | None = None) -> Iterator[dict
         return ([f"<bos>{r['text']}" for r in rows], [3] * len(rows),
                 [r["id"] for r in rows])
 
-    def generate(prompts_text: Sequence[str], *a: Any, **kw: Any) -> list[str]:
+    def generate(prompts_text: Sequence[str], layer: Any = None, alpha: Any = None,
+                 *a: Any, **kw: Any) -> list[str]:
         calls["batches"] += 1
         calls["generations"] += len(prompts_text)
+        # Past this layer's boundary the fake model collapses, exactly as the real one does.
+        # That is what makes the descending search actually descend.
+        broken = False
+        if layer is not None and alpha is not None:
+            pair = _norm_pair(int(layer), n_layers)
+            dose = float(alpha) * pair["vec_norm"] / pair["resid_norm"]
+            broken = dose > true_boundary(int(layer), n_layers)
         out = []
         for text in prompts_text:
+            if broken:
+                out.append("garlic " * 40)
+                continue
             if "injected thought" in text and "thought is about" in text:
                 out.append(responses.for_channel("identify"))
             elif "injected thought" in text:
@@ -289,8 +312,22 @@ def fake_gpu(n_layers: int = 62, probe_dir: Path | None = None) -> Iterator[dict
 
     patch(judges, "_post_completion", post)
 
+    # `sweep.open_run` clears and replaces `m2.config.CONFIG` and rebinds `RUN` to M3's concept.
+    # That is correct on a pod -- one process, one pipeline -- but in a shared test process it
+    # leaves M2's config permanently overwritten, and M2's own tests then fail against a config
+    # they never set. Snapshot it here rather than weakening `open_run`, because the harness is
+    # what makes two pipelines share a process in the first place.
+    config_snapshot = dict(m2config.CONFIG)
+    run_snapshot = {f: getattr(m2config.RUN, f)
+                    for f in ("mw", "hf", "tok", "n_layers", "concept", "config", "run_dir",
+                              "vecs", "norms", "base", "mmlu")}
+
     try:
         yield calls
     finally:
         for module, name, original in reversed(saved):
             setattr(module, name, original)
+        m2config.CONFIG.clear()
+        m2config.CONFIG.update(config_snapshot)
+        for field, value in run_snapshot.items():
+            setattr(m2config.RUN, field, value)

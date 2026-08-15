@@ -168,6 +168,13 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     from m2 import model, runio
 
+    # `model.load_model` computes its own run dir through M2's `run_dir_for`, which reads
+    # M2_RUNS_DIR (default /workspace/m2_runs), and mkdirs it -- before `open_run` re-points
+    # RUN.run_dir at M3's root. No measurement lands there, but every run leaves an orphan
+    # directory under the OTHER pipeline's output tree. Point M2's variable at M3's root so the
+    # stray directory is at least in the right place.
+    os.environ.setdefault("M2_RUNS_DIR", str(config.runs_root()))
+
     print("loading model")
     t0 = time.time()
     ctx = model.load_model(config.m2_config(concept, cfg))

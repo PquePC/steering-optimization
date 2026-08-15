@@ -139,3 +139,35 @@ def test_the_calibration_paths_run_end_to_end(run_dir):
         assert scoring.run_full(records, concept="Garlic",
                                 out=run_dir / "judged_full.jsonl") == 0
     assert (run_dir / "judged_full.jsonl").exists()
+
+
+def test_the_boundary_search_finds_a_known_per_layer_boundary(run_dir):
+    """The first real run returned dose_max=0.4 for all 25 surviving layers -- one bit of
+    information dressed as a per-layer measurement, because bisecting a bracket has a floor set
+    by the probe count. The descending ladder must recover a boundary that VARIES with depth."""
+    from m3.tests.fake_gpu import true_boundary
+    config.apply_overrides(["LAYER_FRACTIONS=0.21,1.0", "LAYER_STRIDE=6",
+                            "DOSE_FRACTIONS=0.5"], config.CONFIG)
+    with fake_gpu():
+        m3run.main(["--concept", "Garlic"])
+    rows = _load(run_dir, "boundaries.jsonl")
+    found = {r["layer"]: r["dose_max"] for r in rows if r["dose_max"] is not None}
+    assert len(found) >= 5
+    assert len(set(found.values())) > 1, "the search returned one value for every layer"
+    for layer, dose in found.items():
+        true = true_boundary(layer, 62)
+        assert dose <= true * 1.01, f"L{layer}: reported {dose} above the true boundary {true}"
+        assert dose >= true * 0.5, f"L{layer}: reported {dose}, far below the true {true}"
+
+
+def test_an_unreachable_layer_is_not_reported_as_incoherent(run_dir):
+    """24 layers came back `incoherent_at_lowest_probe` on the first real run and not one was a
+    statement about the model -- the dose was simply forbidden by ALPHA_CEIL."""
+    config.apply_overrides(["LAYER_FRACTIONS=0.21,1.0", "LAYER_STRIDE=6",
+                            "BOUNDARY_BRACKET=1.5,2.5", "ALPHA_CEIL=1.0"], config.CONFIG)
+    with fake_gpu() as calls:
+        m3run.main(["--concept", "Garlic"])
+    rows = _load(run_dir, "boundaries.jsonl")
+    assert rows and all(r["outcome"] == "unreachable" for r in rows), \
+        [r["outcome"] for r in rows]
+    assert all(r["probes"] == [] for r in rows), "an unreachable layer must cost no generations"

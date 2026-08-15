@@ -86,13 +86,20 @@ SETTINGS: dict[str, Any] = dict(
     # it at L59, and neither cell tells you anything.
     DOSE_FRACTIONS=(0.30, 0.50, 0.70, 0.90),
 
-    # Phase 1 bisection: how many probes per layer to locate the degeneration boundary.
-    # 3 probes resolve the boundary to about an eighth of the bracket, which is finer than the
-    # dose ladder above can use.
-    BOUNDARY_PROBES=3,
+    # Phase 1 descends from the highest reachable dose, multiplying by BOUNDARY_STEP each time,
+    # and stops at the first dose the judge calls coherent.
+    #
+    # NOT a bisection. Bisecting a bracket has a floor set by the probe count, not by the
+    # bracket: three probes on (0.10, 2.50) can only ever test 1.30, 0.70 and 0.40, so every
+    # layer whose real boundary sits below 0.40 reports nothing, and every layer whose boundary
+    # sits above it reports exactly 0.40. On the first real run all 25 surviving layers returned
+    # the identical 0.40 -- one bit of information, dressed as a per-layer measurement.
+    BOUNDARY_PROBES=5,
+    BOUNDARY_STEP=0.70,
 
-    # The bracket Phase 1 searches for that boundary, in dose.
-    BOUNDARY_BRACKET=(0.10, 2.50),
+    # (floor, ceiling) of the doses worth searching. The ceiling is where the descent starts,
+    # subject to what ALPHA_CEIL actually allows; the floor is where it gives up.
+    BOUNDARY_BRACKET=(0.05, 2.50),
 
     # Responses per probe, and their length. Short and few: this phase only has to find where
     # the model starts producing garbage, which is visible immediately.

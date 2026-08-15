@@ -310,6 +310,7 @@ def find_boundary(layer: int, concept: str, cfg: dict | None = None) -> dict:
     from m2 import config as m2config, runio
 
     lo, hi = (float(x) for x in cfg["BOUNDARY_BRACKET"])
+    ratio = float(cfg["BOUNDARY_STEP"])
     probes: list[dict] = []
     task = list(battery.TASK_PROMPTS)[:int(cfg["BOUNDARY_N"])]
     from m2 import expensive
@@ -317,18 +318,41 @@ def find_boundary(layer: int, concept: str, cfg: dict | None = None) -> dict:
     rows_spec = [dict(channel="effect", unit=pid, prompt=t, start=int(s), source=r["text"])
                  for r, t, s, pid in zip(task, rendered, starts, ids)]
 
+    # Reachability is ARITHMETIC, not something to discover by probing:
+    #     alpha = dose * ||h|| / ||v||,  so  max_dose = ALPHA_CEIL * ||v|| / ||h||
+    #
+    # The first version bisected blind and burned probes on doses the ceiling forbids, then
+    # labelled the layer `incoherent_at_lowest_probe` -- reporting a layer it had never measured
+    # as one it had measured and found broken. Twenty-four layers came back that way on the first
+    # real run and not one of them was a statement about the model.
+    norms = (m2config.RUN.norms or {}).get(int(layer)) or {}
+    vec, resid = norms.get("vec_norm"), norms.get("resid_norm")
+    if not vec or not resid:
+        raise RuntimeError(
+            f"L{layer} has no norms; measure_residual_norms must run before the boundary search")
+    max_reachable = float(cfg["ALPHA_CEIL"]) * float(vec) / float(resid)
+
+    if max_reachable < lo:
+        out = dict(layer=int(layer), dose_max=None, outcome="unreachable",
+                   max_reachable_dose=round(max_reachable, 6),
+                   bracket=[lo, hi], probes=[],
+                   note=("no dose at or above the bracket floor is reachable under ALPHA_CEIL; "
+                         "this layer was never measured and says nothing about the model"))
+        runio.write_row(BOUNDARY_FILE, out)
+        return out
+
+    # Descend from the highest dose that is both wanted and reachable, and stop at the first
+    # coherent one. A descending ladder reaches any dose; the bisection's floor was set by its
+    # probe count, so with three probes it could never test below 0.40 however low the bracket
+    # said it went -- which is why every layer that survived reported the same 0.40.
     best_sane = None
-    for step in range(int(cfg["BOUNDARY_PROBES"])):
-        mid = (lo + hi) / 2.0
-        try:
-            alpha = float(m2config.alpha_for(int(layer), mid))
-        except m2config.Unreachable:
-            # Not reachable under ALPHA_CEIL. That is a fact about the dose map, not an
-            # incoherent model: search downward without recording a coherence verdict.
-            hi = mid
-            probes.append(dict(dose=round(mid, 6), alpha=None, unreachable=True,
-                               coherence=None, degeneration=None))
-            continue
+    dose = min(hi, max_reachable)
+    for _step in range(int(cfg["BOUNDARY_PROBES"])):
+        if dose < lo or best_sane is not None:
+            break
+        alpha = float(m2config.alpha_for(int(layer), dose))
+        mid = dose
+        dose = dose * ratio
 
         responses = _generate(rows_spec, layer=layer, alpha=alpha,
                               max_tokens=int(cfg["BOUNDARY_MAX_TOKENS"]), cfg=cfg)
@@ -354,17 +378,21 @@ def find_boundary(layer: int, concept: str, cfg: dict | None = None) -> dict:
                            coherence=mean, coherence_n=len(scores), degeneration=degen,
                            sane=sane))
         if sane:
-            best_sane, lo = mid, mid
-        else:
-            hi = mid
+            best_sane = mid
 
-    out = dict(layer=int(layer), dose_max=(round(best_sane, 6) if best_sane else None),
-               bracket=[float(x) for x in cfg["BOUNDARY_BRACKET"]],
-               probes=probes,
-               # Named outcomes rather than a fabricated number: a layer that never went
-               # incoherent and one that was incoherent from the start are different facts, and
-               # both would otherwise be recorded as a dose.
-               outcome=("ok" if best_sane else "incoherent_at_lowest_probe"))
+    # Three outcomes, and they are three different facts about three different things:
+    #   ok                    a dose was measured and the model held together at it
+    #   unreachable           the dose map forbids it; nothing about the model was learned
+    #   incoherent_at_floor   measured all the way down to the bracket floor and never coherent
+    out = dict(layer=int(layer),
+               dose_max=(round(best_sane, 6) if best_sane is not None else None),
+               outcome=("ok" if best_sane is not None else "incoherent_at_floor"),
+               max_reachable_dose=round(max_reachable, 6),
+               bracket=[lo, hi], step_ratio=ratio, probes=probes,
+               # The highest dose actually tested. Without it, a `None` cannot be told from
+               # "we never probed low enough", which is what made the first run unreadable.
+               highest_probe=(probes[0]["dose"] if probes else None),
+               lowest_probe=(probes[-1]["dose"] if probes else None))
     runio.write_row(BOUNDARY_FILE, out)
     return out
 
@@ -557,6 +585,18 @@ def run_sweep(concept: str, cfg: dict | None = None) -> dict:
     have = _done(CELLS_FILE, ("layer", "dose"))
     todo = [(l, d) for l, d in plan
             if (runio._key_value(l), runio._key_value(d)) not in have]
+    # A per-layer search that returns the same number for every layer has measured one thing,
+    # not forty-nine, and the run must say so rather than presenting a global ladder as a
+    # per-layer one. The first real run did exactly that and nothing noticed.
+    found = [r["dose_max"] for r in boundaries.values() if r.get("dose_max") is not None]
+    if len(found) >= 4 and len(set(found)) == 1:
+        _log(f"WARNING  every one of {len(found)} layers returned dose_max={found[0]}. "
+             "The boundary search has resolved nothing per-layer; this is a GLOBAL ladder. "
+             "Read the results accordingly and widen BOUNDARY_PROBES / BOUNDARY_STEP.")
+    elif found and len(set(found)) <= max(2, len(found) // 8):
+        _log(f"NOTE     {len(found)} layers returned only {len(set(found))} distinct dose_max "
+             "values; the boundary search is coarse relative to the surface.")
+
     _log(f"PHASE 2  sweep       {len(todo)} cells to measure "
          f"({len(plan) - len(todo)} already on disk, {len(skipped)} layers without a boundary)")
 
@@ -614,5 +654,6 @@ def open_run(concept: str, cfg: dict | None = None) -> Path:
     m2config.CONFIG.update(m2cfg)
     m2config.RUN.reset_concept(concept, run_dir, m2cfg)
     judge.configure_transport(cfg)
+    judge.configure_generation(cfg)
     runio.log(f"m3 sweep | concept {concept} | config {config.config_hash(cfg)} | {run_dir}")
     return run_dir

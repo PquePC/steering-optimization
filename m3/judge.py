@@ -274,6 +274,21 @@ def render(judge_id: str, *, text_chars: int | None = None, **fields: Any) -> st
         raise ValueError(f"judge {judge_id!r} payload is missing field {exc}") from exc
 
 
+def configure_generation(cfg: dict) -> dict:
+    """Push M3's batch cap into `expensive`, where the chunking actually reads it.
+
+    `m3.config.GEN_BATCH_MAX` was used only to raise the battery-size guard; the real chunking
+    reads `expensive.GEN_BATCH_MAX`, a module constant. Both default to 25, so nothing looked
+    wrong -- but `--set GEN_BATCH_MAX=40` would clear M3's own guard, admit a wider battery, and
+    then split it at M2's 25 anyway, silently doubling the sweep's GPU time. That is precisely
+    the outcome the guard's error message says a user must opt into deliberately.
+    """
+    from m2 import expensive
+
+    expensive.GEN_BATCH_MAX = int(cfg["GEN_BATCH_MAX"])
+    return dict(gen_batch_max=expensive.GEN_BATCH_MAX)
+
+
 def configure_transport(cfg: dict) -> dict:
     """Push EVERY M3 judge setting into the reused M2 transport, once, explicitly.
 
