@@ -744,3 +744,18 @@ the battery is 15 against a chunk cap of 25 in both copies. Auditing the seam pr
 enumerating every config read across seven M2 modules, which is a task, not a patch, and doing it
 half-way before a run is worse than doing it after with the run's evidence in hand.
 **Result:** task [30](handoff/30-m2-m3-seam-audit.md), open item 31 in `TODO.md`.
+
+## 2026-08-14 — No further runs until every M3 path has been executed offline
+**By:** Tomás
+**Kind:** decision
+
+Nine defects found in M3, and none of them by a test. Two surfaced as a run failing — one of those
+after 1,720 judge calls had been paid for and discarded — three by accident while doing something
+unrelated, two by hand-labelling transcripts, two by probing the config seam on purpose.
+
+**Why:** the 252-test suite passes throughout, because it tests functions that get called. Every
+defect lived in a path nothing had ever executed. The fix is not more careful reading; this
+repository already tried that and dropped task 10 with the note that the shakedown "found by
+running what reading would not have". The fix is a harness that executes every path.
+**Result:** task [31](handoff/31-execute-every-path-before-any-run.md), BLOCKS ALL RUNS. Task 30
+becomes its static half. Open item 32 in `TODO.md`.

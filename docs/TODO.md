@@ -744,3 +744,22 @@ variable that selects M3's branch is called `M2_BRANCH`.
 
 **Not scheduled before the first M3 run** — every item above is verified inert under the current
 settings. Task [30](handoff/30-m2-m3-seam-audit.md) carries the work.
+
+
+### 32 — Nine M3 defects, and not one was found by a test
+
+Running total: judge ids rejected by the transport, cache keys of the wrong arity, three settings
+declared and never applied, `dtype` missing from the config bridge, a field-name mismatch that
+discarded 1,720 paid judge calls, a whitespace-free collapse invisible to every mechanical measure,
+and a coherence prompt that penalised token-limit truncation.
+
+**How each was found: two by a run failing (one after spending money), three by accident while
+doing something else, two by hand-labelling transcripts, two by deliberately probing the seam.
+Zero by a test.** The suite passes throughout — 252 tests — because it exercises functions that
+were called, and every one of these lived in a path nothing had executed.
+
+Task [31](handoff/31-execute-every-path-before-any-run.md) blocks all further runs. Its substance
+is a fake-GPU harness that runs `python -m m3.run` end to end on a laptop; that single test would
+have caught four of the nine in seconds. The read-through is part 3 of that task and deliberately
+last: this repository already dropped task 10 for reading what it should have executed, with the
+note that "the shakedown executed VERIFY and found by running what reading would not have".
