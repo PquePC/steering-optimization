@@ -783,3 +783,56 @@ reachability arithmetically before probing, descends from the highest reachable 
 passed throughout because it tested functions that got called. Two static passes found two defects
 between them; executing the code found five. That ratio is the argument for the harness.
 **Result:** task [31](handoff/31-execute-every-path-before-any-run.md), parts 1 and 2 done.
+
+---
+
+## 2026-08-14 — Part 3: read the code with the list in hand, and stop being blocked
+
+**By:** Claude (the pass), Tomás (the instruction to do it before any further run)
+**Kind:** task complete
+
+Seven more defects, taking the total to twenty-one. Every one is fixed and pinned by a test, 304
+of which pass in six different file orderings. Task
+[31](handoff/31-execute-every-path-before-any-run.md) is done and runs are unblocked.
+
+**The two acceptance criteria that were open are closed.** There is now one benign-concept
+predicate: `m2.config.is_benign(concept, cfg)` intersects M2's list with the running config's, and
+`m2_config` forwards M3's list across, so the run gate and the export gate cannot resolve through
+two different lists. It intersects rather than replaces, which means a caller's config can only
+ever *narrow* what may be exported — `--set BENIGN_CONCEPTS=weapon` opens neither gate. And
+`m3/tests/test_settings_reach.py` gives every M3 setting a witness that changes its value and
+observes the result at the code that consumes it, so a setting added without being wired fails by
+name.
+
+**What the read-through was good at, and what it was not.** It was pointed at two shapes:
+"declared but not applied" and "name mismatch across a boundary". Both came back nearly clean —
+every setting was applied, and the one surviving name mismatch (`degeneracy_reason` written,
+`degeneration_reason` read, `None` for every response in every probe archive) was found not by
+reading but by a mechanical two-sided inventory of every key written against every key read. That
+shape should be automated, not read for.
+
+Reading's real yield was a third shape nobody had listed: **a conclusion the run had not earned.**
+A layer whose ladder stopped at 0.60 was labelled `incoherent_at_floor` against a floor of 0.05 —
+the shipped `BOUNDARY_PROBES=5` needs to be 12 to descend that bracket. The entire null arm was
+being truncated out of `read_this.md` by `READ_BUNDLE_N`, and at full scale it always would have
+been: 234 disagreements against a cap of 40. A recorded `max_reachable_dose` was rounded rather
+than floored, so half of them named a dose that `alpha_for` refuses. This is defect class C — "a
+check that cannot fail" — in its reporting form: not a check that always passes, but a *label*
+printed whether or not the measurement behind it happened. The boundary mislabel is the same
+defect the search was rebuilt to remove, reintroduced at the other end of the ladder within one
+commit of fixing it.
+
+**Writing the tests found more than reading did.** A test written to pin one fix found that Phase
+1 hands `max_reachable` straight back to `alpha_for`, and the float round trip
+`(C·v/h)·(h/v)` exceeds `ALPHA_CEIL` by an ulp on about one layer in sixteen — which Phase 1 did
+not catch, so one layer would have ended the whole sweep. It arrived with the boundary rebuild and
+had never executed; it would have killed the next pod run. Two further assertions turned out to be
+passing on judge verdicts cached by an *earlier test* in the same process, which the harness now
+prevents by clearing the cache on entry and exit.
+
+**Why:** the reason part 3 went last was that this repo had already dropped task 10 for reading
+what it should have executed. That ordering was right — but the yield says reading and executing
+find different classes of defect and neither substitutes for the other. Execution finds paths that
+do not work. Reading finds paths that work and lie about what they measured.
+**Result:** twenty-one defects, 304 tests, full-depth offline run at the shipped defaults —
+49 layers, 196/196 cells, exit 0. Ready for a pod.

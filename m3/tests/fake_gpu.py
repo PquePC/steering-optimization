@@ -213,7 +213,7 @@ def fake_gpu(n_layers: int = 62, probe_dir: Path | None = None,
     from m2 import config as m2config, expensive, judges, model, prompts, vectors
 
     responses = _Responses(probe_dir or PROBE_DIR)
-    calls = dict(generations=0, judge_calls=0, batches=0)
+    calls: dict[str, Any] = dict(generations=0, judge_calls=0, batches=0, seen=[])
     saved: list[tuple[Any, str, Any]] = []
 
     def patch(module: Any, name: str, value: Any) -> None:
@@ -276,9 +276,16 @@ def fake_gpu(n_layers: int = 62, probe_dir: Path | None = None,
                 [r["id"] for r in rows])
 
     def generate(prompts_text: Sequence[str], layer: Any = None, alpha: Any = None,
+                 max_tokens: Any = None, temperature: Any = None,
                  *a: Any, **kw: Any) -> list[str]:
         calls["batches"] += 1
         calls["generations"] += len(prompts_text)
+        # Record what generation was actually ASKED for, not just that it was called. Settings
+        # like MAX_NEW_TOKENS and TEMPERATURE are declared, printed, hashed and stored, and the
+        # only proof they take effect is the value arriving here. Four settings have already
+        # been found declared-but-never-applied; without this the harness cannot tell.
+        calls["seen"].append(dict(layer=layer, alpha=alpha, max_tokens=max_tokens,
+                                  temperature=temperature, n=len(prompts_text)))
         # Past this layer's boundary the fake model collapses, exactly as the real one does.
         # That is what makes the descending search actually descend.
         broken = False
@@ -308,8 +315,12 @@ def fake_gpu(n_layers: int = 62, probe_dir: Path | None = None,
 
     patch(expensive, "task_batch", task_batch)
     patch(expensive, "generate_steered", generate)
+    # The unsteered signature is (texts, max_tokens, temperature, ...) -- no layer or alpha --
+    # so the arguments are mapped rather than dropped, or the null arm records no token budget
+    # and no temperature and looks like a path where neither setting is applied.
     patch(expensive, "generate_unsteered",
-          lambda p, *a, **k: generate(p))
+          lambda p, max_tokens=None, temperature=None, *a, **k: generate(
+              p, None, None, max_tokens, temperature))
 
     # ---- the judge HTTP call ---------------------------------------------------------
     def post(payload: str, model_name: str) -> tuple[int, str, None]:
@@ -332,9 +343,22 @@ def fake_gpu(n_layers: int = 62, probe_dir: Path | None = None,
                     for f in ("mw", "hf", "tok", "n_layers", "concept", "config", "run_dir",
                               "vecs", "norms", "base", "mmlu")}
 
+    # The judge cache is a process global keyed on (concept, phase, layer, dose, unit, judge_id)
+    # -- deliberately NOT on the payload or the config, because on a pod one process runs one
+    # configuration and re-deriving a key from the payload is how a resume stops resuming.
+    #
+    # In a test session that assumption is false: two tests measuring the same coordinates under
+    # two different configs are one process, so the second is served the first's verdicts and
+    # never calls the judge at all. A test that then counts judge calls, or asserts a setting
+    # changed a verdict, passes or fails on the order it happened to run in. Cleared on the way
+    # in and on the way out, for the same reason CONFIG and RUN are snapshotted: the harness is
+    # what makes one process host many runs.
+    judges.cache_clear()
+
     try:
         yield calls
     finally:
+        judges.cache_clear()
         for module, name, original in reversed(saved):
             setattr(module, name, original)
         m2config.CONFIG.clear()

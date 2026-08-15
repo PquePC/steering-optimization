@@ -25,6 +25,7 @@ that earn it to cut judge spend. Assuming that agreement in advance is exactly w
 
 from __future__ import annotations
 
+import math
 import time
 from pathlib import Path
 from typing import Any, Sequence
@@ -35,7 +36,7 @@ from . import battery, config, judge
 __all__ = [
     "calibrate", "find_boundary", "measure_cell", "run_sweep",
     "battery_prompts", "CELLS_FILE", "BOUNDARY_FILE", "RESPONSES_FILE", "JUDGE_FILE",
-    "NORMS_FILE", "READ_FILE",
+    "NORMS_FILE", "READ_FILE", "UNJUDGED_FILE",
 ]
 
 CELLS_FILE = "cells.jsonl"
@@ -45,6 +46,10 @@ JUDGE_FILE = "judge_calls.jsonl"
 NULL_FILE = "null_transcripts.jsonl"
 NORMS_FILE = "norms.jsonl"
 SUMMARY_FILE = "summary.json"
+# Generations that were produced and paid for but whose judging raised. Kept separate from
+# RESPONSES_FILE so no analysis mistakes an unjudged row for a judged one with every verdict
+# missing, and so the count of judged responses stays exactly the count that was judged.
+UNJUDGED_FILE = "unjudged_transcripts.jsonl"
 
 
 def _trials(n: int) -> list[int]:
@@ -59,6 +64,19 @@ def _trials(n: int) -> list[int]:
 
 def _log(msg: str) -> None:
     print(f"{time.strftime('%H:%M:%S')}  {msg}", flush=True)
+
+
+def _floor(value: float, places: int) -> float:
+    """Round a ceiling DOWN to `places`, never up.
+
+    `max_reachable_dose` is the largest dose `alpha_for` will accept, and it is recorded for the
+    analysis layer to read. Ordinary rounding pushes about half of them just above the real
+    limit, so a reader who takes the recorded number and asks for a cell at it gets `Unreachable`
+    -- a published bound that is not actually reachable. Rounding a limit is only safe in the
+    direction that keeps it a limit.
+    """
+    scale = 10 ** places
+    return math.floor(value * scale) / scale
 
 
 # =====================================================================================
@@ -189,7 +207,8 @@ def _judge_items(rows: Sequence[dict], *, concept: str, baselines: dict[str, str
                 items.append(dict(judge.build_item("coherence", payload=payload,
                                                    cache_key=judge.cache_key(phase, "coherence", layer=layer, dose=dose,
                                                         unit=row["unit"]),
-                                                   concept=concept, model_text=(response,)),
+                                                   concept=concept, model_text=(response,),
+                                                   text_chars=text_chars),
                                   row_index=idx, judge_kind="coherence"))
     return items
 
@@ -252,8 +271,16 @@ def calibrate(concept: str, layers: Sequence[int], cfg: dict | None = None) -> d
     # meant on another run, which is exactly the cross-run comparison that established the M2
     # scan and the probe agreed. Every cell row carries its own `alpha`, so this closes the
     # remaining half.
+    # Only when they are not already recorded. `calibrate` re-runs on every resume -- it has to,
+    # because `RUN.norms` and the baselines live in memory and Phase 1 cannot start without them
+    # -- but the two files it writes are APPENDED. A run resumed twice therefore held three
+    # copies of every norm row and three copies of the null arm, so anyone counting the null
+    # arm, or the read-this bundle listing it, saw a multiple of the truth.
     ctx = m2config.RUN
+    have_norms = {int(r["layer"]) for r in runio.read_rows(NORMS_FILE)}
     for layer in layers:
+        if int(layer) in have_norms:
+            continue
         row = ctx.norms.get(int(layer)) or {}
         vec, resid = row.get("vec_norm"), row.get("resid_norm")
         runio.write_row(NORMS_FILE, dict(
@@ -262,8 +289,9 @@ def calibrate(concept: str, layers: Sequence[int], cfg: dict | None = None) -> d
             # ratio is why a shallow layer cannot be dosed under ALPHA_CEIL.
             resid_over_vec=(None if not vec else round(float(resid) / float(vec), 4)),
             alpha_ceil=float(cfg["ALPHA_CEIL"]),
+            # Floored, not rounded: this is the limit a reader will dose against.
             max_reachable_dose=(None if not resid else
-                                round(float(cfg["ALPHA_CEIL"]) * float(vec) / float(resid), 4))))
+                                _floor(float(cfg["ALPHA_CEIL"]) * float(vec) / float(resid), 4))))
 
     # R14. It reads the vectors, so it can only run after extraction. The hook it checks once
     # returned identically zero at 30 of 30 cells for an hour with every other check satisfied,
@@ -273,18 +301,35 @@ def calibrate(concept: str, layers: Sequence[int], cfg: dict | None = None) -> d
     _log(f"R14 pass  start_pos {live['d_start_pos']:.2e}  all-pos {live['d_all_pos']:.2e}")
 
     rows = battery_prompts(cfg)
-    _log(f"null battery: {len(rows)} prompts, unsteered")
-    responses = _generate(rows, layer=None, alpha=None,
-                          max_tokens=int(cfg["MAX_NEW_TOKENS"]), cfg=cfg)
 
-    null_rows = [battery.response_row(text, channel=r["channel"], concept=concept,
-                                      unit=r["unit"], layer=None, dose=None, alpha=0.0,
-                                      steered=False)
-                 for r, text in zip(rows, responses)]
-    baselines = {r["unit"]: text for r, text in zip(rows, responses) if r["channel"] == "effect"}
+    # The null arm is a measurement like any other, so a resume reuses it rather than paying for
+    # it again -- and, more importantly, rather than appending a second copy. It is only reusable
+    # because the battery is part of the config hash: a different battery is a different run
+    # folder, so rows found here were produced by exactly these prompts.
+    wanted = {r["unit"] for r in rows}
+    on_disk = [r for r in runio.read_rows(NULL_FILE) if r.get("unit") in wanted]
+    if {r["unit"] for r in on_disk} == wanted:
+        _log(f"null battery: {len(on_disk)} responses already on disk, reused")
+        null_rows = on_disk
+        baselines = {r["unit"]: r["response"] for r in on_disk if r["channel"] == "effect"}
+    else:
+        _log(f"null battery: {len(rows)} prompts, unsteered")
+        responses = _generate(rows, layer=None, alpha=None,
+                              max_tokens=int(cfg["MAX_NEW_TOKENS"]), cfg=cfg)
+        null_rows = [battery.response_row(text, channel=r["channel"], concept=concept,
+                                          unit=r["unit"], layer=None, dose=None, alpha=0.0,
+                                          steered=False)
+                     for r, text in zip(rows, responses)]
+        baselines = {r["unit"]: text
+                     for r, text in zip(rows, responses) if r["channel"] == "effect"}
+        for row in null_rows:
+            runio.write_row(NULL_FILE, row)
 
-    for row in null_rows:
-        runio.write_row(NULL_FILE, row)
+    # The effect channel is what `_judge_items` pairs every steered response against; without a
+    # baseline for each unit it raises there, one cell into Phase 2 and after the generations.
+    missing = {r["unit"] for r in rows if r["channel"] == "effect"} - set(baselines)
+    if missing:
+        raise RuntimeError(f"the null arm produced no baseline for {sorted(missing)}")
 
     return dict(baselines=baselines, null=null_rows,
                 liveness={k: v for k, v in live.items() if isinstance(v, (int, float, str))})
@@ -332,9 +377,22 @@ def find_boundary(layer: int, concept: str, cfg: dict | None = None) -> dict:
             f"L{layer} has no norms; measure_residual_norms must run before the boundary search")
     max_reachable = float(cfg["ALPHA_CEIL"]) * float(vec) / float(resid)
 
+    # The descent STARTS at this dose, and `alpha_for` then recomputes `alpha = dose * h / v`.
+    # That round trip is not exact in binary floating point: `(C*v/h)*(h/v)` lands one or two
+    # ulps above C on roughly one layer in sixteen, `alpha_for` refuses it -- correctly, since a
+    # clamped alpha would be a cell measured at a dose other than the one recorded against it --
+    # and Phase 1 does not catch `Unreachable`, so a single layer kills the entire run.
+    #
+    # The bisection this replaced never probed at `max_reachable`, so the defect arrived with the
+    # rebuild and has never run on a pod. It would have stopped the next one in Phase 1.
+    #
+    # A relative shave of 1e-9 is nine million times the ~4e-16 round-trip error and is
+    # scientifically nil: it moves the dose by one part in a billion.
+    max_reachable *= 1.0 - 1e-9
+
     if max_reachable < lo:
         out = dict(layer=int(layer), dose_max=None, outcome="unreachable",
-                   max_reachable_dose=round(max_reachable, 6),
+                   max_reachable_dose=_floor(max_reachable, 6),
                    bracket=[lo, hi], probes=[],
                    note=("no dose at or above the bracket floor is reachable under ALPHA_CEIL; "
                          "this layer was never measured and says nothing about the model"))
@@ -346,9 +404,13 @@ def find_boundary(layer: int, concept: str, cfg: dict | None = None) -> dict:
     # probe count, so with three probes it could never test below 0.40 however low the bracket
     # said it went -- which is why every layer that survived reported the same 0.40.
     best_sane = None
-    dose = min(hi, max_reachable)
+    start = dose = min(hi, max_reachable)
+    reached_floor = False
     for _step in range(int(cfg["BOUNDARY_PROBES"])):
-        if dose < lo or best_sane is not None:
+        if dose < lo:
+            reached_floor = True
+            break
+        if best_sane is not None:
             break
         alpha = float(m2config.alpha_for(int(layer), dose))
         mid = dose
@@ -364,7 +426,8 @@ def find_boundary(layer: int, concept: str, cfg: dict | None = None) -> dict:
                                  prompt=r["source"], response=t),
             cache_key=judge.cache_key("BOUNDARY", "coherence", layer=layer,
                                       dose=round(mid, 6), unit=r["unit"]),
-            concept=concept, model_text=(t,)), row_index=i, judge_kind="coherence")
+            concept=concept, model_text=(t,), text_chars=int(cfg["JUDGE_TEXT_CHARS"])),
+            row_index=i, judge_kind="coherence")
             for i, (r, t) in enumerate(zip(rows_spec, responses))]
         results = judge.run_judges([{k: v for k, v in it.items()
                                      if k not in ("row_index", "judge_kind")} for it in items],
@@ -374,20 +437,48 @@ def find_boundary(layer: int, concept: str, cfg: dict | None = None) -> dict:
         degen = sum(1 for r in rows if r["degenerate"]) / len(rows)
 
         sane = mean is not None and mean >= float(cfg["BOUNDARY_COHERENCE_MIN"])
-        probes.append(dict(dose=round(mid, 6), alpha=alpha, unreachable=False,
+        # No `unreachable` field here: reachability is decided arithmetically before the ladder
+        # starts, and an unreachable layer returns with `probes=[]`. A constant `False` on every
+        # probe row reads as a per-probe check that exists and passes, which is worse than
+        # nothing -- it is the "a check that cannot fail" shape, and this repo has counted
+        # eighteen of them.
+        probes.append(dict(dose=round(mid, 6), alpha=alpha,
                            coherence=mean, coherence_n=len(scores), degeneration=degen,
                            sane=sane))
         if sane:
             best_sane = mid
 
-    # Three outcomes, and they are three different facts about three different things:
+    # FOUR outcomes, because they are four different facts and three of them were being reported
+    # under one name:
     #   ok                    a dose was measured and the model held together at it
     #   unreachable           the dose map forbids it; nothing about the model was learned
-    #   incoherent_at_floor   measured all the way down to the bracket floor and never coherent
+    #   incoherent_at_floor   descended past the bracket floor and was never coherent
+    #   probes_exhausted      ran out of probes while still ABOVE the floor -- nothing is known
+    #                         about any dose below `lowest_probe`
+    #
+    # The last two were both called `incoherent_at_floor`, and with the shipped settings the
+    # ladder cannot reach the floor at all: descending from 2.50 by 0.70 takes twelve probes to
+    # cross 0.05 and it is given five, so it stops at 0.60 and reports having measured down to
+    # 0.05. That is the same defect as the `incoherent_at_lowest_probe` mislabel this search was
+    # rebuilt to remove -- a label asserting a fact the search never established -- reintroduced
+    # at the other end of the ladder.
+    needed = (1 if start < lo else
+              math.ceil(math.log(lo / start) / math.log(ratio)) + 1)
+    if best_sane is not None:
+        outcome = "ok"
+    elif reached_floor:
+        outcome = "incoherent_at_floor"
+    else:
+        outcome = "probes_exhausted"
     out = dict(layer=int(layer),
                dose_max=(round(best_sane, 6) if best_sane is not None else None),
-               outcome=("ok" if best_sane is not None else "incoherent_at_floor"),
-               max_reachable_dose=round(max_reachable, 6),
+               outcome=outcome,
+               max_reachable_dose=_floor(max_reachable, 6),
+               # What BOUNDARY_PROBES would have to be for this layer's ladder to reach the
+               # floor. Recorded per layer because the start of the descent is per layer:
+               # `min(bracket_hi, max_reachable)` differs with depth.
+               probes_to_reach_floor=int(needed),
+               probes_used=len(probes),
                bracket=[lo, hi], step_ratio=ratio, probes=probes,
                # The highest dose actually tested. Without it, a `None` cannot be told from
                # "we never probed low enough", which is what made the first run unreadable.
@@ -425,12 +516,27 @@ def measure_cell(layer: int, dose: float, *, concept: str, baselines: dict[str, 
         # at its first cell after the generations had been paid for.
         row["prompt_text"] = spec_row["source"]
 
-    items = _judge_items(rows, concept=concept, baselines=baselines, phase="SWEEP",
-                         layer=int(layer), dose=round(float(dose), 6), cfg=cfg)
-    results = judge.run_judges(
-        [{k: v for k, v in it.items() if k not in ("row_index", "judge_kind")} for it in items],
-        concurrency=int(cfg["JUDGE_CONCURRENT"]))
-    records = _apply_verdicts(rows, items, results, concept=concept)
+    # The generations are PAID FOR at this point and the judging below can still raise -- a
+    # payload the transport rejects, a field name that does not line up, a missing baseline.
+    # When it did exactly that on the first cell of a pod run, the whole battery was lost and
+    # had to be regenerated on the next attempt. Nothing that has already been bought gets
+    # discarded because a later step failed: on the way out, the un-judged rows are written
+    # first, so a rerun resumes with the text in hand.
+    try:
+        items = _judge_items(rows, concept=concept, baselines=baselines, phase="SWEEP",
+                             layer=int(layer), dose=round(float(dose), 6), cfg=cfg)
+        results = judge.run_judges(
+            [{k: v for k, v in it.items() if k not in ("row_index", "judge_kind")}
+             for it in items],
+            concurrency=int(cfg["JUDGE_CONCURRENT"]))
+        records = _apply_verdicts(rows, items, results, concept=concept)
+    except BaseException:
+        for row in rows:
+            runio.write_row(UNJUDGED_FILE, dict(row, layer=int(layer),
+                                                dose=round(float(dose), 6)))
+        _log(f"   judging FAILED at L{layer}@{dose:.3f}; {len(rows)} generations kept in "
+             f"{UNJUDGED_FILE} rather than discarded")
+        raise
 
     for row in rows:
         runio.write_row(RESPONSES_FILE, row)
@@ -564,9 +670,30 @@ def run_sweep(concept: str, cfg: dict | None = None) -> dict:
     for layer in layers:
         if (runio._key_value(layer),) in have:
             continue
-        row = find_boundary(layer, concept, cfg)
+        try:
+            row = find_boundary(layer, concept, cfg)
+        except m2config.Unreachable as exc:
+            # Reachability is decided arithmetically before the ladder starts, so this should be
+            # impossible -- and `impossible` is exactly what the ALPHA_CEIL round-trip was until
+            # it was measured. One layer must not be able to end a sweep that has already paid
+            # for Phase 0; record it and carry on, the same way Phase 2 does.
+            row = dict(layer=int(layer), dose_max=None, outcome="unreachable",
+                       probes=[], note=f"alpha_for refused the starting dose: {exc}")
+            runio.write_row(BOUNDARY_FILE, row)
         boundaries[int(layer)] = row
         _log(f"   L{layer:<3} dose_max={row['dose_max']}  {row['outcome']}")
+
+    # A layer that ran out of probes above the floor is not a layer that broke -- it is a layer
+    # the search stopped short on, and the difference decides whether its absence from Phase 2 is
+    # a finding or a budget. Say so once, with the number that fixes it.
+    short = [r for r in boundaries.values() if r.get("outcome") == "probes_exhausted"]
+    if short:
+        need = max(int(r.get("probes_to_reach_floor") or 0) for r in short)
+        lowest = min(float(r["lowest_probe"]) for r in short if r.get("lowest_probe"))
+        _log(f"WARNING  {len(short)} layers ran out of probes while still ABOVE the bracket "
+             f"floor (lowest tested {lowest:.3f}, floor {float(cfg['BOUNDARY_BRACKET'][0]):.3f}). "
+             f"They are NOT known to be incoherent — nothing was measured below that dose. "
+             f"Set BOUNDARY_PROBES={need} to descend the whole bracket.")
 
     # ---- Phase 2 -----------------------------------------------------------------------
     plan: list[tuple[int, float]] = []
@@ -720,21 +847,46 @@ def _read_bundle(concept: str, cfg: dict) -> Path:
             add("a judge call failed here", row,
                 str({k: v for k, v in (row.get("judge_error") or {}).items() if v}))
 
-    # 5. The whole null arm, always. A steered rate is unreadable without what the framing
-    #    produces on its own -- at alpha=0 this model names a concept every time it is asked.
-    for row in nulls:
-        add("alpha=0 null arm", row, "")
+    # The cap applies to the disagreements ONLY, and it is applied by round-robin across the
+    # reasons rather than by taking the first N rows. Rows arrive in cell order, so a plain
+    # truncation returns the shallowest layers' disagreements and silently drops every class
+    # that only appears deep in the sweep -- which is where the covert regime lives.
+    found = len(picked)
+    by_reason: dict[str, list] = {}
+    for entry in picked:
+        by_reason.setdefault(entry[0], []).append(entry)
+    shown: list[tuple[str, dict, str]] = []
+    while len(shown) < limit and any(by_reason.values()):
+        for reason in list(by_reason):
+            if by_reason[reason] and len(shown) < limit:
+                shown.append(by_reason[reason].pop(0))
+    dropped = found - len(shown)
 
-    picked = picked[:limit]
+    # 5. The whole null arm, always -- and appended AFTER the cap, not subject to it. It was
+    #    inside the truncation, so a run with more than READ_BUNDLE_N disagreements dropped the
+    #    entire null arm, which is the one section that cannot be inferred from the others: a
+    #    steered rate is unreadable without what the framing produces on its own, and at alpha=0
+    #    this model names a concept every single time it is asked.
+    nulls_picked = [("alpha=0 null arm", row, "") for row in nulls]
+    picked = shown + nulls_picked
+
     path = runio.artefact_path(READ_FILE)
     with path.open("w", encoding="utf-8") as fh:
         fh.write(f"# Read this — {concept}\n\n")
-        fh.write(f"{len(picked)} of {len(responses) + len(nulls)} responses, selected by "
-                 "**disagreement**, not at random.\n\n")
+        fh.write(f"{len(shown)} of {found} disagreements, plus all {len(nulls_picked)} "
+                 f"alpha=0 null responses, out of {len(responses) + len(nulls)} total.\n")
+        fh.write("Selected by **disagreement**, not at random.\n\n")
+        if dropped:
+            # Never a silent cap. A bundle that shows 40 of 137 and does not say so reads as
+            # "these were the disagreements" when it is "these were the first few".
+            fh.write(f"> **{dropped} further disagreements are not shown here** "
+                     f"(READ_BUNDLE_N={limit}). They are all in "
+                     f"`{RESPONSES_FILE}` and `{JUDGE_FILE}`; raise READ_BUNDLE_N to widen "
+                     "this file. Doing so re-writes the bundle and re-measures nothing.\n\n")
         fh.write("Every deep defect this project has found was found by a person reading raw\n"
                  "generations, and none by a gate, a rate or a judge. Random sampling would\n"
                  "have found none of them; each was visible because two signals disagreed.\n\n")
-        if not picked:
+        if not shown:
             fh.write("Nothing disagreed anywhere. On a real surface that is worth being\n"
                      "suspicious of rather than pleased about — check that the judges ran.\n")
         for reason, row, detail in picked:
@@ -744,5 +896,6 @@ def _read_bundle(concept: str, cfg: dict) -> Path:
             fh.write(f"`{where}` · {row['channel']} · {row['unit']}"
                      + (f" · {detail}" if detail else "") + "\n\n")
             fh.write("```\n" + str(row["response"]).strip()[:1500] + "\n```\n")
-    _log(f"read-this bundle: {len(picked)} responses -> {READ_FILE}")
+    _log(f"read-this bundle: {len(shown)} of {found} disagreements + {len(nulls_picked)} null "
+         f"-> {READ_FILE}" + (f"  ({dropped} not shown)" if dropped else ""))
     return path

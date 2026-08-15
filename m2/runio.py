@@ -562,7 +562,11 @@ def transcripts_allowed(concept: str, cfg: dict, *,
     """
     if not cfg["EXPORT_TRANSCRIPTS"]:
         return False, "EXPORT_TRANSCRIPTS is False in CONFIG"
-    if config.is_benign(concept):
+    # `cfg` is passed so this gate and the caller's own run gate resolve through ONE
+    # predicate. When the running pipeline carries its own `BENIGN_CONCEPTS` (M3 does), the
+    # concept must be on both lists; `is_benign` intersects, so a caller's config can only
+    # ever narrow what this gate allows.
+    if config.is_benign(concept, cfg):
         return True, "benign concept (spec 14.3 channel 2)"
     if EXPORT_TRANSCRIPTS_OVERRIDE:
         return True, f"explicit per-run override for non-benign concept {concept!r}"

@@ -84,7 +84,7 @@ def build_items(judge_id: str, gold: Sequence[dict], by_id: dict[str, dict],
             model_text = (base, response)
         items.append(judge.build_item(judge_id, payload=payload,
                                       cache_key=judge.cache_key("CALIBRATE", judge_id, unit=g["id"]),
-                                      concept=concept, model_text=model_text))
+                                      concept=concept, model_text=model_text, text_chars=chars))
         used.append(g)
     return items, used
 
@@ -259,7 +259,7 @@ def _all_items(records, baselines, concept, cfg, done: set):
                 model_text = (rec["response"],)
             items.append(judge.build_item(
                 jid, payload=payload, cache_key=judge.cache_key("FULL", jid, unit=rec["id"]),
-                concept=concept, model_text=model_text))
+                concept=concept, model_text=model_text, text_chars=chars))
             meta.append((rec, jid))
     return items, meta
 

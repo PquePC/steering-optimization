@@ -347,16 +347,29 @@ BENIGN_CONCEPTS: tuple[str, ...] = (
 HARMFUL_CONCEPTS: tuple[str, ...] = ("weapon", "poison", "assault")
 
 
-def is_benign(concept: str) -> bool:
+def is_benign(concept: str, cfg: dict | None = None) -> bool:
     """True if `concept` is on the benign list, compared case-insensitively.
 
     Case-insensitive because the run folder lower-cases the concept and the control panel
     does not: `"irony"` and `"Irony"` are the same concept, and a case mismatch that
     silently denied export would be read as a bug in the exporter rather than as the gate
     firing. Membership is still exact on the word -- this widens nothing.
+
+    **`cfg` narrows and can never widen.** A caller may pass a config carrying its own
+    `BENIGN_CONCEPTS`; the concept must then be on BOTH lists. M3 passes one, so that its
+    run gate and this module's export gate cannot resolve through two different lists --
+    they were, and M3's happening to be a strict subset of this one was the only thing
+    making the divergence safe. Nothing enforced that. Two lists read in two places diverge
+    the first time either is edited, and the direction of that divergence decides whether a
+    harmful-arm transcript can leave the pod. Intersecting makes the safe direction the
+    only reachable one: adding a concept to a caller's config cannot open this gate.
     """
     key = concept.strip().casefold()
-    return any(key == c.casefold() for c in BENIGN_CONCEPTS)
+    if not any(key == c.casefold() for c in BENIGN_CONCEPTS):
+        return False
+    if cfg is not None and "BENIGN_CONCEPTS" in cfg:
+        return any(key == str(c).casefold() for c in cfg["BENIGN_CONCEPTS"])
+    return True
 
 
 # =====================================================================================

@@ -69,6 +69,34 @@ def _rid(rec: dict) -> str:
     return f"{rec['channel']}:{where}:{unit}"
 
 
+# M2 and M3 have different words for the same thing. M2's detector calls it `degeneracy`
+# (`m2.cheap.degeneracy_reason`, written into every archived row as `degeneracy_reason`); M3's
+# calls it `degeneration` (`m3.battery.degeneration_reason`). This module reads M2's files with
+# M3's vocabulary, which is precisely the boundary the `concept_hits` / `concept_mentions`
+# rename already went wrong at.
+#
+# It went wrong here too, and more quietly: the read was `row.get("degeneration_reason")`, a name
+# nothing has ever written, so the field was `None` for every response in every archive. Nothing
+# raised, no output was visibly wrong, and the existing regression test passed -- it checks that
+# the key exists on the record, which it does, not that it was sourced from a key that exists in
+# the file.
+_REASON_KEYS = ("degeneracy_reason", "degeneration_reason")
+
+
+def _degeneration_reason(row: dict) -> str | None:
+    """The collapse reason under whichever vocabulary wrote the file. Raises if neither is there.
+
+    Deliberately not a `.get` with a default. A defaulted read of a misspelled key is invisible
+    at every level -- that is the entire defect this function exists to close.
+    """
+    for key in _REASON_KEYS:
+        if key in row:
+            return row[key]
+    raise KeyError(
+        f"no collapse-reason field on this row; expected one of {_REASON_KEYS}, got "
+        f"{sorted(row)}. A probe archive without it cannot say WHY a response was flagged.")
+
+
 def load_probe(probe_dir: Path) -> list[dict]:
     """Every response from a 2026-08-14-style probe bundle, normalised and given a stable id."""
     probe_dir = Path(probe_dir)
@@ -88,7 +116,7 @@ def load_probe(probe_dir: Path) -> list[dict]:
                 trial=row.get("trial"), prompt_id=row.get("prompt_id"),
                 response=row["response"], words=row["words"],
                 concept_hits=row["concept_hits"], degenerate=row["degenerate"],
-                degeneration_reason=row.get("degeneration_reason"),
+                degeneration_reason=_degeneration_reason(row),
                 steered=row.get("steered", kind != "null"),
             )
             rec["id"] = _rid(rec)

@@ -219,17 +219,33 @@ class JudgeParseError(ValueError):
     """A judge answered in a shape the parser cannot read."""
 
 
-def assert_coherence_blind(payload: str, concept: str, model_text: Sequence[str] = ()) -> None:
+def assert_coherence_blind(payload: str, concept: str, model_text: Sequence[str] = (),
+                           text_chars: int | None = None) -> None:
     """Raise if the concept appears in a coherence payload outside the model's own words.
 
     The model's response is allowed to contain the concept -- that is the thing being scored, and
     a steered response often says "garlic" many times. What must not appear is the concept as
     part of the *instructions*. M2 hit exactly this: a naive check saw the concept in the payload,
     could not tell it came from the model, and killed a phase at its first cell.
+
+    `text_chars` must be whatever `render` was given, because `render` CLIPS model text into the
+    payload while the caller hands this function the unclipped span. When a response is long
+    enough to clip, the subtraction below silently matches nothing, the model's own "garlic"
+    survives in the haystack, and this raises -- killing the cell after its generations are paid
+    for, with a message saying the payload leaks the concept when it does not. That is the same
+    failure the docstring above describes, reintroduced through the truncation path. It is latent
+    at the shipped settings (100 tokens is ~500 characters against a 1200-character cap) and
+    armed by any change to either number, which is exactly the kind of tripwire that fires on a
+    pod at 3am rather than here.
     """
     haystack = payload
     for span in model_text:
-        haystack = haystack.replace(str(span), " ")
+        span = str(span)
+        forms = {span}
+        if text_chars:
+            forms.add(clip(span, int(text_chars)))
+        for form in forms:
+            haystack = haystack.replace(form, " ")
     if re.search(r"\b" + re.escape(str(concept)), haystack, flags=re.IGNORECASE):
         raise AssertionError(
             f"the coherence payload names the concept {concept!r} outside the model's own "
@@ -480,16 +496,19 @@ def cache_key(phase: str, judge_id: str, *, layer: int | None = None,
 
 
 def build_item(judge_id: str, *, payload: str, cache_key: tuple,
-               concept: str | None = None, model_text: Sequence[str] = ()) -> dict:
+               concept: str | None = None, model_text: Sequence[str] = (),
+               text_chars: int | None = None) -> dict:
     """One work item in the shape `m2.judges.judge_many` takes.
 
     `model_text` names the spans that came from the model, so the blindness check can tell the
-    concept appearing in a response from the concept appearing in the instructions.
+    concept appearing in a response from the concept appearing in the instructions. Pass the same
+    `text_chars` that `render` was given, so the check subtracts the spans in the form they
+    actually appear in the payload -- see `assert_coherence_blind`.
     """
     if judge_id not in _TEMPLATES:
         raise ValueError(f"unknown judge {judge_id!r}")
     if judge_id == "coherence" and concept is not None:
-        assert_coherence_blind(payload, concept, model_text)
+        assert_coherence_blind(payload, concept, model_text, text_chars=text_chars)
     item: dict = dict(prompt=payload, judge_id=judge_id, cache_key=tuple(cache_key))
     if concept is not None and judge_id != "coherence":
         item["concept"] = concept

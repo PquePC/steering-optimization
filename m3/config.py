@@ -94,7 +94,21 @@ SETTINGS: dict[str, Any] = dict(
     # layer whose real boundary sits below 0.40 reports nothing, and every layer whose boundary
     # sits above it reports exactly 0.40. On the first real run all 25 surviving layers returned
     # the identical 0.40 -- one bit of information, dressed as a per-layer measurement.
-    BOUNDARY_PROBES=5,
+    #
+    # BOUNDARY_PROBES must be large enough for the ladder to CROSS the bracket floor, or the
+    # search stops early and a layer it never measured low enough is indistinguishable from one
+    # that genuinely broke. Descending from 2.50 by 0.70 takes twelve probes to pass 0.05; at
+    # five it stopped at 0.60 -- twelve times the floor -- and labelled the layer
+    # `incoherent_at_floor`. The relationship is:
+    #
+    #     probes >= ceil( log(BRACKET_LO / start) / log(BOUNDARY_STEP) ) + 1
+    #     where start = min(BRACKET_HI, ALPHA_CEIL * ||v|| / ||h||)
+    #
+    # The plan printed before the run states whether the current three values satisfy it, and
+    # every boundary row carries its own `probes_to_reach_floor`. Most layers stop far earlier --
+    # the descent halts at the FIRST coherent dose -- so this is a worst-case bound, not the
+    # usual cost.
+    BOUNDARY_PROBES=12,
     BOUNDARY_STEP=0.70,
 
     # (floor, ceiling) of the doses worth searching. The ceiling is where the descent starts,
@@ -322,9 +336,25 @@ def apply_overrides(pairs: list[str], cfg: dict | None = None) -> dict:
 
 
 def is_benign(concept: str, cfg: dict | None = None) -> bool:
+    """The run gate. Deliberately the SAME function the export gate calls.
+
+    M3 refuses to *run* a non-benign concept and M2's `runio.transcripts_allowed` refuses to
+    *export* one. Those were two gates reading two lists -- M3's config key here, M2's module
+    constant there -- and they agreed only because this list happened to be a strict subset of
+    that one. Nothing checked that, and nothing would have reported it if an edit here had
+    broken it: the run would have proceeded and the export would have silently withheld, or
+    worse in the other direction.
+
+    So there is now one predicate. `m2.config.is_benign` intersects its own list with the
+    `BENIGN_CONCEPTS` in whatever config it is handed, and `m2_config` puts this list into the
+    bridged config, so both gates evaluate exactly the same thing on exactly the same two
+    lists. Editing either list moves both gates together, and editing this one can only ever
+    narrow what may be exported.
+    """
+    from m2 import config as m2config
+
     cfg = CONFIG if cfg is None else cfg
-    key = str(concept).strip().casefold()
-    return any(key == str(c).casefold() for c in cfg["BENIGN_CONCEPTS"])
+    return m2config.is_benign(str(concept), cfg)
 
 
 # =====================================================================================
@@ -387,6 +417,10 @@ def m2_config(concept: str, cfg: dict | None = None) -> dict:
         RATE_CI_Z=float(cfg["RATE_CI_Z"]),
         ALPHA_CEIL=float(cfg["ALPHA_CEIL"]),
         EXPORT_TRANSCRIPTS=True,
+        # Carried across so the export gate resolves through the same list as the run gate.
+        # `m2.config.is_benign` intersects, so this can only narrow what may be exported --
+        # see `is_benign` above for why two lists in two places was the defect.
+        BENIGN_CONCEPTS=tuple(cfg["BENIGN_CONCEPTS"]),
         config_hash=config_hash(cfg),
     )
     return out

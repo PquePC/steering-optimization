@@ -728,15 +728,17 @@ declares, displays, writes into its config hash — and does not apply. The gene
 M3 owns that some M2 code path reads from somewhere else*, and it produces no error, because the
 defaults currently agree.
 
-Two are open and both are latent rather than active:
+Both of the two that were open are now **CLOSED** by task
+[31](handoff/31-execute-every-path-before-any-run.md):
 
-- `GEN_BATCH_MAX` is declared in `m3.config` and used only for the battery-size assertion; the
-  chunking reads `expensive.GEN_BATCH_MAX`. Both are 25 and the battery is 15, so no effect.
-  Raising M3's to 40 would pass the check and still chunk at 25, silently doubling sweep time.
-- The dual-use transcript export gate resolves through **M2's** `BENIGN_CONCEPTS` while
-  `m3.sweep.open_run` refuses on **M3's**. M3's list is currently a strict subset, so divergence
-  can only go the safe way. That is luck, and it is the one gate that must not be approximate once
-  the harmful arm exists.
+- ~~`GEN_BATCH_MAX` declared but used only for the battery-size assertion~~ — `configure_generation`
+  now pushes it into `expensive.GEN_BATCH_MAX`, where the chunking reads it.
+- ~~Two benign-concept lists, one per gate~~ — one predicate now. `m2.config.is_benign(concept,
+  cfg)` intersects M2's list with the running config's; a caller's list can only narrow what may
+  be exported, never widen it.
+
+Both are pinned by `m3/tests/test_settings_reach.py`, which fails if any M3 setting stops
+reaching the code that reads it.
 
 Also: `m2.setup.check_run_data` reports on `/workspace/m2_runs` while M3 writes to
 `/workspace/m3_runs`, so it says "no previous runs" on a pod that has one. And the environment
@@ -746,7 +748,33 @@ variable that selects M3's branch is called `M2_BRANCH`.
 settings. Task [30](handoff/30-m2-m3-seam-audit.md) carries the work.
 
 
-### 32 — Nine M3 defects, and not one was found by a test
+### 32 — Twenty-one M3 defects, and the first nine were not found by a test
+
+**Resolved by task [31](handoff/31-execute-every-path-before-any-run.md).** The count reached
+twenty-one. The shape of the tally is the finding:
+
+| how found | count |
+|---|---|
+| a pod run dying (one after 1,720 paid judge calls) | 2 |
+| by accident, doing something else | 3 |
+| hand-labelling real transcripts | 2 |
+| reading the code | 6 |
+| **executing the code offline** | **8** |
+
+Reading and executing are now comparable in yield, and they find *different* things. Reading
+found every case of a conclusion the run had not earned — a boundary labelled
+`incoherent_at_floor` twelve times above the floor, a null arm silently truncated out of the
+bundle. Executing found every case of a path that simply did not work — a dose the dose map
+refuses, a field name nothing writes, a resume that duplicates its own output.
+
+Neither substitutes for the other, and the original claim stands for the reason it was made: the
+252 unit tests passed through all nine of the first defects, because they exercised functions that
+were called. What changed is not the amount of testing but its kind — `m3/tests/fake_gpu.py`
+executes `python -m m3.run` end to end with no GPU and no API key, so "a path nothing has ever
+run" is no longer a category that exists here.
+
+<details>
+<summary>The original entry</summary>
 
 Running total: judge ids rejected by the transport, cache keys of the wrong arity, three settings
 declared and never applied, `dtype` missing from the config bridge, a field-name mismatch that
@@ -763,3 +791,5 @@ is a fake-GPU harness that runs `python -m m3.run` end to end on a laptop; that 
 have caught four of the nine in seconds. The read-through is part 3 of that task and deliberately
 last: this repository already dropped task 10 for reading what it should have executed, with the
 note that "the shakedown executed VERIFY and found by running what reading would not have".
+
+</details>

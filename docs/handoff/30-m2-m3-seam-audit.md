@@ -34,6 +34,12 @@ setting that is **declared, displayed, and not applied**:
    (M3 refuses first). That is luck, not design, and it stops being safe the moment the harmful
    arm exists — which is exactly the gate that must not be approximate.
 
+**Both 4 and 5 are now CLOSED** (task [31](31-execute-every-path-before-any-run.md)).
+`configure_generation` pushes `GEN_BATCH_MAX` to where the chunking reads it;
+`m2.config.is_benign(concept, cfg)` is one predicate for both gates and **intersects**, so a
+caller's list can only narrow what may be exported. `--set BENIGN_CONCEPTS=weapon` now opens
+neither gate, which is asserted rather than argued.
+
 Three of five were found by accident and two by looking once. That ratio is the argument: the seam
 has been sampled, not audited.
 

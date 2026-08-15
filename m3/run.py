@@ -18,6 +18,7 @@ A killed run resumes: rows already on disk are re-read and their cells are not r
 from __future__ import annotations
 
 import argparse
+import math
 import os
 import sys
 import time
@@ -87,6 +88,15 @@ def estimate(n_layers: int, cfg: dict) -> dict:
 
     short = _SECONDS_PER_BATCH_100 * int(cfg["BOUNDARY_MAX_TOKENS"]) / int(cfg["MAX_NEW_TOKENS"])
     gpu_s = len(layers) * int(cfg["BOUNDARY_PROBES"]) * short + cells * _SECONDS_PER_BATCH_100
+
+    # Can the descending ladder actually cross its own bracket floor? If not, layers the search
+    # stopped short on come back indistinguishable from layers that genuinely broke, and the
+    # operator finds out afterwards. Worst case (the descent starting at the bracket ceiling),
+    # priced before anything is spent.
+    lo, hi = (float(x) for x in cfg["BOUNDARY_BRACKET"])
+    step = float(cfg["BOUNDARY_STEP"])
+    probes_needed = math.ceil(math.log(lo / hi) / math.log(step)) + 1 if hi > lo else 1
+
     return dict(
         layers=len(layers), first_layer=layers[0], last_layer=layers[-1], cells=cells,
         battery=config.battery_size(cfg),
@@ -94,6 +104,9 @@ def estimate(n_layers: int, cfg: dict) -> dict:
         judge_usd=(boundary_calls + cell_calls) * per_call,
         gpu_minutes=gpu_s / 60.0,
         responses=cells * config.battery_size(cfg) + boundary_calls,
+        probes_needed=probes_needed,
+        ladder_reaches_floor=int(cfg["BOUNDARY_PROBES"]) >= probes_needed,
+        lowest_probe=hi * step ** (int(cfg["BOUNDARY_PROBES"]) - 1),
     )
 
 
@@ -112,6 +125,18 @@ def _print_plan(est: dict, cfg: dict, concept: str) -> None:
     print(f"  GPU estimate  ~{est['gpu_minutes']:.0f} min of measurement")
     print(f"  judge model   {cfg['JUDGE_MODEL']}  "
           f"<= {cfg['JUDGE_MAX_TOKENS']} reply tokens, {cfg['JUDGE_CONCURRENT']} concurrent")
+    if est["ladder_reaches_floor"]:
+        print(f"  boundary      {cfg['BOUNDARY_PROBES']} probes descends "
+              f"{cfg['BOUNDARY_BRACKET'][1]} -> below the floor "
+              f"{cfg['BOUNDARY_BRACKET'][0]} at x{cfg['BOUNDARY_STEP']}")
+    else:
+        print(f"  boundary      WARNING: {cfg['BOUNDARY_PROBES']} probes at "
+              f"x{cfg['BOUNDARY_STEP']} only reaches {est['lowest_probe']:.3f}, not the "
+              f"bracket floor {cfg['BOUNDARY_BRACKET'][0]}.")
+        print(f"                Layers still incoherent there are recorded as "
+              f"'probes_exhausted', NOT as broken — nothing below that dose is measured.")
+        print(f"                Set BOUNDARY_PROBES={est['probes_needed']} to descend the "
+              f"whole bracket.")
     print("")
     print("  Nothing is filtered, ranked or selected. Every cell gets the same battery and")
     print("  every response is judged and written to disk. Mechanical measures are recorded")
