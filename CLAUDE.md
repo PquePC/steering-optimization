@@ -77,6 +77,7 @@ first.
 | What is broken, undecided, or worth doing next | `docs/TODO.md` |
 | What went wrong before, and how it was found | `docs/DEBUG-LOG.md` |
 | Where this is going after M2 | `docs/M3-PROPOSAL.md` |
+| Detection measured without asking the model | `docs/M4-PROPOSAL.md` |
 | Conventions for agents working here | `AGENTS.md` |
 | The coding agent's current task queue | `docs/handoff/` |
 | The science, ethics register and literature | parent repo `Emergent-Introspection` |
