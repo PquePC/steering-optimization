@@ -879,3 +879,63 @@ confabulates confidently at alpha=0 on the forced channel ("apple", 6/6). Widen 
 **g. `dose_max` and `max_reachable_dose` use different roundings** (`round` vs `_floor`), so at
 L16 the recorded boundary exceeds the recorded ceiling by 1e-6. Cosmetic — the alpha actually
 run was 15.999999984, under the ceiling — but it is two roundings of one number.
+
+
+### 35 — DECISION PENDING: does a collapsed response count as a failure to identify?
+
+**Take this before the confirmation phase, not during it.** Deciding it after seeing which
+answer produces the better operating point is the winner's curse with extra steps.
+
+**The situation.** `classify_self_report` maps a collapsed response to its own class,
+`degenerate`, so it is visible and excluded from the denial/leak counts. The `identification`
+rate does no such thing: a response that collapsed into repetition is scored `matches=False` and
+counted as a non-identification, exactly like a fluent answer naming the wrong concept.
+
+Those are different events. One is the model failing to name the concept; the other is the model
+failing to produce a sentence. Conflating them is the M2 failure this pipeline exists to avoid —
+*"counting a collapsed response as a clean denial is how M2 measured detection on a broken model
+and read it as covertness"* — surviving on the one channel that carries the study's headline
+metric.
+
+**Scope, measured on the 2026-08-15 run** (with the corrected hyphen-aware detector): 9 of 1,176
+forced-ID responses are degenerate (0.8%), touching 5 of 196 cells.
+
+| cell | as scored | degenerate excluded |
+|---|---|---|
+| L18@0.384 | 0/6 = 0.00 [0.00, 0.39] | 0/5 = 0.00 [0.00, 0.43] |
+| L35@0.341 | 0/6 = 0.00 [0.00, 0.39] | 0/3 = 0.00 [0.00, **0.56**] |
+| L38@0.412 | 6/6 = 1.00 [0.61, 1.00] | 5/5 = 1.00 [0.57, 1.00] |
+| L57@0.123 | 4/6 = 0.67 [0.30, 0.90] | 4/5 = 0.80 [0.38, 0.96] |
+| L59@0.116 | 4/6 = 0.67 [0.30, 0.90] | **1/3 = 0.33** [0.06, 0.79] |
+
+**The direction is not uniform, which is why this needs deciding rather than defaulting.** At
+L35 exclusion leaves the rate at 0.00 but halves n, so the honest upper bound moves 0.39 → 0.56.
+At L59 exclusion moves the rate 0.67 → 0.33, because the excluded responses were
+`garlic garlic garlic…` ×83 — degenerate *and* scored as correct identifications.
+
+**That is the crux: is a repetition loop of the target word an identification?** The model
+emitted the right token, many times, having been prefilled with "The thought is about". It did
+not produce a sentence, an attribution, or anything resembling introspective access. Option A
+says yes; option B says the question is unanswerable on that response and the trial should not
+be in the denominator.
+
+**Options.**
+
+- **A — status quo.** A collapse counts as a non-identification. Simple, and it never reduces n.
+  But it lets a broken model read as a covert one, and 3 of the 6 trials at L35@0.341 are
+  collapses that say nothing.
+- **B — exclude degenerate responses from the identification denominator**, matching what the
+  self-report channel already does. Honest about what was measured; costs sample size exactly
+  where the model is most disturbed, which is where the interesting cells are.
+- **C — report both**, and require an operating point to survive either. Costs nothing at
+  measurement time, since `degenerate` already rides on every row; the analysis layer computes
+  both and a cell that flips between them is flagged rather than chosen.
+
+**Recommendation: C, then B if a tie-break is ever needed.** C is free, and this run shows why:
+no cell in the surface has its status changed by the choice, so paying sample size for B buys
+nothing yet. But the moment a candidate operating point sits at one of these five cells, the
+choice becomes load-bearing, and C makes that visible instead of silent.
+
+**Whichever is chosen, `n` must be reported alongside every rate.** The failure mode here is not
+picking wrong, it is picking silently — a rate of 0.00 over 3 surviving trials and one over 6
+are different claims, and right now they print identically.
