@@ -35,6 +35,7 @@ from . import battery, config, judge
 __all__ = [
     "calibrate", "find_boundary", "measure_cell", "run_sweep",
     "battery_prompts", "CELLS_FILE", "BOUNDARY_FILE", "RESPONSES_FILE", "JUDGE_FILE",
+    "NORMS_FILE",
 ]
 
 CELLS_FILE = "cells.jsonl"
@@ -42,6 +43,7 @@ BOUNDARY_FILE = "boundaries.jsonl"
 RESPONSES_FILE = "responses_transcripts.jsonl"
 JUDGE_FILE = "judge_calls.jsonl"
 NULL_FILE = "null_transcripts.jsonl"
+NORMS_FILE = "norms.jsonl"
 SUMMARY_FILE = "summary.json"
 
 
@@ -169,7 +171,7 @@ def _judge_items(rows: Sequence[dict], *, concept: str, baselines: dict[str, str
                     "Judging effectiveness unpaired would compare a steered response against "
                     "nothing and score every cell as influential.")
             payload = judge.render("effect", text_chars=text_chars, concept=concept,
-                                   prompt=row["source"], response_unsteered=baseline,
+                                   prompt=row["prompt_text"], response_unsteered=baseline,
                                    response_steered=response)
             items.append(dict(judge.build_item("effect", payload=payload,
                                                cache_key=judge.cache_key(phase, "effect", layer=layer, dose=dose,
@@ -183,7 +185,7 @@ def _judge_items(rows: Sequence[dict], *, concept: str, baselines: dict[str, str
             if coherence_budget > 0:
                 coherence_budget -= 1
                 payload = judge.render("coherence", text_chars=text_chars,
-                                       prompt=row["source"], response=response)
+                                       prompt=row["prompt_text"], response=response)
                 items.append(dict(judge.build_item("coherence", payload=payload,
                                                    cache_key=judge.cache_key(phase, "coherence", layer=layer, dose=dose,
                                                         unit=row["unit"]),
@@ -234,12 +236,34 @@ def calibrate(concept: str, layers: Sequence[int], cfg: dict | None = None) -> d
     A steered rate is only readable against what the prompt produces on its own.
     """
     cfg = config.CONFIG if cfg is None else cfg
-    from m2 import model, runio, vectors
+    from m2 import config as m2config, model, runio, vectors
 
     _log(f"extracting vectors at {len(layers)} layers")
     vectors.extract_all_layers(concept, list(layers))
     vectors.measure_residual_norms(
         list(layers), [r["text"] for r in battery.TASK_PROMPTS])
+
+    # Persist the normalisation. `measure_residual_norms` fills `RUN.norms` in memory but writes
+    # nothing -- it is `build_dose_map` that writes files, and M3 does not call it because its
+    # doses are per-layer and unknown until Phase 1.
+    #
+    # Without this the run records no `||v||` and no `||h||`, so `dose` is an uninterpretable
+    # number afterwards: nothing lets a reader check that a dose means the same perturbation it
+    # meant on another run, which is exactly the cross-run comparison that established the M2
+    # scan and the probe agreed. Every cell row carries its own `alpha`, so this closes the
+    # remaining half.
+    ctx = m2config.RUN
+    for layer in layers:
+        row = ctx.norms.get(int(layer)) or {}
+        vec, resid = row.get("vec_norm"), row.get("resid_norm")
+        runio.write_row(NORMS_FILE, dict(
+            layer=int(layer), vec_norm=vec, resid_norm=resid,
+            # The ratio is what decides reachability: alpha = dose * resid / vec, so a large
+            # ratio is why a shallow layer cannot be dosed under ALPHA_CEIL.
+            resid_over_vec=(None if not vec else round(float(resid) / float(vec), 4)),
+            alpha_ceil=float(cfg["ALPHA_CEIL"]),
+            max_reachable_dose=(None if not resid else
+                                round(float(cfg["ALPHA_CEIL"]) * float(vec) / float(resid), 4))))
 
     # R14. It reads the vectors, so it can only run after extraction. The hook it checks once
     # returned identically zero at 30 of 30 cells for an hour with every other check satisfied,
@@ -368,10 +392,11 @@ def measure_cell(layer: int, dose: float, *, concept: str, baselines: dict[str, 
         if spec_row["channel"] == "capability":
             row["capability_correct"] = battery.capability_correct(
                 row["response"], spec_row["accept"])
+        # ONE name for the source prompt. This carried three -- `prompt_text`, `_source` and
+        # `source` -- and the judge builder read the one nothing wrote, which killed the sweep
+        # at its first cell after the generations had been paid for.
         row["prompt_text"] = spec_row["source"]
 
-    for row, spec_row in zip(rows, spec):
-        row["_source"] = spec_row["source"]
     items = _judge_items(rows, concept=concept, baselines=baselines, phase="SWEEP",
                          layer=int(layer), dose=round(float(dose), 6), cfg=cfg)
     results = judge.run_judges(
@@ -380,7 +405,6 @@ def measure_cell(layer: int, dose: float, *, concept: str, baselines: dict[str, 
     records = _apply_verdicts(rows, items, results, concept=concept)
 
     for row in rows:
-        row.pop("_source", None)
         runio.write_row(RESPONSES_FILE, row)
     for rec in records:
         runio.write_row(JUDGE_FILE, dict(rec, layer=int(layer), dose=round(float(dose), 6)))
