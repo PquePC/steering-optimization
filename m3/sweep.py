@@ -35,7 +35,7 @@ from . import battery, config, judge
 __all__ = [
     "calibrate", "find_boundary", "measure_cell", "run_sweep",
     "battery_prompts", "CELLS_FILE", "BOUNDARY_FILE", "RESPONSES_FILE", "JUDGE_FILE",
-    "NORMS_FILE",
+    "NORMS_FILE", "READ_FILE",
 ]
 
 CELLS_FILE = "cells.jsonl"
@@ -625,6 +625,7 @@ def run_sweep(concept: str, cfg: dict | None = None) -> dict:
         config_hash=config.config_hash(cfg),
     )
     runio.write_json(SUMMARY_FILE, summary)
+    _read_bundle(concept, cfg)
     _log(f"DONE  {len(cells)} cells on disk, {measured} this attempt, "
          f"{summary['elapsed_s'] / 60:.1f} min")
     return summary
@@ -657,3 +658,91 @@ def open_run(concept: str, cfg: dict | None = None) -> Path:
     judge.configure_generation(cfg)
     runio.log(f"m3 sweep | concept {concept} | config {config.config_hash(cfg)} | {run_dir}")
     return run_dir
+
+
+# =====================================================================================
+# The read-this bundle
+# =====================================================================================
+
+READ_FILE = "read_this.md"
+
+
+def _read_bundle(concept: str, cfg: dict) -> Path:
+    """Select the responses a human should read, and write them somewhere readable.
+
+    Every deep defect this project has found was found by a person reading raw generations --
+    the apple confabulation, "penguins, cats, cats" scored as detection, a judge calling
+    `## ## ## ##` coherent, `d3` reading the preamble, `d2` measured on a collapsed channel.
+    None was caught by a gate, a rate or a judge.
+
+    So this is a required output, and it is selected by DISAGREEMENT rather than at random.
+    Random sampling of ~3,000 transcripts would have found none of those five; each was visible
+    precisely because two signals said different things about the same text.
+    """
+    from m2 import runio
+
+    limit = int(cfg["READ_BUNDLE_N"])
+    responses = runio.read_rows(RESPONSES_FILE)
+    nulls = runio.read_rows(NULL_FILE)
+    judged = {(r["layer"], r["dose"], r["unit"], r["judge"]): r
+              for r in runio.read_rows(JUDGE_FILE)
+              if r.get("layer") is not None}
+
+    picked: list[tuple[str, dict, str]] = []
+
+    def add(reason: str, row: dict, detail: str = "") -> None:
+        if not any(p[1] is row for p in picked):
+            picked.append((reason, row, detail))
+
+    for row in responses:
+        key = (row.get("layer"), row.get("dose"), row.get("unit"))
+        coh = (judged.get((*key, "coherence")) or {}).get("parsed") or {}
+        eff = (judged.get((*key, "effect")) or {}).get("parsed") or {}
+        # 1. The two signals contradicting each other. This is the `## ## ## ##` failure, made
+        #    surfaceable in both directions -- neither measure dominates the other.
+        if coh.get("coherence") is not None:
+            if row["degenerate"] and coh["coherence"] >= 5:
+                add("judge says coherent, detector says degenerate", row,
+                    f"coherence={coh['coherence']} rule={row['degeneration_reason']}")
+            elif not row["degenerate"] and coh["coherence"] <= 2:
+                add("judge says incoherent, detector says clean", row,
+                    f"coherence={coh['coherence']}")
+        # 2. Influence the mechanical count cannot see. 13% of influential responses on the
+        #    probe archive named the concept zero times.
+        if eff.get("influence", 0) >= 4 and row["concept_mentions"] == 0:
+            add("judged influential, zero concept mentions", row,
+                f"influence={eff['influence']} form={eff.get('form')}")
+        # 3. The covert class: the concept is present and the model denies noticing it.
+        if row.get("self_report_class") == "leaked":
+            add("DENIES detection while emitting the concept", row, "self_report=leaked")
+        # 4. A judged measure that failed outright.
+        if any((row.get("judge_error") or {}).values()):
+            add("a judge call failed here", row,
+                str({k: v for k, v in (row.get("judge_error") or {}).items() if v}))
+
+    # 5. The whole null arm, always. A steered rate is unreadable without what the framing
+    #    produces on its own -- at alpha=0 this model names a concept every time it is asked.
+    for row in nulls:
+        add("alpha=0 null arm", row, "")
+
+    picked = picked[:limit]
+    path = runio.artefact_path(READ_FILE)
+    with path.open("w", encoding="utf-8") as fh:
+        fh.write(f"# Read this — {concept}\n\n")
+        fh.write(f"{len(picked)} of {len(responses) + len(nulls)} responses, selected by "
+                 "**disagreement**, not at random.\n\n")
+        fh.write("Every deep defect this project has found was found by a person reading raw\n"
+                 "generations, and none by a gate, a rate or a judge. Random sampling would\n"
+                 "have found none of them; each was visible because two signals disagreed.\n\n")
+        if not picked:
+            fh.write("Nothing disagreed anywhere. On a real surface that is worth being\n"
+                     "suspicious of rather than pleased about — check that the judges ran.\n")
+        for reason, row, detail in picked:
+            where = ("alpha=0" if row.get("layer") is None
+                     else f"L{row['layer']}@{row['dose']:.3f}")
+            fh.write(f"\n---\n\n### {reason}\n")
+            fh.write(f"`{where}` · {row['channel']} · {row['unit']}"
+                     + (f" · {detail}" if detail else "") + "\n\n")
+            fh.write("```\n" + str(row["response"]).strip()[:1500] + "\n```\n")
+    _log(f"read-this bundle: {len(picked)} responses -> {READ_FILE}")
+    return path

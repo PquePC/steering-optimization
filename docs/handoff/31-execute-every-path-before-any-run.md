@@ -1,6 +1,6 @@
 # 31 — Execute every M3 path offline before any further run
 
-**Status: BUILD NOW — BLOCKS ALL RUNS.** Branch `m3`. No further pod run until this passes.
+**Status: PARTS 1 AND 2 DONE. Part 3 (the read-through) outstanding.** Runs remain blocked until it is. Branch `m3`. No further pod run until this passes.
 Absorbs task [30](30-m2-m3-seam-audit.md), which is its static half.
 
 ## The evidence

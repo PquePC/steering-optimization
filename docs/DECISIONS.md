@@ -759,3 +759,27 @@ repository already tried that and dropped task 10 with the note that the shakedo
 running what reading would not have". The fix is a harness that executes every path.
 **Result:** task [31](handoff/31-execute-every-path-before-any-run.md), BLOCKS ALL RUNS. Task 30
 becomes its static half. Open item 32 in `TODO.md`.
+
+## 2026-08-15 — Every M3 path now executes offline; fourteen defects to date
+**By:** Claude (build), Tomás (the instruction that produced it)
+**Kind:** task complete
+
+`m3/tests/fake_gpu.py` stubs the M2 seam so `python -m m3.run` runs to completion on a laptop with
+no GPU and no API key, plus both calibration paths. Eleven tests, each pinning a path that had
+never executed.
+
+Defects 11–14, all found by building it or by the two static passes: `norms.jsonl` was never
+written, so no run recorded the normalisation every dose depends on; `expensive.GEN_BATCH_MAX`
+ignored M3's value; `model.load_model` orphaned a directory under M2's runs root on every run; and
+`READ_BUNDLE_N` was declared but no read-this bundle existed to consume it.
+
+Phase 1 was rebuilt. Bisecting a bracket has a floor set by the probe count, which is why all 25
+surviving layers on the first real run returned the identical 0.40, and why 24 more were labelled
+`incoherent_at_lowest_probe` when the dose was simply forbidden by ALPHA_CEIL. It now computes
+reachability arithmetically before probing, descends from the highest reachable dose, and reports
+`unreachable` as its own outcome.
+
+**Why:** every one of the fourteen lived in a path nothing had executed, and the 250-test suite
+passed throughout because it tested functions that got called. Two static passes found two defects
+between them; executing the code found five. That ratio is the argument for the harness.
+**Result:** task [31](handoff/31-execute-every-path-before-any-run.md), parts 1 and 2 done.

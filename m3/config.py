@@ -259,6 +259,11 @@ def config_hash(cfg: dict | None = None) -> str:
     folders, so their rows can never be appended into one file and read as one measurement."""
     cfg = dict(CONFIG if cfg is None else cfg)
     cfg.pop("config_hash", None)
+    # Settings that change only what is PRESENTED, never what is measured. Including them would
+    # mean `--set READ_BUNDLE_N=60` lands in a different run folder and re-measures the whole
+    # surface -- about $2 and forty minutes -- to change how many transcripts get printed.
+    for presentation_only in ("READ_BUNDLE_N",):
+        cfg.pop(presentation_only, None)
     blob = json.dumps(cfg, sort_keys=True, default=str)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:12]
 

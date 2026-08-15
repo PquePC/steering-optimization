@@ -171,3 +171,25 @@ def test_an_unreachable_layer_is_not_reported_as_incoherent(run_dir):
     assert rows and all(r["outcome"] == "unreachable" for r in rows), \
         [r["outcome"] for r in rows]
     assert all(r["probes"] == [] for r in rows), "an unreachable layer must cost no generations"
+
+
+def test_the_read_this_bundle_surfaces_judge_versus_mechanical_disagreement(run_dir):
+    """Every deep defect this project found was found by reading raw generations, and none by a
+    gate or a rate. The bundle is the required output that makes that possible, and it selects
+    by disagreement because random sampling would have found none of them."""
+    with fake_gpu(judge_disagree_every=5):
+        m3run.main(["--concept", "Garlic"])
+    text = next(run_dir.glob("garlic_*/read_this.md")).read_text(encoding="utf-8")
+    reasons = {l for l in text.splitlines() if l.startswith("### ")}
+    assert any("degenerate" in r or "incoherent" in r for r in reasons), \
+        f"no judge/detector disagreement surfaced; got {reasons}"
+    assert any("null arm" in r for r in reasons), "the null arm must always be included"
+    assert "```" in text, "the bundle must contain the actual response text"
+
+
+def test_a_presentation_only_setting_does_not_split_the_run_folder(run_dir):
+    """`--set READ_BUNDLE_N=60` changes how many transcripts get printed. If it also changed the
+    config hash it would land in a new folder and re-measure the whole surface to do it."""
+    base = config.config_hash(dict(config.SETTINGS))
+    assert config.config_hash(dict(config.SETTINGS, READ_BUNDLE_N=60)) == base
+    assert config.config_hash(dict(config.SETTINGS, N_IDENTIFY=99)) != base

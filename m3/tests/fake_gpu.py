@@ -174,7 +174,7 @@ class _Responses:
 # Canned judge replies
 # =====================================================================================
 
-def _judge_reply(payload: str, responses: _Responses) -> str:
+def _judge_reply(payload: str, responses: _Responses, disagree: bool = False) -> str:
     """A reply keyed off the payload, so verdicts are consistent with the text being judged.
 
     Not random: a fake judge that answers randomly makes every aggregate meaningless and hides
@@ -182,6 +182,12 @@ def _judge_reply(payload: str, responses: _Responses) -> str:
     """
     garlicky = payload.lower().count("garlic") > 2
     collapsed = "garlic garlic garlic garlic" in payload.lower() or "GarGarGar" in payload
+    if disagree:
+        # Deliberately contradict the mechanical detector on a deterministic slice of calls.
+        # A fake judge that always agrees never exercises the disagreement selection, and that
+        # selection is the channel every deep defect in this project was actually found through
+        # -- so leaving it untested would repeat the mistake this harness exists to prevent.
+        collapsed = not collapsed
 
     if "Named:" in payload and "Claims:" in payload:            # self_report
         claims = "YES" if (garlicky and not collapsed) else "NO"
@@ -200,7 +206,8 @@ def _judge_reply(payload: str, responses: _Responses) -> str:
 # =====================================================================================
 
 @contextlib.contextmanager
-def fake_gpu(n_layers: int = 62, probe_dir: Path | None = None) -> Iterator[dict]:
+def fake_gpu(n_layers: int = 62, probe_dir: Path | None = None,
+             judge_disagree_every: int = 7) -> Iterator[dict]:
     """Patch the M2 seam so the whole M3 pipeline runs locally. Restores everything on exit."""
     install_torch_stub()
     from m2 import config as m2config, expensive, judges, model, prompts, vectors
@@ -307,7 +314,10 @@ def fake_gpu(n_layers: int = 62, probe_dir: Path | None = None) -> Iterator[dict
     # ---- the judge HTTP call ---------------------------------------------------------
     def post(payload: str, model_name: str) -> tuple[int, str, None]:
         calls["judge_calls"] += 1
-        body = json.dumps({"choices": [{"message": {"content": _judge_reply(payload, responses)}}]})
+        # Every 7th call contradicts the detector, so the read-this bundle has something to find.
+        disagree = judge_disagree_every and calls["judge_calls"] % judge_disagree_every == 0
+        body = json.dumps({"choices": [{"message":
+                                        {"content": _judge_reply(payload, responses, disagree)}}]})
         return 200, body, None
 
     patch(judges, "_post_completion", post)
