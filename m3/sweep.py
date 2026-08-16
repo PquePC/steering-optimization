@@ -306,24 +306,35 @@ def calibrate(concept: str, layers: Sequence[int], cfg: dict | None = None) -> d
     # it again -- and, more importantly, rather than appending a second copy. It is only reusable
     # because the battery is part of the config hash: a different battery is a different run
     # folder, so rows found here were produced by exactly these prompts.
-    wanted = {r["unit"] for r in rows}
-    on_disk = [r for r in runio.read_rows(NULL_FILE) if r.get("unit") in wanted]
-    if {r["unit"] for r in on_disk} == wanted:
+    repeats = int(cfg["NULL_REPEATS"])
+    wanted = {(r["unit"], k) for r in rows for k in range(repeats)}
+    on_disk = [r for r in runio.read_rows(NULL_FILE)
+               if (r.get("unit"), r.get("repeat")) in wanted]
+    if {(r["unit"], r["repeat"]) for r in on_disk} == wanted:
         _log(f"null battery: {len(on_disk)} responses already on disk, reused")
         null_rows = on_disk
-        baselines = {r["unit"]: r["response"] for r in on_disk if r["channel"] == "effect"}
+        baselines = {r["unit"]: r["response"] for r in on_disk
+                     if r["channel"] == "effect" and r["repeat"] == 0}
     else:
-        _log(f"null battery: {len(rows)} prompts, unsteered")
-        responses = _generate(rows, layer=None, alpha=None,
-                              max_tokens=int(cfg["MAX_NEW_TOKENS"]), cfg=cfg)
-        null_rows = [battery.response_row(text, channel=r["channel"], concept=concept,
+        _log(f"null battery: {len(rows)} prompts x {repeats} repeats, unsteered")
+        null_rows, baselines = [], {}
+        for k in range(repeats):
+            responses = _generate(rows, layer=None, alpha=None,
+                                  max_tokens=int(cfg["MAX_NEW_TOKENS"]), cfg=cfg)
+            batch = [battery.response_row(text, channel=r["channel"], concept=concept,
                                           unit=r["unit"], layer=None, dose=None, alpha=0.0,
-                                          steered=False)
+                                          steered=False, repeat=k)
                      for r, text in zip(rows, responses)]
-        baselines = {r["unit"]: text
-                     for r, text in zip(rows, responses) if r["channel"] == "effect"}
-        for row in null_rows:
-            runio.write_row(NULL_FILE, row)
+            # Baselines come from repeat 0 ONLY. Every steered response is judged against the
+            # unsteered reply to the same prompt, and that pairing has to be fixed: drawing it
+            # from a different repeat per cell would make the comparison move under the
+            # measurement.
+            if k == 0:
+                baselines = {r["unit"]: text
+                             for r, text in zip(rows, responses) if r["channel"] == "effect"}
+            null_rows.extend(batch)
+            for row in batch:
+                runio.write_row(NULL_FILE, row)
 
     # The effect channel is what `_judge_items` pairs every steered response against; without a
     # baseline for each unit it raises there, one cell into Phase 2 and after the generations.
@@ -425,7 +436,7 @@ def find_boundary(layer: int, concept: str, cfg: dict | None = None) -> dict:
             payload=judge.render("coherence", text_chars=int(cfg["JUDGE_TEXT_CHARS"]),
                                  prompt=r["source"], response=t),
             cache_key=judge.cache_key("BOUNDARY", "coherence", layer=layer,
-                                      dose=round(mid, 6), unit=r["unit"]),
+                                      dose=_floor(mid, 6), unit=r["unit"]),
             concept=concept, model_text=(t,), text_chars=int(cfg["JUDGE_TEXT_CHARS"])),
             row_index=i, judge_kind="coherence")
             for i, (r, t) in enumerate(zip(rows_spec, responses))]
@@ -442,7 +453,9 @@ def find_boundary(layer: int, concept: str, cfg: dict | None = None) -> dict:
         # probe row reads as a per-probe check that exists and passes, which is worse than
         # nothing -- it is the "a check that cannot fail" shape, and this repo has counted
         # eighteen of them.
-        probes.append(dict(dose=round(mid, 6), alpha=alpha,
+        # Floored, matching `max_reachable_dose`. Rounding one and flooring the other
+        # put L16's recorded boundary 1e-6 ABOVE its recorded ceiling on the first run.
+        probes.append(dict(dose=_floor(mid, 6), alpha=alpha,
                            coherence=mean, coherence_n=len(scores), degeneration=degen,
                            sane=sane))
         if sane:
@@ -471,7 +484,7 @@ def find_boundary(layer: int, concept: str, cfg: dict | None = None) -> dict:
     else:
         outcome = "probes_exhausted"
     out = dict(layer=int(layer),
-               dose_max=(round(best_sane, 6) if best_sane is not None else None),
+               dose_max=(_floor(best_sane, 6) if best_sane is not None else None),
                outcome=outcome,
                max_reachable_dose=_floor(max_reachable, 6),
                # What BOUNDARY_PROBES would have to be for this layer's ladder to reach the
@@ -566,6 +579,7 @@ def _summarise_cell(rows: Sequence[dict], *, layer: int, dose: float, alpha: flo
 
     ident = by("identify")
     ident_hits = [r for r in ident if (r.get("judged") or {}).get("identify")]
+    ident_clean = [r for r in ident_hits if not r["degenerate"]]
     effect_scores = judged("effect", "effect", "influence")
     coh_scores = judged("effect", "coherence", "coherence")
     caps = by("capability")
@@ -576,6 +590,19 @@ def _summarise_cell(rows: Sequence[dict], *, layer: int, dose: float, alpha: flo
         # --- judged ---
         identification=(battery.rate(sum(1 for r in ident_hits if r["judged"]["identify"]["matches"]),
                                      len(ident_hits), z) if ident_hits else None),
+        # TODO 35, resolved as "report both, decide nothing". A response that collapsed into
+        # repetition is scored `matches=False` above and counted as a non-identification, exactly
+        # like a fluent answer naming the wrong concept -- but those are different events, and
+        # conflating them is how M2 read a broken model as a covert one. The self-report taxonomy
+        # already excludes collapses; this makes the same view available on the channel that
+        # carries the headline metric, without either version being privileged.
+        #
+        # `None` when every trial collapsed: that cell has no readable identification rate, which
+        # is a different statement from a rate of zero and must not be printed as one.
+        identification_excluding_degenerate=(
+            battery.rate(sum(1 for r in ident_clean if r["judged"]["identify"]["matches"]),
+                         len(ident_clean), z) if ident_clean else None),
+        identify_degenerate_n=sum(1 for r in ident if r["degenerate"]),
         identified_as=sorted({str(r["judged"]["identify"]["named"]).lower()
                               for r in ident_hits}),
         effectiveness=(battery.mean_se(effect_scores) if effect_scores else None),

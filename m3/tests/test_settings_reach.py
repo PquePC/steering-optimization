@@ -75,6 +75,7 @@ PROBES: dict[str, tuple[Any, Any]] = {
     "N_COHERENCE": (2, 1),
     "N_SELF_REPORT": (3, 1),
     "N_CAPABILITY": (2, 1),
+    "NULL_REPEATS": (1, 3),
     "MAX_NEW_TOKENS": (100, 64),
     "TEMPERATURE": (1.0, 0.25),
     "GEN_BATCH_MAX": (25, 40),
@@ -259,6 +260,16 @@ def _w_cell(value, tmp, name, read):
             "payload_len": lambda: max(len(r["payload"]) for r in judged)}[read]()
 
 
+def _w_null_repeats(value, tmp):
+    """Observed as the number of alpha=0 rows `calibrate` actually wrote, not as the setting."""
+    from m2 import runio
+
+    cfg = _cfg("NULL_REPEATS", value)
+    with _wired(cfg, tmp):
+        sweep.calibrate(CONCEPT, [_one_layer(cfg)], cfg)
+        return len(runio.read_rows(sweep.NULL_FILE))
+
+
 def _w_benign(value, tmp):
     cfg = _cfg("BENIGN_CONCEPTS", value)
     # Both gates, evaluated on the same concept: the run gate and the export gate must move
@@ -318,6 +329,7 @@ WITNESSES = {
     "N_COHERENCE": _w_coherence_budget,
     "N_SELF_REPORT": lambda v, t: _w_channel(v, t, "N_SELF_REPORT", "self_report"),
     "N_CAPABILITY": lambda v, t: _w_channel(v, t, "N_CAPABILITY", "capability"),
+    "NULL_REPEATS": _w_null_repeats,
     "MAX_NEW_TOKENS": lambda v, t: _w_cell(v, t, "MAX_NEW_TOKENS", "max_tokens"),
     "TEMPERATURE": lambda v, t: _w_cell(v, t, "TEMPERATURE", "temperature"),
     "GEN_BATCH_MAX": _w_gen_batch,

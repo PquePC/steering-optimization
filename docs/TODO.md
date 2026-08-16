@@ -831,6 +831,10 @@ them. Both are recoverable from commit `9106118`.
 
 ### 34 — Judge calibration items from the 2026-08-15 validation
 
+**Status: d, e, f, g FIXED (2026-08-15). a, b, c remain open — they are judge-prompt
+work, and changing a judge prompt makes new runs incomparable with the Garlic run,
+so it is deliberately not done alongside a concept comparison.**
+
 The first full M3 run was validated by four independent audits plus a hand read. **The
 instrument is sound**: 21,364 aggregate values recomputed with 0 discrepancies, all 2,548 Wilson
 intervals exact, 0 parser mismatches in 2,940 calls, 0 dropped calls, effect baselines paired
@@ -881,7 +885,16 @@ L16 the recorded boundary exceeds the recorded ceiling by 1e-6. Cosmetic — the
 run was 15.999999984, under the ceiling — but it is two roundings of one number.
 
 
-### 35 — DECISION PENDING: does a collapsed response count as a failure to identify?
+### 35 — DECIDED: report both. Does a collapsed response count as a failure to identify?
+
+**Resolved 2026-08-15 as option C.** `_summarise_cell` now emits
+`identification_excluding_degenerate` and `identify_degenerate_n` beside
+`identification`, so both views are on disk for every cell and neither is privileged.
+Verified by replaying the Garlic responses through the changed summariser: 2,156
+fields identical, 0 moved, and the new field separates exactly the two cells where
+the choice changes a rate (L57@0.123: 0.67 -> 0.80; L59@0.116: 0.67 -> 0.33).
+The original decision record follows, unchanged, because the reasoning is what
+matters if this is ever revisited.
 
 **Take this before the confirmation phase, not during it.** Deciding it after seeing which
 answer produces the better operating point is the winner's curse with extra steps.

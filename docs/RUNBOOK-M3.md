@@ -201,7 +201,31 @@ found by a person reading raw generations, and none by a gate, a rate or a judge
 
 ---
 
-## 8. Stopping
+## 8. Spot-checking a cell by hand — `freerun`
+
+Once a run has produced a results table, this is how you see the model behave at one coordinate
+from it, with your own prompts:
+
+```bash
+python -m m3.freerun --concept Garlic --layer 29 --dose 0.114438
+```
+
+`--dose` is copy-pasteable straight out of `cells.jsonl` or a `FINDINGS-*.md`. It loads the model,
+re-extracts the vector, converts the dose to an alpha through the same `alpha_for` the sweep uses,
+runs the full battery at that cell, prints every statistic **measured in that process**, and then
+asks you for prompts — answering each one `n` times unsteered and `n` times steered, side by side.
+
+Nothing is read from the previous run's numbers, deliberately: re-measuring makes this an
+independent check on the sweep rather than a viewer for it.
+
+Useful flags: `--n 5` (responses per arm), `--alpha 6.1` (instead of a dose), `--no-battery`
+(skip the opening battery), `--prompt "..."` (ask and exit, repeatable, no interactive loop),
+`--no-judge` (mechanical measures only). It refuses an unreachable dose rather than clamping it,
+and refuses a non-benign concept outright.
+
+---
+
+## 9. Stopping
 
 ```bash
 runpodctl stop pod $RUNPOD_POD_ID

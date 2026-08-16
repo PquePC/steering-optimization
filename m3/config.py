@@ -154,7 +154,13 @@ SETTINGS: dict[str, Any] = dict(
     N_EFFECT=4,
 
     # How many of those task responses also get a concept-blind coherence judgement.
-    N_COHERENCE=2,
+    #
+    # Equal to N_EFFECT, deliberately. At 2 it covered `task_story` and `task_landscape` only, so
+    # `task_notice` and `task_words` had NO coherence cross-check at all -- and both of the
+    # hyphen-glued collapses the mechanical detector missed on the 2026-08-15 run were in those
+    # two unchecked channels. A channel with neither signal watching it is where a defect lives
+    # undisturbed. Two extra judge calls per cell is about $0.30 on a full sweep.
+    N_COHERENCE=4,
 
     # Unforced noticing prompts: does the model volunteer that something was injected.
     # Set to 0 to drop the channel entirely; it is not the detection metric. It is kept small
@@ -164,6 +170,18 @@ SETTINGS: dict[str, Any] = dict(
 
     # Verifiable-answer prompts, scored by exact match. No judge call.
     N_CAPABILITY=2,
+
+    # How many times the unsteered (alpha=0) battery is repeated.
+    #
+    # The null arm is the reference every steered rate is read against, and at 1 repeat the
+    # self-report channel is n=3 -- so "0 false positives" rests on three trials, which a modest
+    # true rate would produce by chance. It is also the cheapest measurement in the run: one
+    # extra generation batch, about 9 seconds, no judge calls at all. There is no reason for the
+    # anchor to be the least-measured thing in the experiment.
+    #
+    # The effect baselines each steered response is compared against come from repeat 0 only, so
+    # the pairing stays fixed and comparable.
+    NULL_REPEATS=3,
 
     # =================================================================================
     # 4. GENERATION

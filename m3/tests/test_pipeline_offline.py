@@ -235,7 +235,8 @@ def test_the_null_arm_survives_a_bundle_full_of_disagreements(run_dir):
         m3run.main(["--concept", "Garlic"])
     text = next(run_dir.glob("garlic_*/read_this.md")).read_text(encoding="utf-8")
     nulls = [l for l in text.splitlines() if l.startswith("### ") and "null arm" in l]
-    assert len(nulls) == config.battery_size(), \
+    expected = config.battery_size() * config.CONFIG["NULL_REPEATS"]
+    assert len(nulls) == expected, \
         "the null arm was truncated by READ_BUNDLE_N; it must sit outside the cap"
     assert "not shown here" in text, "a cap that drops findings must say how many"
 
@@ -337,7 +338,7 @@ def test_resuming_does_not_append_a_second_copy_of_phase_zero(run_dir):
             m3run.main(["--concept", "Garlic"])
     assert (len(_load(run_dir, "norms.jsonl")),
             len(_load(run_dir, "null_transcripts.jsonl"))) == first
-    assert first[1] == config.battery_size()
+    assert first[1] == config.battery_size() * config.CONFIG["NULL_REPEATS"]
 
 
 def test_the_probe_loader_reads_the_field_name_the_archive_actually_carries(tmp_path):
@@ -412,3 +413,41 @@ def test_generations_are_kept_when_judging_raises(run_dir, monkeypatch):
     kept = _load(run_dir, sweep.UNJUDGED_FILE)
     assert len(kept) == config.battery_size(), "the paid generations were discarded"
     assert all(r["response"] for r in kept)
+
+
+def test_freerun_executes_end_to_end(run_dir, capsys):
+    """`m3.freerun` loads a model, converts a dose to an alpha, runs the battery and generates
+    both arms. It is the shortest path from a coordinate in a results table to the text the model
+    actually produced, so it must not be the one path nobody executed before a pod."""
+    from m3 import freerun
+
+    with fake_gpu():
+        assert freerun.main(["--concept", "Garlic", "--layer", "29", "--dose", "0.11",
+                             "--n", "2", "--prompt", "Tell me a random word"]) == freerun.EXIT_OK
+    out = capsys.readouterr().out
+    assert "CELL STATISTICS" in out
+    assert "identification (forced)" in out and "claims detection" in out
+    assert "--- UNSTEERED ---" in out and "--- STEERED ---" in out
+    assert "STATISTICS FOR THIS QUESTION" in out
+
+
+def test_freerun_refuses_an_unreachable_dose_rather_than_clamping(run_dir, capsys):
+    """A clamped alpha is a cell measured at a dose other than the one asked for. The sweep
+    refuses; so must the tool people will use to spot-check the sweep."""
+    from m3 import freerun
+
+    with fake_gpu():
+        rc = freerun.main(["--concept", "Garlic", "--layer", "29", "--dose", "99.0",
+                           "--no-battery", "--prompt", "hi"])
+    assert rc == freerun.EXIT_CONFIG
+    assert "not reachable" in capsys.readouterr().out
+
+
+def test_freerun_will_not_print_generations_for_a_non_benign_concept(run_dir, capsys):
+    from m3 import freerun
+
+    with fake_gpu():
+        rc = freerun.main(["--concept", "weapon", "--layer", "29", "--dose", "0.1",
+                           "--prompt", "hi"])
+    assert rc == freerun.EXIT_CONFIG
+    assert "BENIGN_CONCEPTS" in capsys.readouterr().out

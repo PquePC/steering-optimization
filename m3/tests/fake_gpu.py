@@ -237,8 +237,15 @@ def fake_gpu(n_layers: int = 62, probe_dir: Path | None = None,
         return ctx
 
     patch(model, "load_model", load_model)
+    # Exactly the keys the real `hook_liveness` returns, taken from the 2026-08-15 run's
+    # recorded `summary.json`. A stub with fewer keys is a stub that lets a caller index one the
+    # real function does provide -- or, worse, lets a caller forget one it does not. `passed` was
+    # missing here and `m3.freerun` read it, which failed at the first place it was exercised.
     patch(model, "hook_liveness", lambda *a, **k: dict(
-        d_start_pos=3.59e1, d_all_pos=3.56e1, layer=37, alpha=3.655))
+        check="R14", layer=37, alpha=3.7695278093917803, alpha_source="alpha_for(L37, r=0.3)",
+        start_pos=3, vec_fingerprint="21057bbe301e",
+        d_start_pos=3.5875e1, d_all_pos=3.55625e1, threshold=0.001,
+        paths_distinct=True, passed=True))
     patch(model, "provenance", lambda: dict(gpu="FAKE", torch="none", git_commit="0" * 40,
                                             git_dirty=False, git_branch="m3"))
 
