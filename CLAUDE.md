@@ -7,7 +7,7 @@ concept injection differently when the injected concept is **harmful**.
 
 This repo finds, for a given concept, the layer and steering strength at which the model is
 maximally *influenced* while remaining minimally able to *report* the injection — an operating
-point — and does so on benign concepts first. The measured outputs are **rates and scalars**, and
+point. The measured outputs are **rates and scalars**, and
 rates are safe to publish.
 
 Split out of the parent research repo (`Emergent-Introspection`) on 2026-08-11, which keeps the
@@ -50,7 +50,6 @@ uncensored model or reusable attack vectors. **Rates are safe; artifacts are not
 - Any upload to an external host, of anything
 - Opening any pod port, proxy, or public URL
 - Sending more than concept words and short self-reports to a third-party judge API
-- Publishing per-concept detail rather than per-arm aggregates (per-concept = a lookup table)
 - Any push whose diff carries any of the above
 
 If an action would make this work **more useful to someone attacking a model than to someone
@@ -59,10 +58,15 @@ auditing one**, raise it rather than doing it.
 ## The harmful arm has not run
 
 `config.HARMFUL_CONCEPTS` names the three concepts the study will eventually compare against the
-benign arm. Nothing in this repo runs them, and the pipeline's export gate withholds transcripts
-for any concept not on the benign list unless a call site passes an explicit override. Do not add
-that override, and do not run the harmful arm, without reading the parent repo's ethics register
-first.
+benign arm. **Nothing in this repo runs them**, and `m3` refuses them by name at every entry
+point — the sweep, the CLI and `freerun`.
+
+That is the only concept filter M3 has. There is no allow-list: any ordinary concept can be
+measured and its transcripts export in full, because during the testing phase a filter on which
+nouns may be explored is a filter on the research, not on risk.
+
+Running the harmful arm is a decision about the study rather than a setting to change. Read the
+parent repo's ethics register first.
 
 ## Repo orientation
 

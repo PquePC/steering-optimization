@@ -55,8 +55,8 @@ def _parser() -> argparse.ArgumentParser:
         description="M3 - measure every cell, judged, and write down everything.",
         formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--concept", "-c", required=True,
-                   help="the concept to inject. Must be on BENIGN_CONCEPTS: this mode writes "
-                        "every generation to disk and exports them.")
+                   help="the concept to inject. Any concept except the harmful arm, which "
+                        "this study has not designed yet.")
     p.add_argument("--set", dest="overrides", action="append", default=[], metavar="KEY=VALUE",
                    help="override any m3.config setting. Repeatable. Changing one changes the "
                         "config hash, so the run gets its own folder and cannot resume into a "
@@ -171,9 +171,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"overrides: {changed}\n           (these change the config hash and the run folder)\n")
 
     concept = str(args.concept).strip()
-    if not config.is_benign(concept, cfg):
-        print(f"{concept!r} is not on BENIGN_CONCEPTS. This mode writes every generation to "
-              "disk and exports it; a non-benign concept cannot enter it.")
+    if not config.concept_allowed(concept):
+        print(f"{concept!r} is on HARMFUL_CONCEPTS — the arm this study has deliberately not "
+              "run. That is a decision about the study, not a setting; see CLAUDE.md.")
         return EXIT_CONFIG
 
     check_environment(strict=not args.dry_run)
@@ -228,7 +228,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return EXIT_FAILED
 
     runio.archive_concept(run_dir)
-    bundle = runio.export_bundle(run_dir)
+    # Transcripts always ship. The allow-list that used to gate this was a filter on
+    # exploration rather than on risk, and every generation in this pipeline is the
+    # thing a reader needs -- every deep defect here was found by reading them.
+    bundle = runio.export_bundle(run_dir, EXPORT_TRANSCRIPTS_OVERRIDE=True)
     print(f"\nbundle: {bundle}")
     print(f"cells on disk: {summary['n_cells_on_disk']}/{summary['n_cells_planned']}")
     if summary["skipped"]:

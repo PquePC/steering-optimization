@@ -84,7 +84,6 @@ PROBES: dict[str, tuple[Any, Any]] = {
     "JUDGE_MAX_TOKENS": (120, 48),
     "JUDGE_TEXT_CHARS": (1200, 80),
     "RATE_CI_Z": (1.96, 2.576),
-    "BENIGN_CONCEPTS": (("Garlic", "Silk"), ("Silk", "Bread")),
     "READ_BUNDLE_N": (40, 1),
 }
 
@@ -270,15 +269,6 @@ def _w_null_repeats(value, tmp):
         return len(runio.read_rows(sweep.NULL_FILE))
 
 
-def _w_benign(value, tmp):
-    cfg = _cfg("BENIGN_CONCEPTS", value)
-    # Both gates, evaluated on the same concept: the run gate and the export gate must move
-    # together. They read two different lists until this was unified.
-    from m2 import runio
-    return (config.is_benign("Garlic", cfg),
-            runio.transcripts_allowed("Garlic", config.m2_config("Garlic", cfg))[0])
-
-
 def _w_read_bundle(value, tmp):
     """A cap is only observable on a run that produces more disagreements than the cap.
 
@@ -338,7 +328,6 @@ WITNESSES = {
     "JUDGE_MAX_TOKENS": lambda v, t: _w_transport(v, t, "JUDGE_MAX_TOKENS", "max_tokens"),
     "JUDGE_TEXT_CHARS": lambda v, t: _w_cell(v, t, "JUDGE_TEXT_CHARS", "payload_len"),
     "RATE_CI_Z": lambda v, t: _w_cell(v, t, "RATE_CI_Z", "ci_bounds"),
-    "BENIGN_CONCEPTS": _w_benign,
     "READ_BUNDLE_N": _w_read_bundle,
 }
 
@@ -399,24 +388,16 @@ def test_a_setting_that_is_ignored_would_fail_this_test(tmp_path):
         WITNESSES["JUDGE_MAX_TOKENS"](b, tmp_path)
 
 
-def test_both_benign_gates_resolve_through_one_list(tmp_path, monkeypatch):
-    """The run gate and the export gate were two gates reading two lists.
+def test_the_only_concept_gate_left_is_the_harmful_arm(tmp_path, monkeypatch):
+    """The benign allow-list is gone from M3 -- it refused ordinary nouns nobody had added to a
+    seven-item tuple, which filtered exploration rather than risk. What must NOT be gone is the
+    refusal on the arm this study has not designed."""
+    from m3 import run as m3run
 
-    `m3.sweep.open_run` refused on M3's `BENIGN_CONCEPTS`; `m2.runio.transcripts_allowed`
-    refused on M2's. They agreed only because M3's list happened to be a strict subset, which
-    nothing checked and nothing would have reported. A concept must now be on both, and a
-    caller's config can only ever narrow what may be exported.
-    """
-    from m2 import config as m2config, runio
-
-    cfg = dict(config.SETTINGS, BENIGN_CONCEPTS=("Silk",))
-    bridged = config.m2_config("Garlic", cfg)
-    # Narrowing M3's list closes BOTH gates on a concept M2 still allows.
-    assert config.is_benign("Garlic", cfg) is False
-    assert runio.transcripts_allowed("Garlic", bridged)[0] is False
-    assert m2config.is_benign("Garlic") is True, "M2's own list is unchanged"
-
-    # Widening M3's list cannot open either gate on a concept M2 does not allow.
-    wide = dict(config.SETTINGS, BENIGN_CONCEPTS=("Garlic", "weapon"))
-    assert config.is_benign("weapon", wide) is False
-    assert runio.transcripts_allowed("weapon", config.m2_config("weapon", wide))[0] is False
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fake")
+    monkeypatch.setenv("HF_TOKEN", "fake")
+    assert config.concept_allowed("Tundras")
+    assert not config.concept_allowed("weapon")
+    assert m3run.main(["--concept", "weapon", "--dry-run"]) == m3run.EXIT_CONFIG
+    with pytest.raises(PermissionError, match="HARMFUL"):
+        sweep.open_run("poison", dict(config.SETTINGS))

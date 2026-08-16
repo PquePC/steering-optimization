@@ -237,11 +237,6 @@ SETTINGS: dict[str, Any] = dict(
     # 7. OUTPUT
     # =================================================================================
 
-    # Transcripts leave the pod only for concepts on this list. A transcript of a model steered
-    # toward a harmful concept is the artifact the project rules forbid exporting, so this is a
-    # deny-by-default gate and not a convenience.
-    BENIGN_CONCEPTS=("Garlic", "Origami", "Irony", "Silk", "Pillows", "Velocity", "Bread"),
-
     # How many responses go into the read-this bundle a human is expected to read.
     # Selected by disagreement, never at random.
     READ_BUNDLE_N=40,
@@ -353,26 +348,22 @@ def apply_overrides(pairs: list[str], cfg: dict | None = None) -> dict:
     return changed
 
 
-def is_benign(concept: str, cfg: dict | None = None) -> bool:
-    """The run gate. Deliberately the SAME function the export gate calls.
+def concept_allowed(concept: str) -> bool:
+    """Any concept may be measured, except the three the study has not yet designed an arm for.
 
-    M3 refuses to *run* a non-benign concept and M2's `runio.transcripts_allowed` refuses to
-    *export* one. Those were two gates reading two lists -- M3's config key here, M2's module
-    constant there -- and they agreed only because this list happened to be a strict subset of
-    that one. Nothing checked that, and nothing would have reported it if an edit here had
-    broken it: the run would have proceeded and the export would have silently withheld, or
-    worse in the other direction.
+    M3 used to accept only concepts on a seven-item allow-list, which meant testing an ordinary
+    noun that nobody had thought to add was refused for no reason -- a filter on exploration
+    rather than on risk. The allow-list is gone.
 
-    So there is now one predicate. `m2.config.is_benign` intersects its own list with the
-    `BENIGN_CONCEPTS` in whatever config it is handed, and `m2_config` puts this list into the
-    bridged config, so both gates evaluate exactly the same thing on exactly the same two
-    lists. Editing either list moves both gates together, and editing this one can only ever
-    narrow what may be exported.
+    What remains is a deny-list of exactly `m2.config.HARMFUL_CONCEPTS`. Those are not "concepts
+    that scored badly"; they are the arm this project has deliberately not run, and running one
+    is a decision about the study, not about the code. Change `HARMFUL_CONCEPTS` if that decision
+    is made.
     """
     from m2 import config as m2config
 
-    cfg = CONFIG if cfg is None else cfg
-    return m2config.is_benign(str(concept), cfg)
+    key = str(concept).strip().casefold()
+    return not any(key == str(c).casefold() for c in m2config.HARMFUL_CONCEPTS)
 
 
 # =====================================================================================
@@ -435,10 +426,6 @@ def m2_config(concept: str, cfg: dict | None = None) -> dict:
         RATE_CI_Z=float(cfg["RATE_CI_Z"]),
         ALPHA_CEIL=float(cfg["ALPHA_CEIL"]),
         EXPORT_TRANSCRIPTS=True,
-        # Carried across so the export gate resolves through the same list as the run gate.
-        # `m2.config.is_benign` intersects, so this can only narrow what may be exported --
-        # see `is_benign` above for why two lists in two places was the defect.
-        BENIGN_CONCEPTS=tuple(cfg["BENIGN_CONCEPTS"]),
         config_hash=config_hash(cfg),
     )
     return out

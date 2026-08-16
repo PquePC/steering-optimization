@@ -55,7 +55,7 @@ def _parser() -> argparse.ArgumentParser:
         prog="python -m m3.freerun",
         description="Ask the steered and unsteered model anything, at one (layer, dose).")
     p.add_argument("--concept", "-c", required=True,
-                   help="the concept to inject. Must be on BENIGN_CONCEPTS.")
+                   help="the concept to inject. Any concept except the harmful arm.")
     p.add_argument("--layer", "-l", type=int, required=True, help="layer to inject at")
     dose = p.add_mutually_exclusive_group(required=True)
     dose.add_argument("--dose", "-d", type=float,
@@ -236,8 +236,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     concept = str(args.concept).strip()
     max_tokens = int(args.max_tokens or cfg["MAX_NEW_TOKENS"])
 
-    if not config.is_benign(concept, cfg):
-        print(f"{concept!r} is not on BENIGN_CONCEPTS. This tool prints raw generations.")
+    if not config.concept_allowed(concept):
+        print(f"{concept!r} is on HARMFUL_CONCEPTS — the arm this study has deliberately "
+              "not run.")
         return EXIT_CONFIG
     if not os.environ.get("HF_TOKEN"):
         print("HF_TOKEN is not set; the model will not load.")

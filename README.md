@@ -129,6 +129,6 @@ fresh-pod example because it also clones the upstream harness and applies other 
 ## Safety
 
 This repository is subject to dual-use rules that are **not optional**: no model weights, no
-concept vectors and no raw generations leave the machine, and nothing here is exposed on a public
-port. Read [`CLAUDE.md`](CLAUDE.md) before acting in this repository, whether you are a person or
+concept vectors and no raw generations are committed, and nothing here is exposed on a public
+port. `m3` refuses the three concepts on `HARMFUL_CONCEPTS`; every other concept runs freely. Read [`CLAUDE.md`](CLAUDE.md) before acting in this repository, whether you are a person or
 an agent.

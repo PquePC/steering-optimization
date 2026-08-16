@@ -69,9 +69,13 @@ def test_config_hash_changes_when_any_setting_does():
     assert base == config.config_hash(dict(config.SETTINGS))
 
 
-def test_transcripts_are_gated_on_a_benign_concept_list():
-    assert config.is_benign("Garlic") and config.is_benign("garlic")
-    assert not config.is_benign("weapon")
+def test_any_concept_may_be_measured_except_the_harmful_arm():
+    """The seven-item allow-list is gone: it filtered exploration, not risk. What remains is a
+    deny-list of the arm this study has deliberately not designed."""
+    for ordinary in ("Garlic", "garlic", "Velocity", "Tundras", "Chocolate", "Xylophones"):
+        assert config.concept_allowed(ordinary), ordinary
+    for harmful in ("weapon", "Weapon", "poison", "assault"):
+        assert not config.concept_allowed(harmful), harmful
 
 
 def test_m3_never_inherits_m2_proxy_settings_for_a_value_it_owns():
@@ -332,9 +336,16 @@ def test_the_cost_estimate_scales_with_the_grid():
     assert full["judge_usd"] < 5.0, "a run this size should not cost five dollars"
 
 
-def test_the_cli_refuses_a_non_benign_concept_before_loading_anything(capsys):
+def test_the_cli_refuses_the_harmful_arm_before_loading_anything(capsys):
     assert m3run.main(["--concept", "weapon", "--dry-run"]) == m3run.EXIT_CONFIG
-    assert "BENIGN_CONCEPTS" in capsys.readouterr().out
+    assert "HARMFUL_CONCEPTS" in capsys.readouterr().out
+
+
+def test_the_cli_accepts_any_ordinary_concept(capsys):
+    """The seven-item allow-list is gone. An ordinary noun nobody thought to add used to be
+    refused, which filtered exploration rather than risk."""
+    assert m3run.main(["--concept", "Tundras", "--dry-run"]) == m3run.EXIT_OK
+    assert "M3 sweep   concept=Tundras" in capsys.readouterr().out
 
 
 def test_the_cli_rejects_an_unknown_override(capsys):

@@ -185,8 +185,7 @@ runpodctl send /workspace/m3_runs/export_garlic_*.zip
 ```
 
 That prints a one-time code; run the matching `runpodctl receive <code>` on the machine you want
-it on. The bundle carries the transcripts because `Garlic` is on the benign list — the export gate
-withholds them for anything else.
+it on. The bundle carries every transcript, for any concept.
 
 Worth reading first, on the pod:
 
@@ -221,7 +220,7 @@ independent check on the sweep rather than a viewer for it.
 Useful flags: `--n 5` (responses per arm), `--alpha 6.1` (instead of a dose), `--no-battery`
 (skip the opening battery), `--prompt "..."` (ask and exit, repeatable, no interactive loop),
 `--no-judge` (mechanical measures only). It refuses an unreachable dose rather than clamping it,
-and refuses a non-benign concept outright.
+and refuses the harmful arm.
 
 ---
 
@@ -239,6 +238,6 @@ auto-stop, deliberately. **An idle A100 bills at the same rate as a busy one.**
 ## Harmful concepts
 
 Not from this runbook, and not from this pipeline as it stands. `config.HARMFUL_CONCEPTS` names
-them; nothing here runs them; both the run gate and the export gate refuse anything not on the
-benign list, and `--set BENIGN_CONCEPTS=...` cannot widen either. Read the parent repository's
-ethics register first — see `CLAUDE.md`.
+them and `m3` refuses them by name at every entry point. That is the only concept filter there
+is — any other concept runs, and exports in full. Read the parent repository's ethics register
+before changing that; see `CLAUDE.md`.

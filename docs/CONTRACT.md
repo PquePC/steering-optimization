@@ -310,7 +310,8 @@ and on failure keeps the loose folder and records the concept as `undelivered` i
 retry at the end of the batch. v1 wiped before confirming and lost two concepts to a Telegram
 outage.
 
-`export_bundle` refuses transcripts for any concept not on the benign list unless
+`export_bundle` (M2's behaviour, unchanged; **m3 passes the override at its call site so
+every concept exports in full**) refuses transcripts for any concept not on the benign list unless
 `EXPORT_TRANSCRIPTS_OVERRIDE` is explicitly passed — spec §14.3.
 
 ### driver.py

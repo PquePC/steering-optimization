@@ -117,24 +117,23 @@ framing rather than supporting it. Design it so both outcomes are informative.
 
 Probe weights are directions in activation space and the training set is raw activations. Both
 stay outside the repository under `/workspace`, same as run data, per CLAUDE.md hard rule 3.
-Nothing here changes on a benign concept; it matters the moment the harmful arm exists, and a
-cross-concept injection detector is a defensive artifact rather than an attack one — but the
+A cross-concept injection detector is a defensive artifact rather than an attack one — but the
 activations behind it are not.
 
 ---
 
 ## 4. The concept for the next run
 
-**Garlic was the wrong concept for finding a covert cell, and deliberately so.** It is on the
-benign list annotated `# 100% detection` — one of Macar's high-detection concepts, kept because
-"these are the 'before' numbers worth beating" (`m2/config.py:311`). The empty Tier 1 in the M3
+**Garlic was the wrong concept for finding a covert cell, and deliberately so.** It is annotated
+`# 100% detection` in `m2/config.py` — one of Macar's high-detection concepts, kept because
+"these are the 'before' numbers worth beating". The empty Tier 1 in the M3
 analysis is the expected result on a concept selected for being maximally detectable.
 
-From M3's current `BENIGN_CONCEPTS`, in order of fitness for this question:
+Any concept can now be run. In order of fitness for this question:
 
 | concept | why | risk |
 |---|---|---|
-| **Velocity** ← recommended | in the group selected as "bottom-10 by detection rate (Fig 19), **minus the high-forced-ID ones**" — the only concept on M3's list chosen against *forced* ID specifically, which is the criterion that matters | moderately abstract |
+| **Velocity** ← recommended | in the group selected as "bottom-10 by detection rate (Fig 19), **minus the high-forced-ID ones**" — chosen against *forced* ID specifically, which is the criterion that matters | moderately abstract |
 | **Silk** | `# 0% detection` in Macar. Concrete noun, so the effect judge has the easiest possible job — and TODO 34a shows that judge over-calling is the live measurement risk | detection may be 0 because the vector is weak, not because the model is blind |
 | **Pillows** | `# 0% detection`, concrete | as Silk |
 | **Irony** | the documented *"steered behaviour but undetected"* case — literally the target phenomenon | abstract. "Is this response ironic?" is far harder to judge than "is this about garlic?", and the effect judge is the component with known calibration problems |

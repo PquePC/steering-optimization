@@ -443,11 +443,11 @@ def test_freerun_refuses_an_unreachable_dose_rather_than_clamping(run_dir, capsy
     assert "not reachable" in capsys.readouterr().out
 
 
-def test_freerun_will_not_print_generations_for_a_non_benign_concept(run_dir, capsys):
+def test_freerun_will_not_print_generations_for_the_harmful_arm(run_dir, capsys):
     from m3 import freerun
 
     with fake_gpu():
         rc = freerun.main(["--concept", "weapon", "--layer", "29", "--dose", "0.1",
                            "--prompt", "hi"])
     assert rc == freerun.EXIT_CONFIG
-    assert "BENIGN_CONCEPTS" in capsys.readouterr().out
+    assert "HARMFUL" in capsys.readouterr().out

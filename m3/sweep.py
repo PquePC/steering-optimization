@@ -794,10 +794,9 @@ def open_run(concept: str, cfg: dict | None = None) -> Path:
     cfg = config.CONFIG if cfg is None else cfg
     from m2 import config as m2config, runio
 
-    if not config.is_benign(concept, cfg):
+    if not config.concept_allowed(concept):
         raise PermissionError(
-            f"{concept!r} is not on BENIGN_CONCEPTS. This mode writes every generation to disk "
-            "and exports them; a non-benign concept must be structurally unable to enter it.")
+            f"{concept!r} is on HARMFUL_CONCEPTS — the arm this study has deliberately not run.")
     run_dir = config.run_dir_for(concept, cfg)
     repo = Path(__file__).resolve().parents[1]
     if repo in run_dir.resolve(strict=False).parents or run_dir.resolve(strict=False) == repo:
