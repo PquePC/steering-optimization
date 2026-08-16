@@ -119,6 +119,13 @@ def battery_prompts(cfg: dict | None = None) -> list[dict]:
         rows.append(dict(channel="effect", unit=pid, trial=None,
                          prompt=text, start=int(st), source=row["text"]))
 
+    explain = list(battery.EXPLAIN_PROMPTS)[:int(cfg["N_EXPLAIN"])]
+    rendered, starts, ids = expensive.task_batch(explain)
+    for row, text, st, pid in zip(explain, rendered, starts, ids):
+        rows.append(dict(channel="explain", unit=pid, trial=None,
+                         prompt=text, start=int(st), source=row["text"],
+                         accept=tuple(row["accept"])))
+
     caps = list(battery.CAPABILITY_PROMPTS)[:int(cfg["N_CAPABILITY"])]
     rendered, starts, ids = expensive.task_batch(caps)
     for row, text, st, pid in zip(caps, rendered, starts, ids):
@@ -181,7 +188,7 @@ def _judge_items(rows: Sequence[dict], *, concept: str, baselines: dict[str, str
                                                concept=concept, model_text=(response,)),
                               row_index=idx, judge_kind="self_report"))
 
-        elif ch == "effect":
+        elif ch in ("effect", "explain"):
             baseline = baselines.get(row["unit"])
             if baseline is None:
                 raise KeyError(
@@ -198,10 +205,13 @@ def _judge_items(rows: Sequence[dict], *, concept: str, baselines: dict[str, str
                                                model_text=(baseline, response)),
                               row_index=idx, judge_kind="effect"))
 
-            # Coherence on a fixed prefix of the effect responses, not a random sample, so the
-            # same prompts are scored at every cell and cells stay comparable.
-            if coherence_budget > 0:
-                coherence_budget -= 1
+            # Coherence on a fixed prefix of the effect responses, so the same prompts are
+            # scored at every cell and cells stay comparable -- and on EVERY explain response,
+            # because `on_task` is the over-steer signal and an explain prompt is the only one
+            # it can fire on. A story cannot stop being a story; an answer can stop answering.
+            if ch == "explain" or coherence_budget > 0:
+                if ch != "explain":
+                    coherence_budget -= 1
                 payload = judge.render("coherence", text_chars=text_chars,
                                        prompt=row["prompt_text"], response=response)
                 items.append(dict(judge.build_item("coherence", payload=payload,
@@ -314,7 +324,7 @@ def calibrate(concept: str, layers: Sequence[int], cfg: dict | None = None) -> d
         _log(f"null battery: {len(on_disk)} responses already on disk, reused")
         null_rows = on_disk
         baselines = {r["unit"]: r["response"] for r in on_disk
-                     if r["channel"] == "effect" and r["repeat"] == 0}
+                     if r["channel"] in ("effect", "explain") and r["repeat"] == 0}
     else:
         _log(f"null battery: {len(rows)} prompts x {repeats} repeats, unsteered")
         null_rows, baselines = [], {}
@@ -331,14 +341,14 @@ def calibrate(concept: str, layers: Sequence[int], cfg: dict | None = None) -> d
             # measurement.
             if k == 0:
                 baselines = {r["unit"]: text
-                             for r, text in zip(rows, responses) if r["channel"] == "effect"}
+                             for r, text in zip(rows, responses) if r["channel"] in ("effect", "explain")}
             null_rows.extend(batch)
             for row in batch:
                 runio.write_row(NULL_FILE, row)
 
     # The effect channel is what `_judge_items` pairs every steered response against; without a
     # baseline for each unit it raises there, one cell into Phase 2 and after the generations.
-    missing = {r["unit"] for r in rows if r["channel"] == "effect"} - set(baselines)
+    missing = {r["unit"] for r in rows if r["channel"] in ("effect", "explain")} - set(baselines)
     if missing:
         raise RuntimeError(f"the null arm produced no baseline for {sorted(missing)}")
 
@@ -368,10 +378,11 @@ def find_boundary(layer: int, concept: str, cfg: dict | None = None) -> dict:
     lo, hi = (float(x) for x in cfg["BOUNDARY_BRACKET"])
     ratio = float(cfg["BOUNDARY_STEP"])
     probes: list[dict] = []
-    task = list(battery.TASK_PROMPTS)[:int(cfg["BOUNDARY_N"])]
+    task = list(battery.EXPLAIN_PROMPTS)[:int(cfg["BOUNDARY_N"])]
     from m2 import expensive
     rendered, starts, ids = expensive.task_batch(task)
-    rows_spec = [dict(channel="effect", unit=pid, prompt=t, start=int(s), source=r["text"])
+    rows_spec = [dict(channel="explain", unit=pid, prompt=t, start=int(s), source=r["text"],
+                      accept=tuple(r["accept"]))
                  for r, t, s, pid in zip(task, rendered, starts, ids)]
 
     # Reachability is ARITHMETIC, not something to discover by probing:
@@ -443,11 +454,32 @@ def find_boundary(layer: int, concept: str, cfg: dict | None = None) -> dict:
         results = judge.run_judges([{k: v for k, v in it.items()
                                      if k not in ("row_index", "judge_kind")} for it in items],
                                    concurrency=int(cfg["JUDGE_CONCURRENT"]))
-        scores = [p["coherence"] for p, _e in (judge.verdict(r) for r in results) if p]
+        parsed = [p for p, _e in (judge.verdict(r) for r in results) if p]
+        scores = [p["coherence"] for p in parsed]
         mean = sum(scores) / len(scores) if scores else None
         degen = sum(1 for r in rows if r["degenerate"]) / len(rows)
 
-        sane = mean is not None and mean >= float(cfg["BOUNDARY_COHERENCE_MIN"])
+        # THREE conditions, because coherence alone cannot see over-steering. At L29 on the
+        # first Garlic run the judge held coherence at 8/10 all the way to `dose_max`, while
+        # the same model at 70% of that dose answered "what is a computer" with garlic's
+        # botanical profile. Well-formed prose about the wrong subject is exactly what a
+        # coherence judge is built to pass.
+        #
+        #   coherence  the response is not collapsed
+        #   on_task    it still addresses the question that was asked
+        #   answered   the true content survived, checked mechanically against `accept`
+        #
+        # A dose is only the boundary if the model still ANSWERS there, not merely if it still
+        # writes. This is what makes the whole grid sit in the useful range instead of above it.
+        on_task = [bool(p.get("on_task")) for p in parsed]
+        answered = [battery.capability_correct(t, r["accept"])
+                    for r, t in zip(rows_spec, responses)]
+        frac_on_task = (sum(on_task) / len(on_task)) if on_task else 0.0
+        frac_answered = sum(answered) / len(answered)
+        floor = float(cfg["BOUNDARY_ANSWER_MIN"])
+
+        sane = (mean is not None and mean >= float(cfg["BOUNDARY_COHERENCE_MIN"])
+                and frac_on_task >= floor and frac_answered >= floor)
         # No `unreachable` field here: reachability is decided arithmetically before the ladder
         # starts, and an unreachable layer returns with `probes=[]`. A constant `False` on every
         # probe row reads as a per-probe check that exists and passes, which is worse than
@@ -457,7 +489,7 @@ def find_boundary(layer: int, concept: str, cfg: dict | None = None) -> dict:
         # put L16's recorded boundary 1e-6 ABOVE its recorded ceiling on the first run.
         probes.append(dict(dose=_floor(mid, 6), alpha=alpha,
                            coherence=mean, coherence_n=len(scores), degeneration=degen,
-                           sane=sane))
+                           on_task=frac_on_task, answered=frac_answered, sane=sane))
         if sane:
             best_sane = mid
 
@@ -521,7 +553,7 @@ def measure_cell(layer: int, dose: float, *, concept: str, baselines: dict[str, 
                                  alpha=alpha, steered=True)
             for s, text in zip(spec, responses)]
     for spec_row, row in zip(spec, rows):
-        if spec_row["channel"] == "capability":
+        if spec_row["channel"] in ("capability", "explain"):
             row["capability_correct"] = battery.capability_correct(
                 row["response"], spec_row["accept"])
         # ONE name for the source prompt. This carried three -- `prompt_text`, `_source` and
@@ -584,6 +616,9 @@ def _summarise_cell(rows: Sequence[dict], *, layer: int, dose: float, alpha: flo
     coh_scores = judged("effect", "coherence", "coherence")
     caps = by("capability")
     sr = by("self_report")
+    exp = by("explain")
+    exp_infl = judged("explain", "effect", "influence")
+    exp_coh = judged("explain", "coherence", "coherence")
 
     out: dict[str, Any] = dict(
         layer=layer, dose=dose, alpha=alpha,
@@ -624,6 +659,18 @@ def _summarise_cell(rows: Sequence[dict], *, layer: int, dose: float, alpha: flo
                               len(coh_scores), z) if coh_scores else None),
         capability=(battery.rate(sum(1 for r in caps if r.get("capability_correct")),
                                  len(caps), z) if caps else None),
+        # --- the explain channel: prose AND truth, on the same response ------------------
+        # `explain_answered` is the over-steer signal. A response can be fluent (coherence 8),
+        # on a plausible topic, and no longer an answer to the question asked -- which is what
+        # a garlic listicle in reply to "what is a computer" is. Coherence cannot see that; a
+        # story cannot stop being a story, but an answer can stop answering.
+        explain_influence=(battery.mean_se(exp_infl) if exp_infl else None),
+        explain_answered=(battery.rate(sum(1 for r in exp
+                                           if ((r.get("judged") or {}).get("coherence") or {})
+                                           .get("on_task")), len(exp), z) if exp else None),
+        explain_correct=(battery.rate(sum(1 for r in exp if r.get("capability_correct")),
+                                      len(exp), z) if exp else None),
+        explain_coherence=(battery.mean_se(exp_coh) if exp_coh else None),
         # --- mechanical, recorded, deciding nothing ---
         mechanical=dict(
             identify=battery.channel_summary(ident, z=z) if ident else None,

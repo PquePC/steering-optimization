@@ -231,7 +231,10 @@ def test_the_null_arm_survives_a_bundle_full_of_disagreements(run_dir):
     config.CONFIG.update(config.SETTINGS)
     config.apply_overrides(["READ_BUNDLE_N=1", "LAYER_FRACTIONS=0.55,1.00",
                             "LAYER_STRIDE=2", "DOSE_FRACTIONS=0.4,0.9"], config.CONFIG)
-    with fake_gpu(judge_disagree_every=2):
+    # Not every 2nd call: the boundary phase is judged too, and a judge that lies half the time
+    # now correctly yields no boundary at any layer, which starves the grid this test needs.
+    # That is the product behaving right and the fixture being too adversarial to measure it.
+    with fake_gpu(judge_disagree_every=4):
         m3run.main(["--concept", "Garlic"])
     text = next(run_dir.glob("garlic_*/read_this.md")).read_text(encoding="utf-8")
     nulls = [l for l in text.splitlines() if l.startswith("### ") and "null arm" in l]

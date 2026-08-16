@@ -131,6 +131,16 @@ SETTINGS: dict[str, Any] = dict(
     # approaching, where a binary degenerate/not flag only sees it after the fact.
     BOUNDARY_COHERENCE_MIN=5.0,
 
+    # ...and this fraction of the boundary probes must still be ON TASK and still contain the
+    # right answer. Coherence alone passed a model that had stopped answering: at L29 it held
+    # 8/10 to the top of the ladder while the same model, at 70% of that dose, replied to "what
+    # is a computer" with garlic's botanical name. A boundary set on prose quality sits far
+    # above the dose where the answer is already gone, which puts the entire grid too high.
+    #
+    # 0.75 = three of four probes. Not 1.0: one sampled response at temperature 1.0 wandering
+    # off should not move a layer's whole dose ladder.
+    BOUNDARY_ANSWER_MIN=0.75,
+
     # Refuse any (layer, dose) needing a larger raw multiplier than this. Never clamped: a
     # clamped alpha is a cell measured at a dose other than the one recorded against it.
     ALPHA_CEIL=16.0,
@@ -170,6 +180,18 @@ SETTINGS: dict[str, Any] = dict(
 
     # Verifiable-answer prompts, scored by exact match. No judge call.
     N_CAPABILITY=2,
+
+    # Explanatory prompts: prose for a concept to leak into, AND content that can be checked.
+    #
+    # The battery had neither together. The task prompts are prose with no correct answer, so a
+    # garlic-flavoured story is still a story; the capability prompts have a correct answer and
+    # almost no prose, so `17 x 23` survives until the concept destroys it outright. Both read
+    # near-zero at L29 dose 0.089 while the same model, asked "what is a computer", answered
+    # with garlic's botanical profile. The gap between those readings is this channel.
+    #
+    # Judged for influence and on-task like the effect channel, AND scored mechanically for
+    # whether the true content survived -- three graded signals on one response.
+    N_EXPLAIN=4,
 
     # How many times the unsteered (alpha=0) battery is repeated.
     #
@@ -272,13 +294,17 @@ def layers_for_depth(n_layers: int, cfg: dict | None = None) -> list[int]:
 def battery_size(cfg: dict | None = None) -> int:
     """Total responses generated per cell. Must fit GEN_BATCH_MAX to stay a single batch."""
     cfg = CONFIG if cfg is None else cfg
-    return int(cfg["N_IDENTIFY"] + cfg["N_EFFECT"] + cfg["N_SELF_REPORT"] + cfg["N_CAPABILITY"])
+    return int(cfg["N_IDENTIFY"] + cfg["N_EFFECT"] + cfg["N_SELF_REPORT"]
+               + cfg["N_EXPLAIN"] + cfg["N_CAPABILITY"])
 
 
 def judge_calls_per_cell(cfg: dict | None = None) -> int:
     """Judge calls per cell, for the cost estimate the runner prints before it starts."""
     cfg = CONFIG if cfg is None else cfg
-    return int(cfg["N_IDENTIFY"] + cfg["N_EFFECT"] + cfg["N_COHERENCE"] + cfg["N_SELF_REPORT"])
+    # Explain responses are judged TWICE -- influence and coherence/on-task -- because
+    # on_task is the over-steer signal and only an explain prompt can fire it.
+    return int(cfg["N_IDENTIFY"] + cfg["N_EFFECT"] + cfg["N_COHERENCE"]
+               + cfg["N_SELF_REPORT"] + 2 * cfg["N_EXPLAIN"])
 
 
 def config_hash(cfg: dict | None = None) -> str:

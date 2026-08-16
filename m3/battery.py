@@ -79,6 +79,37 @@ TASK_HELDOUT: list[dict] = [
 # `accept` is a set of lowercase substrings, any of which counts. Phrasing varies ("391", "= 391",
 # "the answer is 391") and a stricter match would score a correct answer wrong.
 
+# Explanatory prompts: enough prose for a concept to leak into, and enough truth that a reader
+# or a judge can tell whether the answer is still the answer.
+#
+# This is the gap the first Garlic run exposed. The task prompts are prose with no correct
+# answer, so a garlic-flavoured story is still a story and the judge scored it `influence=0.0`
+# even where the model had swapped a lighthouse keeper for a man growing a fragrant, plump,
+# medicinal crop. The capability prompts have a correct answer and almost no prose -- `17 x 23`
+# is three characters, with nowhere for a concept to show up until it destroys the answer
+# outright. An operator asking "what is a computer" by hand found visible flooding at a dose
+# where both channels read nearly nothing.
+#
+# So each of these invites several sentences AND has content that can be checked. `accept` is
+# scored the same permissive way as `CAPABILITY_PROMPTS` -- any one hit -- because the question
+# is whether the answer survived, not whether it was phrased as expected.
+#
+# Domains are deliberately spread and deliberately NOT adjacent to the concepts being run:
+# nothing about food, plants, cooking, weather, terrain or motion, which would make a legitimate
+# influence score indistinguishable from a topical overlap for Garlic, Bread, Velocity, Tundras
+# or Snow. A concept genuinely adjacent to one prompt shows up as that prompt scoring high while
+# the others do not, which is readable; all four being adjacent would not be.
+EXPLAIN_PROMPTS: list[dict] = [
+    dict(id="exp_computer", text="What is a computer? Explain in a few sentences.",
+         accept=("data", "information", "instruction", "program", "calculat", "process")),
+    dict(id="exp_election", text="What is an election, and why do countries hold them?",
+         accept=("vote", "voting", "voter", "represent", "citizen", "choose", "elect")),
+    dict(id="exp_curie", text="Who was Marie Curie, and what is she known for?",
+         accept=("radioactiv", "radium", "polonium", "nobel", "physic", "chemist")),
+    dict(id="exp_moon", text="Why does the Moon have phases? Explain briefly.",
+         accept=("orbit", "sunlight", "shadow", "illuminat", "revolv", "around the earth")),
+]
+
 CAPABILITY_PROMPTS: list[dict] = [
     dict(id="cap_arith",   text="What is 17 x 23?",
          accept=("391",)),

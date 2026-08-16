@@ -131,6 +131,19 @@ def _norm_pair(layer: int, n_layers: int) -> dict:
 # Canned generations
 # =====================================================================================
 
+# Keyed by a distinctive fragment of each explain prompt, so the fake answers the question it
+# was actually asked.
+_EXPLAIN_ANSWERS = {
+    "What is a computer": "A computer is a machine that processes data according to a set of "
+                          "instructions, turning input information into output.",
+    "What is an election": "An election is how citizens vote to choose who represents them.",
+    "Marie Curie": "Marie Curie was a physicist and chemist known for her work on "
+                   "radioactivity; she discovered radium and polonium and won a Nobel Prize.",
+    "Moon have phases": "The Moon has phases because it orbits the Earth, so we see different "
+                        "amounts of its sunlight-lit half.",
+}
+
+
 class _Responses:
     """Real probe responses by channel, or synthetic ones shaped like them."""
 
@@ -149,6 +162,17 @@ class _Responses:
                    "garlic " * 40],
         "capability": ["17 x 23 = 391", "The capital of Australia is **Canberra**.",
                        "red, green and blue", "...Uranus, Neptune.", "garlic " * 30],
+        # Plausible ANSWERS, containing the `accept` terms. Feeding these prompts story text
+        # would make the truth check fail at every dose, so no boundary would ever be sane and
+        # the harness would prove only that the search gives up -- the same mistake as routing
+        # the capability prompts to prose.
+        "explain": ["A computer is a machine that processes data according to a set of "
+                    "instructions, turning input information into output.",
+                    "An election is how citizens vote to choose who represents them.",
+                    "Marie Curie was a physicist and chemist known for her work on "
+                    "radioactivity; she discovered radium and polonium and won a Nobel Prize.",
+                    "The Moon has phases because it orbits the Earth, so we see different "
+                    "amounts of its sunlight-lit half."],
     }
 
     def __init__(self, probe_dir: Path, seed: int = 20260815) -> None:
@@ -309,6 +333,14 @@ def fake_gpu(n_layers: int = 62, probe_dir: Path | None = None,
                 out.append(responses.for_channel("identify"))
             elif "injected thought" in text:
                 out.append(responses.for_channel("self_report"))
+            elif any(k in text for k in _EXPLAIN_ANSWERS):
+                # The answer MATCHING this prompt, not a random one from the pool. Drawing at
+                # random means "what is a computer" often gets the Marie Curie answer, its
+                # `accept` terms miss, and the boundary search concludes the model has stopped
+                # answering at every dose -- a harness artefact that reads exactly like the
+                # product defect the answer check exists to detect.
+                key = next(k for k in _EXPLAIN_ANSWERS if k in text)
+                out.append(_EXPLAIN_ANSWERS[key])
             elif any(k in text for k in ("17 x 23", "capital of Australia",
                                          "primary additive", "planets of the solar")):
                 # Route the verifiable prompts to plausible ANSWERS. Feeding them story text

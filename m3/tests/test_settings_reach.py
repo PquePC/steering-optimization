@@ -75,6 +75,8 @@ PROBES: dict[str, tuple[Any, Any]] = {
     "N_COHERENCE": (2, 1),
     "N_SELF_REPORT": (3, 1),
     "N_CAPABILITY": (2, 1),
+    "N_EXPLAIN": (4, 2),
+    "BOUNDARY_ANSWER_MIN": (0.75, 1.01),
     "NULL_REPEATS": (1, 3),
     "MAX_NEW_TOKENS": (100, 64),
     "TEMPERATURE": (1.0, 0.25),
@@ -281,7 +283,7 @@ def _w_read_bundle(value, tmp):
     # comparing zero against zero would report "no effect" for a setting that works.
     cfg = dict(config.SETTINGS, READ_BUNDLE_N=value,
                LAYER_FRACTIONS=(0.55, 1.00), LAYER_STRIDE=2, DOSE_FRACTIONS=(0.4, 0.9))
-    d = _sweep(cfg, tmp, disagree_every=2)
+    d = _sweep(cfg, tmp, disagree_every=4)
     text = (d / sweep.READ_FILE).read_text(encoding="utf-8")
     return sum(1 for l in text.splitlines()
                if l.startswith("### ") and "null arm" not in l)
@@ -319,6 +321,12 @@ WITNESSES = {
     "N_COHERENCE": _w_coherence_budget,
     "N_SELF_REPORT": lambda v, t: _w_channel(v, t, "N_SELF_REPORT", "self_report"),
     "N_CAPABILITY": lambda v, t: _w_channel(v, t, "N_CAPABILITY", "capability"),
+    "N_EXPLAIN": lambda v, t: _w_channel(v, t, "N_EXPLAIN", "explain"),
+    # A fraction above 1.0 can never be satisfied, so no dose is ever the boundary. Observed as
+    # the outcome the search returns, which is the thing the threshold actually decides -- not
+    # as the threshold echoed back.
+    "BOUNDARY_ANSWER_MIN": lambda v, t: _w_boundary(
+        v, t, "BOUNDARY_ANSWER_MIN", "outcome", BOUNDARY_BRACKET=(0.05, 0.90)),
     "NULL_REPEATS": _w_null_repeats,
     "MAX_NEW_TOKENS": lambda v, t: _w_cell(v, t, "MAX_NEW_TOKENS", "max_tokens"),
     "TEMPERATURE": lambda v, t: _w_cell(v, t, "TEMPERATURE", "temperature"),
