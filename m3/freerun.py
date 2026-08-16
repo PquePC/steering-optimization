@@ -177,8 +177,18 @@ def _print_live_stats(unsteered, steered, judged) -> None:
               f"degeneration {s['degeneration']['rate']:.2f}  "
               f"words median {s['words_median']}")
     if judged:
-        for k, v in judged.items():
-            if v:
+        for k in ("influence", "coherence", "on_task"):
+            v = judged.get(k)
+            if not v:
+                continue
+            if k == "on_task":
+                # Printed as a rate and flagged, because a high coherence score beside a low
+                # on-task rate is the exact reading that "fluent but answering a different
+                # question" produces, and it is easy to miss when both are just numbers.
+                flag = "   <- ANSWERED A DIFFERENT QUESTION" if v["mean"] < 0.5 else ""
+                print(f"    {'on-task':<10} {v['mean']:.2f}   ({int(v['mean'] * v['n'])}/{v['n']} "
+                      f"actually addressed the prompt){flag}")
+            else:
                 print(f"    {k:<10} mean {v['mean']:.2f}  n={v['n']}  "
                       f"range {v['min']:.0f}–{v['max']:.0f}")
     print()
@@ -220,11 +230,18 @@ def _judge_pair(prompt_text: str, unsteered, steered, *, concept: str, layer: in
     except Exception as exc:                                   # noqa: BLE001
         print(f"  (judge unavailable: {exc})")
         return {}
-    got: dict[str, list[float]] = {"influence": [], "coherence": []}
+    got: dict[str, list[float]] = {"influence": [], "coherence": [], "on_task": []}
     for kind, result in zip(kinds, results):
         parsed, _err = judge.verdict(result)
-        if parsed:
-            got[kind].append(float(parsed[kind]))
+        if not parsed:
+            continue
+        got[kind].append(float(parsed[kind]))
+        # `on_task` rides along on every coherence verdict and was being discarded here. It is
+        # the "did it actually answer the question" half, and on a free prompt with a right
+        # answer -- "what is a computer" -- it is the half that matters: a response can score 8
+        # for coherence and still be an article about a bulb.
+        if kind == "coherence":
+            got["on_task"].append(1.0 if parsed["on_task"] else 0.0)
     return {k: (battery.mean_se(v) if v else None) for k, v in got.items()}
 
 

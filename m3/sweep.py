@@ -609,6 +609,19 @@ def _summarise_cell(rows: Sequence[dict], *, layer: int, dose: float, alpha: flo
         effect_forms=sorted({r["judged"]["effect"]["form"] for r in by("effect")
                              if (r.get("judged") or {}).get("effect")}),
         coherence=(battery.mean_se(coh_scores) if coh_scores else None),
+        # The coherence judge answers TWO questions and only one was being kept. `on_task` is
+        # "does this actually address the prompt", which is a different failure from "is this
+        # well-formed": a response can be fluent, grammatical and about the wrong thing. It was
+        # judged on every coherence call, stored in the judge archive, attached to the row --
+        # and never aggregated, so no cell reported it and no reader saw it.
+        #
+        # Note what it can and cannot catch. The four task prompts are open-ended, and a
+        # garlic-flavoured story is still a story, so `on_task` stays True through heavy
+        # influence by design. It fires when the response stops answering at all. The channel
+        # that tests answering a question with a RIGHT answer is `capability`.
+        on_task=(battery.rate(sum(1 for r in by("effect")
+                                  if ((r.get("judged") or {}).get("coherence") or {}).get("on_task")),
+                              len(coh_scores), z) if coh_scores else None),
         capability=(battery.rate(sum(1 for r in caps if r.get("capability_correct")),
                                  len(caps), z) if caps else None),
         # --- mechanical, recorded, deciding nothing ---
