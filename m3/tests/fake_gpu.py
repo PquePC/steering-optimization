@@ -143,6 +143,10 @@ _FLUENT_OVERSTEER = (
     "nutty treat prized by cooks everywhere."
 )
 
+# Marks a response as fluent-but-off-task for the canned judge. Text, not a flag, because the
+# judge stub only ever sees the payload.
+_OFFTOPIC = "It reminds me of a story about my neighbour."
+
 # Keyed by a distinctive fragment of each explain prompt, so the fake answers the question it
 # was actually asked.
 _EXPLAIN_ANSWERS = {
@@ -218,6 +222,12 @@ def _judge_reply(payload: str, responses: _Responses, disagree: bool = False) ->
     """
     garlicky = payload.lower().count("garlic") > 2
     collapsed = "garlic garlic garlic garlic" in payload.lower() or "GarGarGar" in payload
+    # A response that is fluent and factually intact but answering a different question. The
+    # real judge produced exactly this verdict on the Moon prompt at L29@0.0823; nothing else
+    # in this stub can express "coherent and answered, but off task", and without it the
+    # spread-damage mode cannot be built.
+    if _OFFTOPIC in payload and "Coherence:" in payload:
+        return "Coherence: 8\nOnTask: NO"
     if disagree:
         # Deliberately contradict the mechanical detector on a deterministic slice of calls.
         # A fake judge that always agrees never exercises the disagreement selection, and that
@@ -256,6 +266,11 @@ def fake_gpu(n_layers: int = 62, probe_dir: Path | None = None,
                   scores it coherent and on-task for the same reason the real one did, so ONLY
                   the mechanical answer check can see it. A boundary search that finds the
                   boundary in this mode is finding it for the right reason.
+      "spread"    damage distributed across prompts rather than hitting all of them: two answers
+                  survive, one keeps its prose and loses the answer, one keeps the answer and
+                  goes off task. Every leg reads 3/4 while half the battery is corrupt. This is
+                  the 2026-08-19 L29@0.0823 shape, and it is the only mode that separates a
+                  sanity rule that averages each leg from one that conjoins per response.
     """
     install_torch_stub()
     from m2 import config as m2config, expensive, judges, model, prompts, vectors
@@ -350,6 +365,22 @@ def fake_gpu(n_layers: int = 62, probe_dir: Path | None = None,
             broken = dose > true_boundary(int(layer), n_layers)
         out = []
         for text in prompts_text:
+            if broken and oversteer == "spread":
+                # Damage distributed across prompts instead of hitting all of them, which is
+                # what a real model does near its boundary and what no other mode here
+                # reproduces. Two answers survive; the third keeps its prose and loses the
+                # answer; the fourth keeps the answer and stops addressing the question.
+                # Every LEG then reads 3/4 while HALF the battery is corrupt -- so a rule that
+                # averages the legs separately calls this dose sane and one that conjoins per
+                # response does not. That difference is the whole point of the mode.
+                if "Marie Curie" in text:
+                    out.append(_FLUENT_OVERSTEER)                       # loses the answer
+                elif "Moon have phases" in text:
+                    out.append(_EXPLAIN_ANSWERS["Moon have phases"] + " " + _OFFTOPIC)
+                else:
+                    key = next((k for k in _EXPLAIN_ANSWERS if k in text), None)
+                    out.append(_EXPLAIN_ANSWERS[key] if key else "garlic " * 40)
+                continue
             if broken:
                 out.append(_FLUENT_OVERSTEER if oversteer == "fluent" else "garlic " * 40)
                 continue

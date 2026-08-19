@@ -132,13 +132,18 @@ SETTINGS: dict[str, Any] = dict(
     # approaching, where a binary degenerate/not flag only sees it after the fact.
     BOUNDARY_COHERENCE_MIN=5.0,
 
-    # ...and this fraction of the boundary probes must still be ON TASK and still contain the
-    # right answer. Coherence alone passed a model that had stopped answering: at L29 it held
-    # 8/10 to the top of the ladder while the same model, at 70% of that dose, replied to "what
-    # is a computer" with garlic's botanical name. A boundary set on prose quality sits far
-    # above the dose where the answer is already gone, which puts the entire grid too high.
+    # ...and this fraction of the boundary responses must be GOOD, where good means one response
+    # that is coherent AND on task AND still contains the right answer. Coherence alone passed a
+    # model that had stopped answering: at L29 it held 8/10 to the top of the ladder while the
+    # same model, at 70% of that dose, replied to "what is a computer" with garlic's botanical
+    # name. A boundary set on prose quality sits far above the dose where the answer is gone.
     #
-    # 0.75 = three of four probes. Not 1.0: one sampled response at temperature 1.0 wandering
+    # The conjunction is per response and it is load-bearing. Scored as three independent
+    # fractions, L29@0.0823 passed on the 2026-08-19 pod run with all three legs at exactly
+    # 0.75 while half the battery was corrupted -- each leg happened to lose a different
+    # response, so the damage cancelled instead of accumulating.
+    #
+    # 0.75 = three of four responses. Not 1.0: one sampled response at temperature 1.0 wandering
     # off should not move a layer's whole dose ladder.
     BOUNDARY_ANSWER_MIN=0.75,
 

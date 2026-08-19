@@ -484,15 +484,35 @@ def find_boundary(layer: int, concept: str, cfg: dict | None = None) -> dict:
         #
         # A dose is only the boundary if the model still ANSWERS there, not merely if it still
         # writes. This is what makes the whole grid sit in the useful range instead of above it.
-        on_task = [bool(p.get("on_task")) for p in parsed]
+        # ...and the three are conjoined PER RESPONSE, then counted. Not three independent
+        # fractions: on the 2026-08-19 pod run L29@0.0823 passed with every leg at exactly 0.75
+        # while half the battery was corrupted, because each leg lost a DIFFERENT response --
+        # the Marie Curie answer was fluent and on-task with the answer gone, the Moon answer
+        # was fluent and answered but off-task, and the computer answer explained that a
+        # computer "is a member of the plant family" while still containing an accept term.
+        # Corruption spread across prompts cancelled out; conjoining first makes it accumulate.
+        # Same floor, same responses, same judge calls -- only the order of the AND and the
+        # averaging changes, and it moves that layer's boundary from 0.0823 to 0.0757, where
+        # all four answers are clean.
+        coh_min = float(cfg["BOUNDARY_COHERENCE_MIN"])
         answered = [battery.capability_correct(t, r["accept"])
                     for r, t in zip(rows_spec, responses)]
+        per_response = []
+        for i in range(len(responses)):
+            p = verdicts[i][0]
+            # A response whose judge call failed cannot be certified, so it is not good. It is
+            # not silently dropped either: dropping it would raise the fraction it was missing
+            # from, which is the wrong direction for a check that gates a dose.
+            per_response.append(bool(p) and p.get("coherence") is not None
+                                and p["coherence"] >= coh_min
+                                and bool(p.get("on_task")) and answered[i])
+        on_task = [bool(p.get("on_task")) for p in parsed]
         frac_on_task = (sum(on_task) / len(on_task)) if on_task else 0.0
         frac_answered = sum(answered) / len(answered)
+        frac_good = sum(per_response) / len(per_response)
         floor = float(cfg["BOUNDARY_ANSWER_MIN"])
 
-        sane = (mean is not None and mean >= float(cfg["BOUNDARY_COHERENCE_MIN"])
-                and frac_on_task >= floor and frac_answered >= floor)
+        sane = frac_good >= floor
         # No `unreachable` field here: reachability is decided arithmetically before the ladder
         # starts, and an unreachable layer returns with `probes=[]`. A constant `False` on every
         # probe row reads as a per-probe check that exists and passes, which is worse than
@@ -517,14 +537,19 @@ def find_boundary(layer: int, concept: str, cfg: dict | None = None) -> dict:
                 # mechanical, both of them
                 answered=answered[i], degenerate=row["degenerate"],
                 degeneration_reason=row.get("degeneration_reason"),
+                # `good` is this response passing ALL THREE legs, which is what the probe
+                # verdict counts. Recorded per response so a reader can see the conjunction
+                # rather than recomputing it from the three columns beside it.
+                good=per_response[i],
                 # the probe-level verdict this response contributed to
                 probe_coherence_mean=mean, probe_on_task=frac_on_task,
-                probe_answered=frac_answered, probe_sane=sane,
+                probe_answered=frac_answered, probe_good=frac_good, probe_sane=sane,
                 concept=concept))
 
         probes.append(dict(stage=stage, dose=_floor(dose_val, 6), alpha=alpha,
                            coherence=mean, coherence_n=len(scores), degeneration=degen,
-                           on_task=frac_on_task, answered=frac_answered, sane=sane))
+                           on_task=frac_on_task, answered=frac_answered,
+                           good=frac_good, sane=sane))
         return sane
 
     # Descend from the highest dose that is both wanted and reachable, and stop at the first

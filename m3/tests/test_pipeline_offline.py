@@ -216,6 +216,77 @@ def test_the_boundary_is_found_even_when_oversteering_stays_fluent(run_dir):
     assert all(p["answered"] < 0.75 for p in fooled)
 
 
+def test_damage_spread_across_prompts_is_not_cancelled_by_averaging_each_leg():
+    """The real L29 probes from the 2026-08-19 pod run, replayed through the sanity rule.
+
+    At dose 0.0823 each leg read exactly 0.75 -- coherence mean 7.0, on-task 3/4, answered 3/4 --
+    and the dose passed. But each leg lost a DIFFERENT response: the Marie Curie answer was
+    fluent and on-task with the answer gone, the Moon answer was fluent and answered but
+    off-task, and the computer answer said a computer "is a member of the plant family" while
+    still containing an accept term. Half the battery was corrupted and three independent
+    averages could not see it.
+
+    Conjoining the three per response, then counting, is the whole fix. Same responses, same
+    judge calls, same floor -- only the order of the AND and the averaging changes.
+    """
+    coh_min, floor = 5.0, 0.75
+    # (coherence, on_task, answered) per response, transcribed from boundary_transcripts.jsonl
+    probes = {
+        0.127153: [(2.0, False, False), (2.0, False, True), (5.0, True, False), (3.0, False, False)],
+        0.089007: [(2.0, False, False), (8.0, True, True), (7.0, True, True), (8.0, True, False)],
+        0.082331: [(8.0, True, True), (7.0, True, True), (8.0, True, False), (5.0, False, True)],
+        0.075656: [(8.0, True, True), (8.0, True, True), (8.0, True, True), (8.0, True, True)],
+        0.062305: [(8.0, True, True), (7.0, True, True), (8.0, True, True), (8.0, True, True)],
+    }
+
+    def per_leg(rs):                      # what the code used to do
+        return (sum(c for c, _, _ in rs) / len(rs) >= coh_min
+                and sum(1 for _, t, _ in rs if t) / len(rs) >= floor
+                and sum(1 for _, _, a in rs if a) / len(rs) >= floor)
+
+    def conjoined(rs):                    # what it does now
+        return (sum(1 for c, t, a in rs if c >= coh_min and t and a) / len(rs)) >= floor
+
+    assert per_leg(probes[0.082331]), "the regression this pins would not reproduce"
+    assert not conjoined(probes[0.082331]), "the corrupted dose is still accepted"
+    assert conjoined(probes[0.075656]) and conjoined(probes[0.062305]), \
+        "a clean dose was rejected; the rule is now too strict to find any boundary"
+    assert not any(conjoined(probes[d]) for d in (0.127153, 0.089007))
+
+    highest_sane = max(d for d in probes if conjoined(probes[d]))
+    assert highest_sane == 0.075656, f"L29 would take dose_max {highest_sane}, not 0.075656"
+
+
+def test_the_boundary_rejects_damage_spread_across_prompts(run_dir):
+    """The same defect, against the REAL search rather than a restatement of the rule.
+
+    The test above reimplements both rules and compares them, so it documents the reasoning and
+    pins nothing -- reverting `sweep.py` to per-leg averaging leaves it green. This one drives
+    `find_boundary` through a model whose damage is spread across prompts, where every leg reads
+    3/4 and half the battery is corrupt, and fails if the search accepts any dose above the
+    model's true boundary.
+    """
+    from m3.tests.fake_gpu import true_boundary
+    config.apply_overrides(["LAYER_FRACTIONS=0.21,1.0", "LAYER_STRIDE=6",
+                            "DOSE_FRACTIONS=0.5"], config.CONFIG)
+    with fake_gpu(oversteer="spread"):
+        m3run.main(["--concept", "Garlic"])
+    rows = [r for r in _load(run_dir, "boundaries.jsonl") if r["dose_max"] is not None]
+    assert len(rows) >= 5, "no layer produced a boundary, so this asserts nothing"
+    for r in rows:
+        true = true_boundary(r["layer"], 62)
+        assert r["dose_max"] <= true * 1.01, (
+            f"L{r['layer']}: took dose_max {r['dose_max']} above the true boundary {true:.4f} -- "
+            f"damage spread across prompts was averaged away leg by leg")
+
+    # ...and the probe rows must show WHY: a rejected probe here is one where the individual
+    # legs look survivable and the conjunction does not.
+    spread = [p for r in rows for p in r["probes"]
+              if not p["sane"] and p["on_task"] >= 0.75 and p["answered"] >= 0.75]
+    assert spread, "the spread-damage shape never occurred, so the rule was not exercised"
+    assert all(p["good"] < 0.75 for p in spread)
+
+
 def test_every_boundary_generation_and_judge_reply_is_persisted(run_dir):
     """The 2026-08-15 run discarded 840 generations and 840 paid judge calls -- every one Phase 1
     made -- keeping only per-probe aggregates. `dose_max` is the number every cell's dose is a
