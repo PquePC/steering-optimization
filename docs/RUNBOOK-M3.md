@@ -216,18 +216,65 @@ worst case; the boundary bisection usually stops early, so real runs come in und
 
 ## 7. Get the results off the pod
 
-The run writes to `/workspace/m3_runs/`, outside the repository, and builds a bundle at the end:
+### 7.1 What the run saves
+
+Everything, by design: every generation, every judge reply verbatim, and every mechanical verdict
+beside them. A debug pass done weeks later should never need the pod back.
+
+| File | One row per | Carries |
+|---|---|---|
+| `cells.jsonl` | cell | every aggregate: the four judged rates/means with Wilson intervals, both `identification` views, the mechanical measures |
+| `responses_transcripts.jsonl` | battery response | the generation, its channel and unit, the parsed verdicts, degeneracy and its reason |
+| `judge_calls.jsonl` | judge call | the **payload sent** and the **raw reply**, plus attempts, latency, cache state, parse error |
+| `boundaries.jsonl` | layer | `dose_max`, `lowest_failing_dose`, the outcome, and each probe's aggregate |
+| `boundary_transcripts.jsonl` | Phase 1 probe response | the generation and the judge's verbatim reply, with the three legs — `coherence`, `on_task`, `answered` — recorded **separately** |
+| `null_transcripts.jsonl` | null-arm response | the α=0 control battery, `NULL_REPEATS` times |
+| `unjudged_transcripts.jsonl` | orphaned response | only if judging raised: generations already paid for, kept rather than discarded |
+| `norms.jsonl` | layer | `‖v‖`, `‖h‖` and the dose map every alpha comes from |
+| `summary.json` | run | the **complete config** (all 27 settings), the layer list, hook liveness, timings, skipped layers |
+| `provenance.jsonl` | run | git commit, branch and dirty flag, GPU, host, library versions |
+| `read_this.md` | — | the disagreement bundle, for reading by eye |
+| `lab.log` | — | the run's own log lines |
+
+`boundary_transcripts.jsonl` is new as of `2026-08-19`. Before it, Phase 1 kept only per-probe
+averages: the 2026-08-15 run discarded **840 generations and 840 paid judge calls**, 22% of all
+the model output it produced, and `dose_max` — the number every cell's dose is a fraction of —
+was the one figure in the run with no readable evidence behind it. If a layer's boundary looks
+wrong, that file is where you find out which of the three legs rejected the dose and what the
+model actually said.
+
+### 7.2 Take the console log with you
+
+The board printed to stdout is **not** in the run folder, and this project has already lost
+numbers that existed only in a terminal. Copy it in before bundling:
+
+```bash
+cp /workspace/m3.out /workspace/m3_runs/garlic_*/console.log
+```
+
+The export bundle is built *before* you do that, so it will not contain the log. Send the **whole
+run folder** instead — it needs no rebuild and picks up anything you copied in:
+
+```bash
+cd /workspace/m3_runs && tar czf garlic_full.tgz garlic_*/ && ls -lh garlic_full.tgz
+```
+
+### 7.3 Send it
+
+```bash
+runpodctl send /workspace/m3_runs/garlic_full.tgz
+```
+
+That prints a one-time code; run the matching `runpodctl receive <code>` on the machine you want
+it on. The run also builds an export bundle at the end, which is the gated artefact — it withholds
+transcripts for a concept that is not benign, and includes everything for one that is:
 
 ```bash
 ls -la /workspace/m3_runs/export_garlic_*.zip
 ```
 
-```bash
-runpodctl send /workspace/m3_runs/export_garlic_*.zip
-```
-
-That prints a one-time code; run the matching `runpodctl receive <code>` on the machine you want
-it on. The bundle carries every transcript, for any concept.
+**Do this the moment the run finishes**, before any pod housekeeping. Task 28 (portable resume)
+is unbuilt and a RunPod volume has already eaten a run's output once.
 
 Worth reading first, on the pod:
 

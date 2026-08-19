@@ -256,6 +256,11 @@ Everything, in flat JSONL, all of it exported:
 - **every judge reply verbatim**, alongside the parsed fields, so a judge that is subtly wrong or
   drifting is inspectable after the fact rather than only through its parsed output
 - the null arm, every channel
+- **every Phase 1 boundary probe response**, with its judge reply and the three sanity legs
+  recorded separately. Phase 1 originally kept only per-probe averages, which discarded 840
+  generations and 840 paid judge calls on the first full run — 22% of everything it produced.
+  `dose_max` is the number every cell's dose is a fraction of, so it is the last quantity in the
+  run that should rest on evidence nobody can read
 - norms, dose map, config, provenance with git commit
 
 Plus a **read-this bundle** of ~40 responses selected by disagreement, because random sampling of

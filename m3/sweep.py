@@ -35,12 +35,26 @@ from . import battery, config, judge
 
 __all__ = [
     "calibrate", "find_boundary", "measure_cell", "run_sweep",
-    "battery_prompts", "CELLS_FILE", "BOUNDARY_FILE", "RESPONSES_FILE", "JUDGE_FILE",
-    "NORMS_FILE", "READ_FILE", "UNJUDGED_FILE",
+    "battery_prompts", "CELLS_FILE", "BOUNDARY_FILE", "BOUNDARY_RESPONSES_FILE",
+    "RESPONSES_FILE", "JUDGE_FILE", "NORMS_FILE", "READ_FILE", "UNJUDGED_FILE",
 ]
 
 CELLS_FILE = "cells.jsonl"
 BOUNDARY_FILE = "boundaries.jsonl"
+# Phase 1's raw evidence: one row per boundary probe response, carrying the generation, the
+# judge's verbatim reply and every leg of the sanity verdict computed from it.
+#
+# The 2026-08-15 run kept only the per-probe AGGREGATES -- 840 generations and 840 paid judge
+# calls, 22% of everything the run produced, discarded -- so `dose_max` was the one number in the
+# run with no readable evidence behind it. That is the number every cell's dose is a fraction of,
+# and the one the three-way criterion was rebuilt to fix, which makes it the last thing that
+# should be unauditable.
+#
+# The name ends in `_transcripts` deliberately: the dual-use export gate matches the substring
+# `transcript`, so this file is withheld for a concept that must never reach one without anyone
+# adding it to a list. The judge reply rides on the response row rather than in a second
+# `*_judge_calls.jsonl` for the same reason -- that name matches nothing the gate looks for.
+BOUNDARY_RESPONSES_FILE = "boundary_transcripts.jsonl"
 RESPONSES_FILE = "responses_transcripts.jsonl"
 JUDGE_FILE = "judge_calls.jsonl"
 NULL_FILE = "null_transcripts.jsonl"
@@ -436,10 +450,24 @@ def find_boundary(layer: int, concept: str, cfg: dict | None = None) -> dict:
             concept=concept, model_text=(t,), text_chars=int(cfg["JUDGE_TEXT_CHARS"])),
             row_index=i, judge_kind="coherence")
             for i, (r, t) in enumerate(zip(rows_spec, responses))]
-        results = judge.run_judges([{k: v for k, v in it.items()
-                                     if k not in ("row_index", "judge_kind")} for it in items],
-                                   concurrency=int(cfg["JUDGE_CONCURRENT"]))
-        parsed = [p for p, _e in (judge.verdict(r) for r in results) if p]
+        # The generations are PAID FOR before judging can raise, and Phase 1 raising kills the
+        # run. Same rule as `measure_cell`: nothing already bought is discarded because a later
+        # step failed, so the rows go to UNJUDGED_FILE on the way out.
+        try:
+            results = judge.run_judges([{k: v for k, v in it.items()
+                                         if k not in ("row_index", "judge_kind")}
+                                        for it in items],
+                                       concurrency=int(cfg["JUDGE_CONCURRENT"]))
+        except BaseException:
+            for r, t in zip(rows_spec, responses):
+                runio.write_row(UNJUDGED_FILE, dict(
+                    phase="BOUNDARY", layer=int(layer), dose=_floor(dose_val, 6), alpha=alpha,
+                    stage=stage, unit=r["unit"], prompt_text=r["source"], response=t))
+            _log(f"   judging FAILED at L{layer}@{dose_val:.3f}; {len(responses)} boundary "
+                 f"generations kept in {UNJUDGED_FILE} rather than discarded")
+            raise
+        verdicts = [judge.verdict(r) for r in results]
+        parsed = [p for p, _e in verdicts if p]
         scores = [p["coherence"] for p in parsed]
         mean = sum(scores) / len(scores) if scores else None
         degen = sum(1 for r in rows if r["degenerate"]) / len(rows)
@@ -472,6 +500,28 @@ def find_boundary(layer: int, concept: str, cfg: dict | None = None) -> dict:
         # eighteen of them.
         # Floored, matching `max_reachable_dose`. Rounding one and flooring the other
         # put L16's recorded boundary 1e-6 ABOVE its recorded ceiling on the first run.
+        # One row per response, written whether the probe passed or failed. A probe that failed
+        # is the more interesting half: it is the dose the grid will never sample, and the only
+        # way to tell "the model stopped answering" from "one sampled response wandered off" is
+        # to read what it actually said. Each row carries the three legs SEPARATELY, so a reader
+        # can see which one rejected the dose without recomputing anything.
+        for i, (r, t, row) in enumerate(zip(rows_spec, responses, rows)):
+            p, err = verdicts[i]
+            runio.write_row(BOUNDARY_RESPONSES_FILE, dict(
+                layer=int(layer), dose=_floor(dose_val, 6), alpha=alpha, stage=stage,
+                unit=r["unit"], prompt_text=r["source"], response=t,
+                # judged
+                coherence=(p or {}).get("coherence"), on_task=(p or {}).get("on_task"),
+                judge_raw=results[i].get("raw"), judge_error=err,
+                judge_cached=bool(results[i].get("cached")),
+                # mechanical, both of them
+                answered=answered[i], degenerate=row["degenerate"],
+                degeneration_reason=row.get("degeneration_reason"),
+                # the probe-level verdict this response contributed to
+                probe_coherence_mean=mean, probe_on_task=frac_on_task,
+                probe_answered=frac_answered, probe_sane=sane,
+                concept=concept))
+
         probes.append(dict(stage=stage, dose=_floor(dose_val, 6), alpha=alpha,
                            coherence=mean, coherence_n=len(scores), degeneration=degen,
                            on_task=frac_on_task, answered=frac_answered, sane=sane))

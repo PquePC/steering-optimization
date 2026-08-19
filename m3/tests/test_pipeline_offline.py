@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import sys
+import zipfile
 from collections import Counter
 from pathlib import Path
 
@@ -213,6 +214,44 @@ def test_the_boundary_is_found_even_when_oversteering_stays_fluent(run_dir):
     assert all(p["coherence"] is not None and p["coherence"] >= 5.0 and p["on_task"] >= 0.75
                for p in fooled), "a broken probe was caught by the judge, not the answer check"
     assert all(p["answered"] < 0.75 for p in fooled)
+
+
+def test_every_boundary_generation_and_judge_reply_is_persisted(run_dir):
+    """The 2026-08-15 run discarded 840 generations and 840 paid judge calls -- every one Phase 1
+    made -- keeping only per-probe aggregates. `dose_max` is the number every cell's dose is a
+    fraction of, and it was the one number in the run with no readable evidence behind it.
+
+    Pinned as a COUNT against the probe rows, so dropping the write, or writing only the passing
+    probes, or writing one row per probe instead of one per response, all fail here."""
+    config.apply_overrides(["LAYER_FRACTIONS=0.21,1.0", "LAYER_STRIDE=6",
+                            "DOSE_FRACTIONS=0.5"], config.CONFIG)
+    with fake_gpu(oversteer="fluent"):
+        m3run.main(["--concept", "Garlic"])
+    bounds = _load(run_dir, "boundaries.jsonl")
+    rows = _load(run_dir, "boundary_transcripts.jsonl")
+
+    expected = sum(len(b["probes"]) for b in bounds) * int(config.CONFIG["BOUNDARY_N"])
+    assert expected > 0, "no probe ran, so this asserts nothing"
+    assert len(rows) == expected, (
+        f"{len(rows)} boundary responses on disk against {expected} probed "
+        f"({sum(len(b['probes']) for b in bounds)} probes x BOUNDARY_N)")
+
+    # Failing probes are the half worth reading: they are the doses the grid will never sample.
+    assert any(not r["probe_sane"] for r in rows), "only passing probes were kept"
+    for r in rows:
+        assert r["response"], "a row carries no generation"
+        assert r["judge_raw"], "a row carries no verbatim judge reply"
+        # The three legs, separately. An aggregate cannot say which one rejected the dose.
+        assert r["coherence"] is not None and r["on_task"] is not None
+        assert isinstance(r["answered"], bool)
+        assert r["stage"] in ("ladder", "bisect")
+
+    # The bundle is where the operator actually reads it from, and the export gate resolves by
+    # NAME -- so a file the run writes is not necessarily a file the run ships.
+    bundle = next(run_dir.glob("export_garlic_*.zip"))
+    with zipfile.ZipFile(bundle) as z:
+        names = [n.rsplit("/", 1)[-1] for n in z.namelist()]
+    assert "boundary_transcripts.jsonl" in names, f"not in the export bundle: {names}"
 
 
 def test_bisection_zero_reproduces_the_bare_ladder(run_dir):
