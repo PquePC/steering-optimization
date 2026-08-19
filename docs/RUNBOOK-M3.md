@@ -51,16 +51,54 @@ invisible to it.
 | `HF_TOKEN` | `hf_...` | the model will not download |
 | `OPENROUTER_API_KEY` | `sk-or-v1-...` | nothing can be scored |
 
-**Already on a running pod?** Set them by hand, in *every* shell, before anything else. The
-leading space keeps the credentials out of `~/.bash_history`:
+`M3_RUNS_DIR` is **not** in the list: it defaults to `/workspace/m3_runs`, which is already
+outside the repository, and setting it is only for moving results somewhere else deliberately.
+
+### 1.1 The first command on any pod — make the variables persistent
+
+Whether you set them in the deploy form or not, run this before anything else. It writes them to
+the **volume**, where they survive a stop/start, and arms every future shell to load them. A
+variable exported by hand into one terminal is invisible to the next terminal, to `nohup`, and to
+the pod after a restart — which is how a run dies at hour two, or how `m2.setup` blocks on a
+branch you already set.
+
+`unset HISTFILE` first, so the credentials never reach `~/.bash_history` at all. That is stronger
+than the leading-space trick, which silently does nothing unless `HISTCONTROL` includes
+`ignorespace`.
 
 ```bash
-export HF_HOME=/workspace/hf M2_BRANCH=m3 M2_VOLUME_GB=150
+unset HISTFILE
 ```
 
+Paste this, **replace the two placeholder tokens before pressing enter**:
+
 ```bash
- export HF_TOKEN=hf_... OPENROUTER_API_KEY=sk-or-v1-...
+cat > /workspace/env.sh <<'EOF'
+export HF_HOME=/workspace/hf
+export M2_BRANCH=m3
+export M2_VOLUME_GB=150
+export HF_TOKEN=hf_PASTE_YOURS
+export OPENROUTER_API_KEY=sk-or-v1-PASTE_YOURS
+EOF
+chmod 600 /workspace/env.sh
+grep -q 'workspace/env.sh' ~/.bashrc || echo '[ -f /workspace/env.sh ] && . /workspace/env.sh' >> ~/.bashrc
+. /workspace/env.sh
 ```
+
+Check all five arrived, without printing the secrets:
+
+```bash
+for v in HF_HOME M2_BRANCH M2_VOLUME_GB HF_TOKEN OPENROUTER_API_KEY; do eval "val=\$$v"; if [ -n "$val" ]; then echo "$v ok"; else echo "$v MISSING"; fi; done
+```
+
+Five `ok` lines and you are clear to install. Any `MISSING` means the file did not load — fix it
+here, because every failure below traces back to this.
+
+**After a pod stop/start.** `/workspace/env.sh` survives, because the volume does. `~/.bashrc`
+usually does **not**, because `/root` is container disk and is rebuilt. So on a restarted pod the
+file is still there but nothing loads it: re-run the block above (it is idempotent — the `grep -q`
+guard keeps `~/.bashrc` from collecting duplicates), or at minimum `. /workspace/env.sh` in each
+new shell.
 
 **The two that actually bite:**
 
@@ -75,9 +113,14 @@ setup reports:
 [BLOCK ] project repo    on branch 'm3', expected 'main'
 ```
 
-That is **not** a problem with the branch — `m3` is the branch you want. It is setup refusing to
-guess which line of work you meant, because which code runs is your decision and provenance
-carries no git sha. Export `M2_BRANCH=m3` and re-run; it reads `ok`. It is never switched for you.
+That is **not** a problem with the branch — `m3` is the branch you want, and the message says so
+itself: *"if 'm3' is the one you want, export `M2_BRANCH=m3` and re-check"*. It is setup refusing
+to guess which line of work you meant, because which code runs is your decision and provenance
+carries no git sha. It is never switched for you.
+
+Seeing this block means §1.1 was skipped or its file is not loaded in **this** shell. Do not
+export the variable inline to get past it — the next shell will block again, and so will the run
+you launch from it. Run §1.1, then re-run setup; it reads `ok`.
 
 `M2_VOLUME_GB` is inert unless RunPod's allocation API cannot be read, in which case it prevents
 a stall. It never overrides a working reading.
@@ -106,14 +149,11 @@ cd /workspace/steering-optimization && python -m m2.setup --repair
 
 Still `m2.setup` — it is the installer for the repository, not for a pipeline. It clones the
 upstream harness, installs every dependency, and runs the offline tests. Expect `FIX` lines on a
-fresh pod; expect **no `BLOCK`** lines by the end. If credentials show `BLOCK`, they did not reach
-the container — check the deploy form rather than exporting them by hand.
+fresh pod; expect **no `BLOCK`** lines by the end.
 
-If you did set them by hand, prefix each line with a space so it stays out of `~/.bash_history`:
-
-```bash
- export HF_TOKEN=hf_... OPENROUTER_API_KEY=sk-or-v1-...
-```
+Every credential or branch `BLOCK` here means the same thing: this shell has not loaded
+`/workspace/env.sh`. Go back to §1.1 rather than exporting anything inline — an inline export
+fixes the one command in front of you and leaves the run to fail later.
 
 ---
 

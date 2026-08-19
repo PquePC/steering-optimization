@@ -111,12 +111,27 @@ Full instructions in [`docs/RUNBOOK-M3.md`](docs/RUNBOOK-M3.md) — M2's are in
 `OPENROUTER_API_KEY`; nothing else, and no GitHub credential — both repositories clone anonymously.
 
 ```bash
-export HF_HOME=/workspace/hf M2_BRANCH=m3
+unset HISTFILE
+cat > /workspace/env.sh <<'EOF'
+export HF_HOME=/workspace/hf
+export M2_BRANCH=m3
+export M2_VOLUME_GB=150
+export HF_TOKEN=hf_PASTE_YOURS
+export OPENROUTER_API_KEY=sk-or-v1-PASTE_YOURS
+EOF
+chmod 600 /workspace/env.sh
+grep -q 'workspace/env.sh' ~/.bashrc || echo '[ -f /workspace/env.sh ] && . /workspace/env.sh' >> ~/.bashrc
+. /workspace/env.sh
 git clone https://github.com/PquePC/steering-optimization.git /workspace/steering-optimization
 cd /workspace/steering-optimization && git checkout m3
 python -m m2.setup --repair
 python -m m3.run --concept Garlic --dry-run
 ```
+
+The environment block goes on the **volume** rather than into the shell, so it survives a
+stop/start and reaches every later terminal and every `nohup`. Exporting by hand instead is what
+makes `m2.setup` block on a branch you thought you had set. Full detail, including what to re-run
+after a restart, is in [`docs/RUNBOOK-M3.md`](docs/RUNBOOK-M3.md) §1.1.
 
 The last line prices the run and loads nothing. `python -m m3.run --concept Garlic` then measures
 it; Phase 0 is the preflight, and its `R14 pass` line is what says the injection hook is live.
