@@ -726,6 +726,103 @@ def _generate(prompts: Sequence[str], layer: int, vector: Any, strength: float,
     return out
 
 
+def _generate_rows(prompts: Sequence[str], layer: int, vectors: Sequence[Any],
+                   starts: Sequence[int], max_new_tokens: int, temperature: float,
+                   batch_max: int) -> list[str]:
+    """`generate_batch_with_multi_steering` with a DIFFERENT vector per row, order preserved.
+
+    `steering_vectors` is already per row; only `strength` is a single scalar for the batch. So
+    a per-row dose is expressed by pre-scaling each row's vector and passing strength 1.0. That
+    identity is not documented upstream and is not assumed here -- `verify_per_row_dose` proves
+    it against this model before any boundary uses it.
+    """
+    run = _run()
+    prompts, starts = list(prompts), [int(s) for s in starts]
+    if len(vectors) != len(prompts):
+        raise ValueError(f"{len(vectors)} vectors for {len(prompts)} prompts; the multi-steering "
+                         "path takes one per row and there is no sensible fill.")
+    out: list[str] = []
+    for lo in range(0, len(prompts), int(batch_max)):
+        hi = lo + int(batch_max)
+        got = run.mw.generate_batch_with_multi_steering(
+            prompts=prompts[lo:hi], layer_idx=int(layer),
+            steering_vectors=list(vectors[lo:hi]), strength=1.0,
+            max_new_tokens=int(max_new_tokens), temperature=float(temperature),
+            steering_start_positions=starts[lo:hi])
+        if len(got) != len(prompts[lo:hi]):
+            raise RuntimeError(
+                f"generate_batch_with_multi_steering returned {len(got)} responses for "
+                f"{len(prompts[lo:hi])} prompts; responses are matched to prompts by position.")
+        out.extend(str(g) for g in got)
+    return out
+
+
+def generate_steered_doses(prompts: list[str], layer: int, alphas: Sequence[float],
+                           max_new_tokens: int, temperature: float, *,
+                           start_positions: Sequence[int], batch_max: int,
+                           vec: Any = None) -> list[str]:
+    """Batched steered generation where each row carries its OWN alpha.
+
+    This exists for Phase 1. The boundary ladder probes one dose at a time and generates four
+    responses per probe, so it runs the GPU at a batch of four: the 2026-08-19 run spent 35.1
+    minutes there against 43.0 for the whole 196-cell sweep, and moved 1,404 responses to the
+    sweep's 3,724 -- 1.5 seconds per response against 0.69. Throughput on this model scales
+    almost linearly with batch size in that range, so the cost was the batch, not the work.
+
+    With a per-row alpha, a whole window of ladder rungs generates in one call. The rungs are
+    the same geometric grid as before, so the bracket the ladder hands to the refinement is
+    unchanged -- this is a scheduling change, not a change to the search.
+    """
+    prompts = list(prompts)
+    if not prompts:
+        raise ValueError("generate_steered_doses() was given no prompts")
+    if len(alphas) != len(prompts):
+        raise ValueError(f"{len(alphas)} alphas for {len(prompts)} prompts; one per row.")
+    if any(not float(a) for a in alphas):
+        # Same reason generate_steered refuses alpha=0: a zero row is an unsteered generation
+        # wearing a steered label, and here it would be invisible among steered neighbours.
+        raise ValueError("generate_steered_doses() got alpha=0 on some row. That row would be "
+                         "an unsteered generation recorded as steered; call generate_unsteered.")
+    vector = _run().vecs[int(layer)] if vec is None else vec
+    _check_start_positions(prompts, start_positions)
+    return _generate_rows(prompts, int(layer), [float(a) * vector for a in alphas],
+                          start_positions, int(max_new_tokens), float(temperature), batch_max)
+
+
+def verify_per_row_dose(layer: int, alpha: float, prompt: str, start: int,
+                        temperature: float) -> None:
+    """Prove that scaling a row's vector equals scaling the batch's strength, on THIS harness.
+
+    `generate_steered_doses` rests on `strength * v == 1.0 * (strength * v)`. That holds only if
+    the upstream hook uses the vector as given. If it normalises it -- which the harness is free
+    to do and which this repo cannot see from here, since the harness is cloned at run time --
+    then every per-row dose silently collapses to the same strength and every boundary in the
+    run is wrong, with nothing anywhere reporting it.
+
+    So it is measured, not assumed. Both paths generate the same prompt from the same seed: if
+    the arithmetic is equivalent the logits are identical and the sampled text matches exactly.
+    A mismatch raises and the run stops before it can produce a number.
+    """
+    import torch
+    vector = _run().vecs[int(layer)]
+    seed = 20260819
+
+    torch.manual_seed(seed)
+    a = _generate([prompt], int(layer), vector, float(alpha), [int(start)], 24, float(temperature))
+    torch.manual_seed(seed)
+    b = _generate_rows([prompt], int(layer), [float(alpha) * vector], [int(start)], 24,
+                       float(temperature), 1)
+    if a != b:
+        raise RuntimeError(
+            "per-row dose is NOT equivalent to batch strength on this harness: steering with "
+            f"(v, strength={alpha}) and with (v*{alpha}, strength=1.0) produced different text "
+            f"from the same seed. batch-strength={a[0][:100]!r} "
+            f"per-row-scaled={b[0][:100]!r}. "
+            "The upstream hook is not using the vector as given (it may "
+            "normalise it), so a batched dose ladder would silently probe one dose repeatedly. "
+            "Set BOUNDARY_RUNG_BATCH=1 to fall back to the one-dose-per-call ladder.")
+
+
 def generate_steered(prompts: list[str], layer: int, alpha: float, max_new_tokens: int,
                      temperature: float, *, start_positions: Sequence[int],
                      vec: Any = None) -> list[str]:

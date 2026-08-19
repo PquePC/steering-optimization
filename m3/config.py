@@ -112,6 +112,21 @@ SETTINGS: dict[str, Any] = dict(
     BOUNDARY_PROBES=12,
     BOUNDARY_STEP=0.70,
 
+    # How many ladder rungs are GENERATED in one call. Scheduling only: the rungs are the same
+    # geometric grid, judged in the same descending order, so the first passing rung and the
+    # bracket handed to the bisection are identical at any value. 1 restores the one-rung-per-
+    # call ladder exactly, and is the fallback if per-row dosing is ever not equivalent.
+    #
+    # Why it is not 1: on the 2026-08-19 run Phase 1 took 35.1 minutes to make 1,404 responses
+    # while Phase 2 made 3,724 in 43.0 -- 1.5 seconds per response against 0.69, for the same
+    # work at a quarter of the batch width. A probe is BOUNDARY_N=4 responses, so a window of 6
+    # rungs is 24 rows, just inside GEN_BATCH_MAX, and the ladder runs at the sweep's width.
+    #
+    # The cost is speculative: rungs below the one that passes were generated and are not
+    # needed. At 6 that is under one rung per layer on the measured distribution (the ladder
+    # failed a mean of 4.2 rungs before passing), against ~4x the throughput.
+    BOUNDARY_RUNG_BATCH=6,
+
     # (floor, ceiling) of the doses worth searching. The ceiling is where the descent starts,
     # subject to what ALPHA_CEIL actually allows; the floor is where it gives up.
     BOUNDARY_BRACKET=(0.05, 2.50),

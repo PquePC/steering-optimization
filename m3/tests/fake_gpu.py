@@ -407,8 +407,43 @@ def fake_gpu(n_layers: int = 62, probe_dir: Path | None = None,
                 out.append(responses.for_channel("effect"))
         return out
 
+    def generate_doses(prompts_text: Sequence[str], layer: Any = None,
+                       alphas: Sequence[float] = (), max_new_tokens: Any = None,
+                       temperature: Any = None, *a: Any, **kw: Any) -> list[str]:
+        """Per-row alpha: each row breaks according to ITS OWN dose, not the batch's.
+
+        Modelled row by row rather than by delegating the whole batch to `generate` with one
+        alpha, because a window of ladder rungs is precisely a batch whose rows straddle the
+        boundary. A fake that broke all of them together, or none, would make the batched
+        ladder look correct no matter which rung it attributed a verdict to.
+        """
+        if len(alphas) != len(prompts_text):
+            raise ValueError(f"{len(alphas)} alphas for {len(prompts_text)} prompts")
+        out: list[str] = []
+        for text, alpha in zip(prompts_text, alphas):
+            out.extend(generate([text], layer, alpha, max_new_tokens, temperature))
+        # `generate` was called per row above so each row could break at its own dose, and it
+        # recorded a one-row call each time. The real path issues ONE call per GEN_BATCH_MAX
+        # chunk. Both the batch count and the recorded width are what this optimisation is
+        # measured by -- and `n` is the witness that BOUNDARY_N reaches the generator at all --
+        # so the per-row bookkeeping is replaced with the call that really happened.
+        n_rows = len(prompts_text)
+        del calls["seen"][-n_rows:]
+        calls["seen"].append(dict(layer=layer, alpha=float(alphas[0]),
+                                  max_tokens=max_new_tokens, temperature=temperature, n=n_rows))
+        calls["batches"] -= n_rows
+        calls["batches"] += max(1, -(-n_rows // 25))
+        return out
+
     patch(expensive, "task_batch", task_batch)
     patch(expensive, "generate_steered", generate)
+    patch(expensive, "generate_steered_doses",
+          lambda p, layer, alphas, max_new_tokens=None, temperature=None, **k: generate_doses(
+              p, layer, alphas, max_new_tokens, temperature))
+    # The real check proves the upstream hook uses the vector as given. Here the per-row path
+    # is exact by construction, so there is nothing to prove and nothing to fake -- but it is
+    # patched rather than left to run, because the real one calls into `_run()`.
+    patch(expensive, "verify_per_row_dose", lambda *a, **k: None)
     # The unsteered signature is (texts, max_tokens, temperature, ...) -- no layer or alpha --
     # so the arguments are mapped rather than dropped, or the null arm records no token budget
     # and no temperature and looks like a path where neither setting is applied.

@@ -15,6 +15,7 @@ import json
 import sys
 import zipfile
 from collections import Counter
+import pathlib
 from pathlib import Path
 
 import pytest
@@ -255,6 +256,56 @@ def test_damage_spread_across_prompts_is_not_cancelled_by_averaging_each_leg():
 
     highest_sane = max(d for d in probes if conjoined(probes[d]))
     assert highest_sane == 0.075656, f"L29 would take dose_max {highest_sane}, not 0.075656"
+
+
+def test_batching_the_ladder_moves_no_boundary(tmp_path, monkeypatch):
+    """BOUNDARY_RUNG_BATCH is scheduling. Every boundary must come out bit-identical.
+
+    The batched ladder generates a window of rungs in one call instead of one rung per call.
+    The rungs are the same geometric grid and are judged in the same descending order, so the
+    first passing rung -- and the bracket handed to the bisection -- cannot change. If it ever
+    does, the optimisation has become a change to the measurement, which is the one thing it is
+    not allowed to be.
+
+    Run in all three over-steer modes: `spread` in particular puts rungs that pass and rungs
+    that fail inside the SAME window, which is the case a per-window verdict would get wrong.
+    """
+    import os
+    from m3 import run as m3run
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fake")
+    monkeypatch.setenv("HF_TOKEN", "fake")
+    saved = dict(config.CONFIG)
+
+    def boundaries(rung_batch, oversteer):
+        os.environ["M3_RUNS_DIR"] = str(tmp_path / f"{oversteer}_{rung_batch}")
+        cfg = config.CONFIG
+        cfg.clear()
+        cfg.update(config.SETTINGS)
+        config.apply_overrides([f"BOUNDARY_RUNG_BATCH={rung_batch}", "LAYER_STRIDE=4",
+                                "LAYER_FRACTIONS=0.21,1.0", "DOSE_FRACTIONS=0.5"], cfg)
+        with fake_gpu(oversteer=oversteer) as calls:
+            m3run.main(["--concept", "Garlic"])
+        rd = next(pathlib.Path(os.environ["M3_RUNS_DIR"]).glob("garlic_*"))
+        rows = [json.loads(x) for x in (rd / "boundaries.jsonl").read_text(encoding="utf-8")
+                .splitlines() if x.strip()]
+        return {r["layer"]: (r["dose_max"], r["lowest_failing_dose"], r["outcome"],
+                             r["bisect_used"]) for r in rows}, dict(calls)
+
+    for mode in ("fluent", "spread", "collapse"):
+        one, c1 = boundaries(1, mode)
+        many, c6 = boundaries(6, mode)
+        assert one, f"{mode}: no boundaries were produced, so this asserts nothing"
+        assert one == many, (
+            f"{mode}: batching the ladder changed the boundary at "
+            f"{[k for k in one if one[k] != many.get(k)]}")
+        # ...and it must actually have batched, or the equality above is trivially true.
+        assert c6["batches"] < c1["batches"], f"{mode}: no fewer generation calls"
+        # Speculative rungs are dropped rather than judged, so judge spend must not rise.
+        assert c6["judge_calls"] <= c1["judge_calls"], f"{mode}: batching cost judge calls"
+
+    config.CONFIG.clear()
+    config.CONFIG.update(saved)
 
 
 def test_the_boundary_rejects_damage_spread_across_prompts(run_dir):

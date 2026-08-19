@@ -67,6 +67,7 @@ PROBES: dict[str, tuple[Any, Any]] = {
     "BOUNDARY_STEP": (0.70, 0.35),
     "BOUNDARY_BRACKET": ((0.05, 2.50), (0.05, 0.90)),
     "BOUNDARY_N": (2, 4),
+    "BOUNDARY_RUNG_BATCH": (6, 1),
     "BOUNDARY_MAX_TOKENS": (48, 96),
     "BOUNDARY_COHERENCE_MIN": (5.0, 9.9),
     "ALPHA_CEIL": (16.0, 3.0),
@@ -313,6 +314,11 @@ WITNESSES = {
     "BOUNDARY_BRACKET": lambda v, t: _w_boundary(v, t, "BOUNDARY_BRACKET", "doses",
                                                  BOUNDARY_COHERENCE_MIN=9.9),
     "BOUNDARY_N": lambda v, t: _w_boundary(v, t, "BOUNDARY_N", "batch_n"),
+    # Scheduling only -- it must NOT move any boundary, so the witness reads the generator's
+    # batch width rather than the result. A witness reading `outcome` here would be a check
+    # that cannot fail, since identical boundaries are the whole point of the setting.
+    "BOUNDARY_RUNG_BATCH": lambda v, t: _w_boundary(v, t, "BOUNDARY_RUNG_BATCH", "batch_n",
+                                                    BOUNDARY_COHERENCE_MIN=9.9),
     "BOUNDARY_MAX_TOKENS": lambda v, t: _w_boundary(v, t, "BOUNDARY_MAX_TOKENS", "tokens"),
     # The threshold is only visible where the model IS coherent: a bracket that starts above the
     # boundary scores 0 everywhere and every threshold rejects it alike.

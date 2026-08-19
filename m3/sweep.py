@@ -277,7 +277,7 @@ def calibrate(concept: str, layers: Sequence[int], cfg: dict | None = None) -> d
     A steered rate is only readable against what the prompt produces on its own.
     """
     cfg = config.CONFIG if cfg is None else cfg
-    from m2 import config as m2config, model, runio, vectors
+    from m2 import config as m2config, expensive, model, runio, vectors
 
     _log(f"extracting vectors at {len(layers)} layers")
     vectors.extract_all_layers(concept, list(layers))
@@ -321,6 +321,18 @@ def calibrate(concept: str, layers: Sequence[int], cfg: dict | None = None) -> d
     # back a clean, plausible, completely empty surface.
     live = model.hook_liveness()
     _log(f"R14 pass  start_pos {live['d_start_pos']:.2e}  all-pos {live['d_all_pos']:.2e}")
+
+    # The batched ladder rests on "scaling a row's vector == scaling the batch's strength".
+    # That is a property of the upstream hook, which this repo clones at run time and cannot
+    # inspect from a laptop. If it normalises the vector instead, every rung in a window gets
+    # the same effective dose, the ladder measures one dose repeatedly, and every boundary in
+    # the run is wrong with nothing anywhere reporting it. So it is proved here, once, on this
+    # model, before Phase 1 -- beside R14, which exists for exactly the same reason.
+    if int(cfg["BOUNDARY_RUNG_BATCH"]) > 1:
+        first = battery_prompts(cfg)[0]
+        expensive.verify_per_row_dose(int(layers[0]), 1.0, first["prompt"],
+                                      int(first["start"]), float(cfg["TEMPERATURE"]))
+        _log("per-row dose pass  (batched ladder == one-rung ladder on this harness)")
 
     rows = battery_prompts(cfg)
 
@@ -385,7 +397,7 @@ def find_boundary(layer: int, concept: str, cfg: dict | None = None) -> dict:
     a fabricated boundary.
     """
     cfg = config.CONFIG if cfg is None else cfg
-    from m2 import config as m2config, runio
+    from m2 import expensive, config as m2config, runio
 
     lo, hi = (float(x) for x in cfg["BOUNDARY_BRACKET"])
     ratio = float(cfg["BOUNDARY_STEP"])
@@ -433,10 +445,43 @@ def find_boundary(layer: int, concept: str, cfg: dict | None = None) -> dict:
         runio.write_row(BOUNDARY_FILE, out)
         return out
 
+    # Responses generated ahead of the probe that will judge them, keyed by dose.
+    #
+    # Phase 1 spent 35.1 of the 2026-08-19 run's 79.5 minutes to produce 1,404 responses, while
+    # Phase 2 produced 3,724 in 43.0 -- 1.5 seconds per response against 0.69. The work was the
+    # same; the batch was not. A probe generates BOUNDARY_N=4 responses, and throughput on this
+    # model scales almost linearly with batch size in that range, so the ladder ran the GPU at
+    # a quarter of the width the sweep used and roughly a fifth of its throughput.
+    #
+    # A window of ladder rungs is generated in ONE call instead, each row carrying its own
+    # alpha. Rungs are the same geometric grid and are judged in the same descending order, so
+    # the first sane rung -- and therefore the bracket handed to the bisection -- is identical
+    # to what the one-at-a-time ladder found. Only the order the GPU is asked changes.
+    pending: dict[float, list[str]] = {}
+
+    def _prefetch(doses: Sequence[float]) -> None:
+        """Generate every rung in `doses` in one call. Silent no-op for rungs already held."""
+        want = [d for d in doses if d not in pending]
+        if len(want) <= 1:
+            return                      # one rung is what the unbatched path already does
+        specs = [(d, r) for d in want for r in rows_spec]
+        alphas = [float(m2config.alpha_for(int(layer), d)) for d, _ in specs]
+        texts = expensive.generate_steered_doses(
+            [r["prompt"] for _, r in specs], int(layer), alphas,
+            int(cfg["BOUNDARY_MAX_TOKENS"]), float(cfg["TEMPERATURE"]),
+            start_positions=[int(r["start"]) for _, r in specs],
+            batch_max=int(cfg["GEN_BATCH_MAX"]))
+        if len(texts) != len(specs):
+            raise RuntimeError(f"prefetch got {len(texts)} responses for {len(specs)} rows")
+        for (d, _), t in zip(specs, texts):
+            pending.setdefault(d, []).append(t)
+
     def _probe(dose_val: float, stage: str) -> bool:
         alpha = float(m2config.alpha_for(int(layer), dose_val))
-        responses = _generate(rows_spec, layer=layer, alpha=alpha,
-                              max_tokens=int(cfg["BOUNDARY_MAX_TOKENS"]), cfg=cfg)
+        responses = pending.pop(dose_val, None)
+        if responses is None:
+            responses = _generate(rows_spec, layer=layer, alpha=alpha,
+                                  max_tokens=int(cfg["BOUNDARY_MAX_TOKENS"]), cfg=cfg)
         rows = [battery.response_row(t, channel="effect", concept=concept, unit=r["unit"])
                 for r, t in zip(rows_spec, responses)]
         items = [dict(judge.build_item(
@@ -558,19 +603,31 @@ def find_boundary(layer: int, concept: str, cfg: dict | None = None) -> dict:
     fail_above = None
     start = dose = min(hi, max_reachable)
     reached_floor = False
-    for _step in range(int(cfg["BOUNDARY_PROBES"])):
+    rung_batch = max(1, int(cfg["BOUNDARY_RUNG_BATCH"]))
+    spent = 0
+    while best_sane is None and spent < int(cfg["BOUNDARY_PROBES"]):
         if dose < lo:
             reached_floor = True
             break
-        if best_sane is not None:
-            break
-        mid = dose
-        dose = dose * ratio
-        if _probe(mid, "ladder"):
-            best_sane = mid
-        else:
+        # The next window of rungs, on the same geometric grid the one-at-a-time ladder walked
+        # and bounded by the same probe budget and the same floor.
+        window: list[float] = []
+        while (len(window) < rung_batch and spent + len(window) < int(cfg["BOUNDARY_PROBES"])
+               and dose >= lo):
+            window.append(dose)
+            dose = dose * ratio
+        _prefetch(window)
+        for mid in window:
+            spent += 1
+            if _probe(mid, "ladder"):
+                best_sane = mid
+                break
             # The ladder descends, so the LAST failing probe is the tightest upper bound.
             fail_above = mid
+    # Rungs generated below the one that passed are speculative work the ladder did not need.
+    # They are dropped rather than judged: they cost GPU that was already spent widening the
+    # batch, and judging them would buy nothing the bracket does not already have.
+    pending.clear()
 
     # The ladder's answer is coarse by construction: its passing dose sits up to one whole step
     # (1/ratio - 1, 43% at the default 0.70) below its failing one. Bisect inside that measured
