@@ -52,3 +52,4 @@ Thumbs.db
 # Full-fidelity debug exports (task 08). Benign-arm only, temporary, and they carry vectors:
 # a zip is none of the extensions above, so `git add -A` on a pod would otherwise commit one.
 debug_bundle_*.zip
+docs/ARTICLE.md
