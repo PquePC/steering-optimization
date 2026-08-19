@@ -325,6 +325,34 @@ def battery_size(cfg: dict | None = None) -> int:
                + cfg["N_EXPLAIN"] + cfg["N_CAPABILITY"])
 
 
+def check_battery_fits(cfg: dict | None = None, *, observed: int | None = None) -> int:
+    """Raise if the battery cannot be generated in one call. Returns the battery size.
+
+    THE authority for this check, called from two places on purpose. `battery_prompts` used to
+    own it alone, which meant it fired only after the model was loaded -- so on 2026-08-19 a
+    `--dry-run` priced a run, printed "one generation batch", and the real run died nine
+    minutes later on the batch cap it had just failed to check. A dry run whose whole job is to
+    price a run before 54 GB of weights are loaded must fail on everything the real run fails
+    on.
+
+    `observed` is the real prompt count when a caller has one. It is compared against the
+    arithmetic, so the estimate can never quietly drift from the battery it is estimating.
+    """
+    cfg = CONFIG if cfg is None else cfg
+    size = battery_size(cfg)
+    if observed is not None and int(observed) != size:
+        raise AssertionError(
+            f"battery_size() says {size} prompts but the battery built {observed}. The cost "
+            "estimate and the run would be describing different experiments.")
+    cap = int(cfg["GEN_BATCH_MAX"])
+    if size > cap:
+        raise ValueError(
+            f"the battery is {size} prompts but GEN_BATCH_MAX is {cap}. It would be split "
+            "across two generation calls, roughly doubling the sweep's GPU time. Reduce a "
+            "channel or raise the batch cap deliberately.")
+    return size
+
+
 def judge_calls_per_cell(cfg: dict | None = None) -> int:
     """Judge calls per cell, for the cost estimate the runner prints before it starts."""
     cfg = CONFIG if cfg is None else cfg

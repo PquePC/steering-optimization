@@ -100,6 +100,11 @@ def estimate(n_layers: int, cfg: dict) -> dict:
     step = float(cfg["BOUNDARY_STEP"])
     probes_needed = math.ceil(math.log(lo / hi) / math.log(step)) + 1 if hi > lo else 1
 
+    # Before any number is printed: the battery must fit one generation call. Priced runs that
+    # cannot actually run are worse than no estimate -- this one printed "one generation batch"
+    # nine minutes before the run died on that exact cap.
+    config.check_battery_fits(cfg)
+
     return dict(
         layers=len(layers), first_layer=layers[0], last_layer=layers[-1], cells=cells,
         battery=config.battery_size(cfg),
@@ -122,7 +127,8 @@ def _print_plan(est: dict, cfg: dict, concept: str) -> None:
     print(f"  doses/layer   {len(cfg['DOSE_FRACTIONS'])} at {cfg['DOSE_FRACTIONS']} "
           f"of each layer's own boundary")
     print(f"  cells         {est['cells']}")
-    print(f"  battery       {est['battery']} responses/cell, one generation batch")
+    print(f"  battery       {est['battery']} responses/cell, one generation batch "
+          f"(cap {cfg['GEN_BATCH_MAX']})")
     print(f"  generations   {est['responses']:,}")
     print(f"  judge calls   {est['judge_calls']:,}  (<= ${est['judge_usd']:.2f} at cap)")
     print(f"  GPU estimate  ~{est['gpu_minutes']:.0f} min of measurement")

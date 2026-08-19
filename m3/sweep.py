@@ -147,11 +147,9 @@ def battery_prompts(cfg: dict | None = None) -> list[dict]:
                          prompt=text, start=int(st), source=row["text"],
                          accept=tuple(row["accept"])))
 
-    if len(rows) > int(cfg["GEN_BATCH_MAX"]):
-        raise ValueError(
-            f"the battery is {len(rows)} prompts but GEN_BATCH_MAX is {cfg['GEN_BATCH_MAX']}. "
-            "It would be split across two generation calls, roughly doubling the sweep's GPU "
-            "time. Reduce a channel or raise the batch cap deliberately.")
+    # Delegated to config so the dry run fails on exactly what the real run fails on, and
+    # `observed` proves the estimate's arithmetic still matches the battery it just built.
+    config.check_battery_fits(cfg, observed=len(rows))
     return rows
 
 

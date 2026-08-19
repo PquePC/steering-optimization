@@ -326,6 +326,33 @@ def test_a_missing_judged_measure_prints_as_absent_not_as_zero():
     assert "[3 judge errors]" in line
 
 
+def test_the_dry_run_refuses_a_battery_that_cannot_be_generated():
+    """A dry run must fail on everything the real run fails on.
+
+    On 2026-08-19 `--dry-run` priced a run at N_IDENTIFY=30, printed "43 responses/cell, one
+    generation batch", and reported no problem. The real run then loaded 54 GB of weights,
+    extracted vectors, and died nine minutes later on the batch cap the estimate had just
+    described and never checked. The estimate had the number in hand the whole time.
+    """
+    cfg = dict(config.SETTINGS, N_IDENTIFY=30)
+    assert config.battery_size(cfg) > int(cfg["GEN_BATCH_MAX"]), "the setup does not overflow"
+    with pytest.raises(ValueError, match="GEN_BATCH_MAX"):
+        m3run.estimate(62, cfg)
+    # ...and it still prices a battery that does fit, or the check is just refusing everything.
+    assert m3run.estimate(62, dict(config.SETTINGS, N_IDENTIFY=30, GEN_BATCH_MAX=44))["battery"] == 43
+
+
+def test_the_estimated_battery_matches_the_battery_actually_built():
+    """`battery_size()` is arithmetic; `battery_prompts()` builds the real thing. If they drift,
+    every printed cost describes an experiment other than the one that runs."""
+    from m3.tests.fake_gpu import fake_gpu
+    for over in ({}, {"N_IDENTIFY": 12}, {"N_EXPLAIN": 2, "N_CAPABILITY": 1}):
+        cfg = dict(config.SETTINGS, **over)
+        with fake_gpu():
+            rows = sweep.battery_prompts(cfg)
+        assert len(rows) == config.battery_size(cfg), f"drifted at {over}"
+
+
 def test_the_cost_estimate_scales_with_the_grid():
     cfg = dict(config.SETTINGS)
     full = m3run.estimate(62, cfg)
