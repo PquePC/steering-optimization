@@ -808,12 +808,20 @@ def _cell_line(cell: dict) -> str:
     eff = (cell.get("effectiveness") or {}).get("mean")
     coh = (cell.get("coherence") or {}).get("mean")
     cap = (cell.get("capability") or {}).get("rate")
+    # The over-steer signal, and the reason it is on the board rather than only on disk: a model
+    # that has stopped answering reads `coh=8.0 ans=0.00`, and without `ans` the operator sees
+    # only the 8.0. It is the MECHANICAL check on the explain prompts, not the judged `on_task`,
+    # because the judge scored a garlic listicle answering "what is a computer" as on-task --
+    # fluent, plausible, and no longer the answer. `explain_answered` (the judged view) is
+    # aggregated per cell too and stays in `cells.jsonl` for the comparison.
+    ans = (cell.get("explain_correct") or {}).get("rate")
     mech = (cell.get("mechanical") or {}).get("effect") or {}
     degen = (mech.get("degeneration") or {}).get("rate")
     errs = cell.get("judge_errors") or 0
     return (f"L{cell['layer']:<3}@{cell['dose']:<6.3f} "
             f"ident={_num(ident, '.2f', 4)} eff={_num(eff, '4.1f', 4)} "
-            f"coh={_num(coh, '4.1f', 4)} cap={_num(cap, '.2f', 4)} "
+            f"coh={_num(coh, '4.1f', 4)} ans={_num(ans, '.2f', 4)} "
+            f"cap={_num(cap, '.2f', 4)} "
             f"| mech.degen={_num(degen, '.2f', 4)}"
             + (f"  [{errs} judge errors]" if errs else ""))
 
