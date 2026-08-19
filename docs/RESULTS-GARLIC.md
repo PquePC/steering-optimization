@@ -1,4 +1,4 @@
-# 2026-08-19 — Garlic M3 runs
+# Garlic — the 2026-08-19 M3 runs
 
 **Scope.** Two runs on the same pod, same model, same benign concept. Everything below is a rate,
 a scalar or a short quotation from a benign-concept transcript; no vector, activation or model
