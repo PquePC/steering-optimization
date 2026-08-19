@@ -24,11 +24,13 @@ same question, that is a defect — say so.
 | Where does each piece of code live, and what is it called? | [`docs/CONTRACT.md`](docs/CONTRACT.md) |
 | Why is it built this way? What was decided, and against what? | [`docs/DESIGN-RATIONALE.md`](docs/DESIGN-RATIONALE.md) |
 | What is the research question this serves? | [`docs/RESEARCH-PROPOSAL.md`](docs/RESEARCH-PROPOSAL.md) |
-| What has actually been measured? | [`docs/RESULTS.md`](docs/RESULTS.md) |
+| What has actually been measured? | [`docs/RESULTS-M3.md`](docs/RESULTS-M3.md) — M2's is [`docs/RESULTS.md`](docs/RESULTS.md) |
 | What was decided, by whom, and what has been done? | [`docs/DECISIONS.md`](docs/DECISIONS.md) |
 | What went wrong before, and why did nothing catch it? | [`docs/DEBUG-LOG.md`](docs/DEBUG-LOG.md) |
 | What is still undecided or unbuilt? | [`docs/TODO.md`](docs/TODO.md) |
 | What comes after M2? | [`docs/M3-PROPOSAL.md`](docs/M3-PROPOSAL.md) |
+| What is the write-up, and what still blocks it? | [`docs/ARTICLE.md`](docs/ARTICLE.md) |
+| Which source grounds which measurement? | [`BIBLIOGRAPHY.md`](BIBLIOGRAPHY.md) |
 | How would detection be measured without asking the model? | [`docs/M4-PROPOSAL.md`](docs/M4-PROPOSAL.md) |
 | What am I, an agent, allowed to do here? | [`CLAUDE.md`](CLAUDE.md) / [`AGENTS.md`](AGENTS.md) |
 | I am the coding agent — what is my current task? | [`docs/handoff/`](docs/handoff/) |
