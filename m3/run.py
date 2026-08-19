@@ -79,7 +79,10 @@ def estimate(n_layers: int, cfg: dict) -> dict:
     """
     layers = config.layers_for_depth(n_layers, cfg)
     cells = len(layers) * len(cfg["DOSE_FRACTIONS"])
-    boundary_calls = len(layers) * int(cfg["BOUNDARY_PROBES"]) * int(cfg["BOUNDARY_N"])
+    # Ladder plus refinement, both at their worst case: every ladder probe spent, then every
+    # bisection spent. The tolerance usually stops bisection earlier; the price must not assume so.
+    probes_per_layer = int(cfg["BOUNDARY_PROBES"]) + int(cfg["BOUNDARY_BISECTIONS"])
+    boundary_calls = len(layers) * probes_per_layer * int(cfg["BOUNDARY_N"])
     cell_calls = cells * config.judge_calls_per_cell(cfg)
 
     in_tokens = sum(judge.estimate_payload_tokens(j, cfg) for j in judge.JUDGE_IDS)
@@ -87,7 +90,7 @@ def estimate(n_layers: int, cfg: dict) -> dict:
     per_call = mean_in * _USD_PER_INPUT_TOKEN + int(cfg["JUDGE_MAX_TOKENS"]) * _USD_PER_OUTPUT_TOKEN
 
     short = _SECONDS_PER_BATCH_100 * int(cfg["BOUNDARY_MAX_TOKENS"]) / int(cfg["MAX_NEW_TOKENS"])
-    gpu_s = len(layers) * int(cfg["BOUNDARY_PROBES"]) * short + cells * _SECONDS_PER_BATCH_100
+    gpu_s = len(layers) * probes_per_layer * short + cells * _SECONDS_PER_BATCH_100
 
     # Can the descending ladder actually cross its own bracket floor? If not, layers the search
     # stopped short on come back indistinguishable from layers that genuinely broke, and the
@@ -137,6 +140,10 @@ def _print_plan(est: dict, cfg: dict, concept: str) -> None:
               f"'probes_exhausted', NOT as broken — nothing below that dose is measured.")
         print(f"                Set BOUNDARY_PROBES={est['probes_needed']} to descend the "
               f"whole bracket.")
+    if int(cfg["BOUNDARY_BISECTIONS"]) > 0:
+        print(f"                then <= {cfg['BOUNDARY_BISECTIONS']} bisection probes inside "
+              f"the ladder's bracket, stopping within {cfg['BOUNDARY_BISECT_TOL']:.0%} "
+              f"of the boundary")
     print("")
     print("  Nothing is filtered, ranked or selected. Every cell gets the same battery and")
     print("  every response is judged and written to disk. Mechanical measures are recorded")

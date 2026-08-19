@@ -123,10 +123,11 @@ If you did set them by hand, prefix each line with a space so it stays out of `~
 cd /workspace/steering-optimization && python -m m3.run --concept Garlic --dry-run
 ```
 
-Loads no model and spends nothing. You should see 49 layers, 196 cells, `<= $2.43` in judges, and:
+Loads no model and spends nothing. You should see 49 layers, 196 cells, `<= $3.60` in judges, and:
 
 ```
 boundary      12 probes descends 2.5 -> below the floor 0.05 at x0.7
+              then <= 3 bisection probes inside the ladder's bracket, stopping within 10% of the boundary
 ```
 
 If that line instead says **WARNING**, the boundary ladder cannot reach its own bracket floor and
@@ -168,7 +169,8 @@ re-measured.
 | 2 | `[N judge errors]` absent | present on many cells — check the API key and credit |
 | end | `read-this bundle: N of M disagreements + 15 null` | `0 of 0` — be suspicious, check the judges ran |
 
-Roughly 70 minutes of measurement plus the model download.
+Roughly 80 minutes of measurement plus the model download (the estimate line prints the exact
+worst case; the boundary bisection usually stops early, so real runs come in under it).
 
 ---
 

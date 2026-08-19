@@ -421,23 +421,8 @@ def find_boundary(layer: int, concept: str, cfg: dict | None = None) -> dict:
         runio.write_row(BOUNDARY_FILE, out)
         return out
 
-    # Descend from the highest dose that is both wanted and reachable, and stop at the first
-    # coherent one. A descending ladder reaches any dose; the bisection's floor was set by its
-    # probe count, so with three probes it could never test below 0.40 however low the bracket
-    # said it went -- which is why every layer that survived reported the same 0.40.
-    best_sane = None
-    start = dose = min(hi, max_reachable)
-    reached_floor = False
-    for _step in range(int(cfg["BOUNDARY_PROBES"])):
-        if dose < lo:
-            reached_floor = True
-            break
-        if best_sane is not None:
-            break
-        alpha = float(m2config.alpha_for(int(layer), dose))
-        mid = dose
-        dose = dose * ratio
-
+    def _probe(dose_val: float, stage: str) -> bool:
+        alpha = float(m2config.alpha_for(int(layer), dose_val))
         responses = _generate(rows_spec, layer=layer, alpha=alpha,
                               max_tokens=int(cfg["BOUNDARY_MAX_TOKENS"]), cfg=cfg)
         rows = [battery.response_row(t, channel="effect", concept=concept, unit=r["unit"])
@@ -447,7 +432,7 @@ def find_boundary(layer: int, concept: str, cfg: dict | None = None) -> dict:
             payload=judge.render("coherence", text_chars=int(cfg["JUDGE_TEXT_CHARS"]),
                                  prompt=r["source"], response=t),
             cache_key=judge.cache_key("BOUNDARY", "coherence", layer=layer,
-                                      dose=_floor(mid, 6), unit=r["unit"]),
+                                      dose=_floor(dose_val, 6), unit=r["unit"]),
             concept=concept, model_text=(t,), text_chars=int(cfg["JUDGE_TEXT_CHARS"])),
             row_index=i, judge_kind="coherence")
             for i, (r, t) in enumerate(zip(rows_spec, responses))]
@@ -487,11 +472,53 @@ def find_boundary(layer: int, concept: str, cfg: dict | None = None) -> dict:
         # eighteen of them.
         # Floored, matching `max_reachable_dose`. Rounding one and flooring the other
         # put L16's recorded boundary 1e-6 ABOVE its recorded ceiling on the first run.
-        probes.append(dict(dose=_floor(mid, 6), alpha=alpha,
+        probes.append(dict(stage=stage, dose=_floor(dose_val, 6), alpha=alpha,
                            coherence=mean, coherence_n=len(scores), degeneration=degen,
                            on_task=frac_on_task, answered=frac_answered, sane=sane))
-        if sane:
+        return sane
+
+    # Descend from the highest dose that is both wanted and reachable, and stop at the first
+    # coherent one. A descending ladder reaches any dose; the blind bisection's floor was set by
+    # its probe count, so with three probes it could never test below 0.40 however low the
+    # bracket said it went -- which is why every layer that survived reported the same 0.40.
+    best_sane = None
+    fail_above = None
+    start = dose = min(hi, max_reachable)
+    reached_floor = False
+    for _step in range(int(cfg["BOUNDARY_PROBES"])):
+        if dose < lo:
+            reached_floor = True
+            break
+        if best_sane is not None:
+            break
+        mid = dose
+        dose = dose * ratio
+        if _probe(mid, "ladder"):
             best_sane = mid
+        else:
+            # The ladder descends, so the LAST failing probe is the tightest upper bound.
+            fail_above = mid
+
+    # The ladder's answer is coarse by construction: its passing dose sits up to one whole step
+    # (1/ratio - 1, 43% at the default 0.70) below its failing one. Bisect inside that measured
+    # bracket -- and only inside it, which is what the blind bisection above never had. Stop at
+    # BOUNDARY_BISECT_TOL because the grid cannot see finer, or at BOUNDARY_BISECTIONS because
+    # each probe costs BOUNDARY_N generations and judge calls. `dose_max` stays a dose that was
+    # probed and PASSED; the bracket midpoints that failed tighten `lowest_failing_dose` instead.
+    #
+    # A layer whose first probe passed has no measured failing dose above -- its boundary is at
+    # or above the top of the tested range -- and there is nothing to bisect toward.
+    bisect_used = 0
+    if best_sane is not None and fail_above is not None:
+        for _step in range(int(cfg["BOUNDARY_BISECTIONS"])):
+            if (fail_above - best_sane) / best_sane <= float(cfg["BOUNDARY_BISECT_TOL"]):
+                break
+            mid = (best_sane + fail_above) / 2.0
+            if _probe(mid, "bisect"):
+                best_sane = mid
+            else:
+                fail_above = mid
+            bisect_used += 1
 
     # FOUR outcomes, because they are four different facts and three of them were being reported
     # under one name:
@@ -524,11 +551,18 @@ def find_boundary(layer: int, concept: str, cfg: dict | None = None) -> dict:
                # `min(bracket_hi, max_reachable)` differs with depth.
                probes_to_reach_floor=int(needed),
                probes_used=len(probes),
+               bisect_used=bisect_used,
+               # The lowest dose measured and found BROKEN. Together with `dose_max` it is the
+               # bracket the boundary actually sits in; None means no probe above `dose_max`
+               # failed, so the boundary is at or above the top of the tested range.
+               lowest_failing_dose=(_floor(fail_above, 6) if fail_above is not None else None),
                bracket=[lo, hi], step_ratio=ratio, probes=probes,
                # The highest dose actually tested. Without it, a `None` cannot be told from
                # "we never probed low enough", which is what made the first run unreadable.
-               highest_probe=(probes[0]["dose"] if probes else None),
-               lowest_probe=(probes[-1]["dose"] if probes else None))
+               # Min/max over the rows, not first/last: bisect probes append after the ladder's,
+               # so position no longer encodes dose order.
+               highest_probe=(max(p["dose"] for p in probes) if probes else None),
+               lowest_probe=(min(p["dose"] for p in probes) if probes else None))
     runio.write_row(BOUNDARY_FILE, out)
     return out
 

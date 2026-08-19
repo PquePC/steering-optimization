@@ -131,6 +131,18 @@ def _norm_pair(layer: int, n_layers: int) -> dict:
 # Canned generations
 # =====================================================================================
 
+# What over-steering looked like on the real pod at L29: fluent, structured, enthusiastic prose
+# that has stopped being about the question. Built to fool exactly the judges the real response
+# fooled -- it is garlicky (>2 mentions) but not collapsed (no repetition the mechanical detector
+# or the canned coherence judge can see), and it contains NO `accept` term of any explain prompt,
+# so the mechanical answer check is the only criterion that fails it.
+_FLUENT_OVERSTEER = (
+    "## The Wonderful World of Garlic!\n\nIt is so much more than a kitchen staple. "
+    "**Botanical name:** *Allium sativum*. **Origin:** Central Asia. Garlic bulbs carry a "
+    "pungent aroma and a rich, savoury flavour, and roasted garlic mellows into a sweet, "
+    "nutty treat prized by cooks everywhere."
+)
+
 # Keyed by a distinctive fragment of each explain prompt, so the fake answers the question it
 # was actually asked.
 _EXPLAIN_ANSWERS = {
@@ -231,8 +243,20 @@ def _judge_reply(payload: str, responses: _Responses, disagree: bool = False) ->
 
 @contextlib.contextmanager
 def fake_gpu(n_layers: int = 62, probe_dir: Path | None = None,
-             judge_disagree_every: int = 7) -> Iterator[dict]:
-    """Patch the M2 seam so the whole M3 pipeline runs locally. Restores everything on exit."""
+             judge_disagree_every: int = 7, oversteer: str = "collapse") -> Iterator[dict]:
+    """Patch the M2 seam so the whole M3 pipeline runs locally. Restores everything on exit.
+
+    `oversteer` is what the fake model does past a layer's `true_boundary`:
+
+      "collapse"  degenerate repetition -- caught by the mechanical detector AND scored
+                  incoherent by the canned judge, so every criterion sees it.
+      "fluent"    well-formed garlic prose about the wrong subject -- the L29 failure mode from
+                  the first real run, where the coherence judge held 8/10 while "what is a
+                  computer" was answered with garlic's botanical profile. The canned judge here
+                  scores it coherent and on-task for the same reason the real one did, so ONLY
+                  the mechanical answer check can see it. A boundary search that finds the
+                  boundary in this mode is finding it for the right reason.
+    """
     install_torch_stub()
     from m2 import config as m2config, expensive, judges, model, prompts, vectors
 
@@ -327,7 +351,7 @@ def fake_gpu(n_layers: int = 62, probe_dir: Path | None = None,
         out = []
         for text in prompts_text:
             if broken:
-                out.append("garlic " * 40)
+                out.append(_FLUENT_OVERSTEER if oversteer == "fluent" else "garlic " * 40)
                 continue
             if "injected thought" in text and "thought is about" in text:
                 out.append(responses.for_channel("identify"))

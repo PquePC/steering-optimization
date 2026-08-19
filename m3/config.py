@@ -89,11 +89,12 @@ SETTINGS: dict[str, Any] = dict(
     # Phase 1 descends from the highest reachable dose, multiplying by BOUNDARY_STEP each time,
     # and stops at the first dose the judge calls coherent.
     #
-    # NOT a bisection. Bisecting a bracket has a floor set by the probe count, not by the
-    # bracket: three probes on (0.10, 2.50) can only ever test 1.30, 0.70 and 0.40, so every
-    # layer whose real boundary sits below 0.40 reports nothing, and every layer whose boundary
-    # sits above it reports exactly 0.40. On the first real run all 25 surviving layers returned
-    # the identical 0.40 -- one bit of information, dressed as a per-layer measurement.
+    # NOT a blind bisection. Bisecting the whole bracket has a floor set by the probe count, not
+    # by the bracket: three probes on (0.10, 2.50) can only ever test 1.30, 0.70 and 0.40, so
+    # every layer whose real boundary sits below 0.40 reports nothing, and every layer whose
+    # boundary sits above it reports exactly 0.40. On the first real run all 25 surviving layers
+    # returned the identical 0.40 -- one bit of information, dressed as a per-layer measurement.
+    # (Bisection does return, below, but only INSIDE a bracket the ladder has already measured.)
     #
     # BOUNDARY_PROBES must be large enough for the ladder to CROSS the bracket floor, or the
     # search stops early and a layer it never measured low enough is indistinguishable from one
@@ -140,6 +141,27 @@ SETTINGS: dict[str, Any] = dict(
     # 0.75 = three of four probes. Not 1.0: one sampled response at temperature 1.0 wandering
     # off should not move a layer's whole dose ladder.
     BOUNDARY_ANSWER_MIN=0.75,
+
+    # The ladder leaves a coarse answer: its first passing dose sits up to one whole step below
+    # the first failing one -- a 43% gap at the default 0.70 ratio -- so `dose_max` can
+    # undershoot the real boundary by 30%, and the top grid cell (0.9 x dose_max) then sits at
+    # ~63% of the boundary, below the region where a near-boundary operating point would live.
+    #
+    # So after the ladder has bracketed the boundary between one measured failing dose and one
+    # measured passing dose, bisect inside that bracket. This is not the blind bisection the
+    # ladder replaced: that one had no bracket, so its floor was set by its probe count. Here
+    # every probe starts from measured endpoints and can only tighten them, and `dose_max` is
+    # always a dose that was actually probed and passed, never an interpolation.
+    #
+    # It stops when the bracket is within BOUNDARY_BISECT_TOL of the passing dose, or after
+    # BOUNDARY_BISECTIONS probes, whichever comes first. The tolerance is the scientific stop:
+    # the grid samples DOSE_FRACTIONS of `dose_max` at 0.20 spacing, so precision much beyond
+    # 10% buys nothing the grid can see -- and each probe is BOUNDARY_N generations plus
+    # BOUNDARY_N judge calls per layer, so unbounded precision is unbounded cost. The count is
+    # the budget backstop; at the defaults the tolerance stops it at two probes almost always.
+    # 0 disables refinement and reproduces the bare ladder.
+    BOUNDARY_BISECTIONS=3,
+    BOUNDARY_BISECT_TOL=0.10,
 
     # Refuse any (layer, dose) needing a larger raw multiplier than this. Never clamped: a
     # clamped alpha is a cell measured at a dose other than the one recorded against it.

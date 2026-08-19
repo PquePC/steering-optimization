@@ -77,6 +77,8 @@ PROBES: dict[str, tuple[Any, Any]] = {
     "N_CAPABILITY": (2, 1),
     "N_EXPLAIN": (4, 2),
     "BOUNDARY_ANSWER_MIN": (0.75, 1.01),
+    "BOUNDARY_BISECTIONS": (0, 3),
+    "BOUNDARY_BISECT_TOL": (0.40, 0.02),
     "NULL_REPEATS": (1, 3),
     "MAX_NEW_TOKENS": (100, 64),
     "TEMPERATURE": (1.0, 0.25),
@@ -238,6 +240,7 @@ def _w_boundary(value, tmp, name, read, **tweak):
     """
     row, calls = _boundary(_cfg(name, value) | tweak, tmp)
     return {"n_probes": lambda: len(row["probes"]),
+            "bisects": lambda: row["bisect_used"],
             "doses": lambda: [p["dose"] for p in row["probes"]],
             "max_reachable": lambda: row["max_reachable_dose"],
             "outcome": lambda: (row["outcome"], row["dose_max"]),
@@ -327,6 +330,15 @@ WITNESSES = {
     # as the threshold echoed back.
     "BOUNDARY_ANSWER_MIN": lambda v, t: _w_boundary(
         v, t, "BOUNDARY_ANSWER_MIN", "outcome", BOUNDARY_BRACKET=(0.05, 0.90)),
+    # Bisection only runs once the ladder has bracketed a boundary, which on the deepest layer
+    # takes four rungs (2.50 -> 1.75 -> 1.225 -> 0.8575 against a true boundary of 1.0). The
+    # shrunken base config's two probes never get there, so both witnesses raise the budget --
+    # otherwise they would compare zero bisections against zero and report "no effect" for a
+    # setting that works. Observed as the number of bisection probes the search actually spent.
+    "BOUNDARY_BISECTIONS": lambda v, t: _w_boundary(v, t, "BOUNDARY_BISECTIONS", "bisects",
+                                                    BOUNDARY_PROBES=6),
+    "BOUNDARY_BISECT_TOL": lambda v, t: _w_boundary(v, t, "BOUNDARY_BISECT_TOL", "bisects",
+                                                    BOUNDARY_PROBES=6),
     "NULL_REPEATS": _w_null_repeats,
     "MAX_NEW_TOKENS": lambda v, t: _w_cell(v, t, "MAX_NEW_TOKENS", "max_tokens"),
     "TEMPERATURE": lambda v, t: _w_cell(v, t, "TEMPERATURE", "temperature"),

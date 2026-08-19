@@ -154,21 +154,81 @@ def test_the_calibration_paths_run_end_to_end(run_dir):
 
 def test_the_boundary_search_finds_a_known_per_layer_boundary(run_dir):
     """The first real run returned dose_max=0.4 for all 25 surviving layers -- one bit of
-    information dressed as a per-layer measurement, because bisecting a bracket has a floor set
-    by the probe count. The descending ladder must recover a boundary that VARIES with depth."""
+    information dressed as a per-layer measurement, because blindly bisecting a bracket has a
+    floor set by the probe count. The descending ladder must recover a boundary that VARIES with
+    depth -- and the in-bracket bisection must then land within BOUNDARY_BISECT_TOL of it, not a
+    whole ladder step (43%) below it, or the top grid cell sits far under the regime the study
+    is about."""
     from m3.tests.fake_gpu import true_boundary
     config.apply_overrides(["LAYER_FRACTIONS=0.21,1.0", "LAYER_STRIDE=6",
                             "DOSE_FRACTIONS=0.5"], config.CONFIG)
     with fake_gpu():
         m3run.main(["--concept", "Garlic"])
     rows = _load(run_dir, "boundaries.jsonl")
-    found = {r["layer"]: r["dose_max"] for r in rows if r["dose_max"] is not None}
+    found = {r["layer"]: (r["dose_max"], r["max_reachable_dose"])
+             for r in rows if r["dose_max"] is not None}
     assert len(found) >= 5
-    assert len(set(found.values())) > 1, "the search returned one value for every layer"
-    for layer, dose in found.items():
+    assert len({d for d, _ in found.values()}) > 1, \
+        "the search returned one value for every layer"
+    for layer, (dose, reachable) in found.items():
         true = true_boundary(layer, 62)
         assert dose <= true * 1.01, f"L{layer}: reported {dose} above the true boundary {true}"
-        assert dose >= true * 0.5, f"L{layer}: reported {dose}, far below the true {true}"
+        # The boundary can never exceed what ALPHA_CEIL allows, so precision is judged against
+        # whichever bound actually binds. 0.85 is the guarantee of the default tolerance (0.10)
+        # with float margin, against the bare ladder's 0.70.
+        bound = min(true, reachable)
+        assert dose >= bound * 0.85, \
+            f"L{layer}: reported {dose}, more than 15% below the reachable boundary {bound}"
+
+
+def test_the_boundary_is_found_even_when_oversteering_stays_fluent(run_dir):
+    """The failure mode the three-way criterion exists for, reproduced from the first real run:
+    past the boundary the model writes well-formed, enthusiastic prose about garlic instead of
+    the question (at L29 the real judge held coherence 8/10 while "what is a computer" was
+    answered with garlic's botanical profile). The canned judge here is fooled the same way --
+    it scores the fluent text coherent AND on-task -- so only the mechanical answer check can
+    fail the probe. If the boundary still lands at the true value, it landed for the right
+    reason. Under `oversteer="collapse"` every criterion sees the break, so that mode cannot
+    tell whether `answered` is load-bearing; this one can."""
+    from m3.tests.fake_gpu import true_boundary
+    config.apply_overrides(["LAYER_FRACTIONS=0.21,1.0", "LAYER_STRIDE=6",
+                            "DOSE_FRACTIONS=0.5"], config.CONFIG)
+    with fake_gpu(oversteer="fluent"):
+        m3run.main(["--concept", "Garlic"])
+    rows = _load(run_dir, "boundaries.jsonl")
+    found = {r["layer"]: (r["dose_max"], r["max_reachable_dose"])
+             for r in rows if r["dose_max"] is not None}
+    assert len(found) >= 5
+    for layer, (dose, reachable) in found.items():
+        true = true_boundary(layer, 62)
+        assert dose <= true * 1.01, \
+            f"L{layer}: {dose} above the true boundary {true} -- the fluent over-steer " \
+            f"was scored sane, so the answer check is not load-bearing"
+        assert dose >= min(true, reachable) * 0.85, \
+            f"L{layer}: reported {dose}, far below {min(true, reachable)}"
+    # The judge really was fooled: every recorded broken probe must have been failed by the
+    # answer check, not by coherence. Otherwise this test is the collapse test wearing a wig.
+    fooled = [p for r in rows for p in r["probes"] if not p["sane"]]
+    assert fooled, "no probe ever landed past a boundary, so nothing was tested"
+    assert all(p["coherence"] is not None and p["coherence"] >= 5.0 and p["on_task"] >= 0.75
+               for p in fooled), "a broken probe was caught by the judge, not the answer check"
+    assert all(p["answered"] < 0.75 for p in fooled)
+
+
+def test_bisection_zero_reproduces_the_bare_ladder(run_dir):
+    """BOUNDARY_BISECTIONS=0 must disable refinement entirely: no bisect-stage probes, and
+    `dose_max` is exactly a ladder rung. The knob that turns a feature off is part of the
+    feature."""
+    config.apply_overrides(["LAYER_FRACTIONS=0.21,1.0", "LAYER_STRIDE=6",
+                            "DOSE_FRACTIONS=0.5", "BOUNDARY_BISECTIONS=0"], config.CONFIG)
+    with fake_gpu():
+        m3run.main(["--concept", "Garlic"])
+    rows = _load(run_dir, "boundaries.jsonl")
+    assert rows
+    for r in rows:
+        assert all(p["stage"] == "ladder" for p in r["probes"]), \
+            f"L{r['layer']}: a bisect probe ran with BOUNDARY_BISECTIONS=0"
+        assert r["bisect_used"] == 0
 
 
 def test_an_unreachable_layer_is_not_reported_as_incoherent(run_dir):
