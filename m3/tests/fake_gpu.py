@@ -41,6 +41,7 @@ shaped like it when the archive is absent.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import random
 import types
@@ -205,9 +206,23 @@ class _Responses:
                 self.pool[channel] = rows
         self.real = bool(self.pool)
 
-    def for_channel(self, channel: str) -> str:
+    def for_channel(self, channel: str, key: str = "") -> str:
+        """A response for `channel`, chosen DETERMINISTICALLY from `key`.
+
+        Was `self.rng.choice(pool)`, a shared RNG advanced once per generated row -- so which
+        text a row received depended on how many rows had been generated before it. That makes
+        content a function of call ORDER, and `test_batching_the_ladder_moves_no_boundary`
+        exists to prove that batching the ladder changes nothing: generating five rungs in one
+        call instead of five re-orders every draw after it. The test passed at a window of
+        6x4 rows and failed at 5x5 for that reason alone, which means it was reading the RNG
+        sequence rather than the product.
+
+        Keying on the row makes the harness answer the same thing for the same row however the
+        calls are grouped, so the test asserts what it says it asserts.
+        """
         pool = self.pool.get(channel) or self._SYNTH.get(channel) or self._SYNTH["effect"]
-        return self.rng.choice(pool)
+        digest = hashlib.blake2b(f"{channel}|{key}".encode(), digest_size=8).digest()
+        return pool[int.from_bytes(digest, "big") % len(pool)]
 
 
 # =====================================================================================
@@ -365,6 +380,9 @@ def fake_gpu(n_layers: int = 62, probe_dir: Path | None = None,
             broken = dose > true_boundary(int(layer), n_layers)
         out = []
         for text in prompts_text:
+            # Identifies the ROW, not the call: same prompt at the same layer and alpha gets
+            # the same response however the calls are grouped.
+            rowkey = f"{layer}|{alpha}|{text}"
             if broken and oversteer == "spread":
                 # Damage distributed across prompts instead of hitting all of them, which is
                 # what a real model does near its boundary and what no other mode here
@@ -379,15 +397,20 @@ def fake_gpu(n_layers: int = 62, probe_dir: Path | None = None,
                     out.append(_EXPLAIN_ANSWERS["Moon have phases"] + " " + _OFFTOPIC)
                 else:
                     key = next((k for k in _EXPLAIN_ANSWERS if k in text), None)
-                    out.append(_EXPLAIN_ANSWERS[key] if key else "garlic " * 40)
+                    # A prompt with no checkable answer (the boundary's open-ended row) keeps a
+                    # clean response here. Collapsing it would fail the probe on coherence and
+                    # erase the very shape this mode exists to produce: every leg survivable
+                    # while half the battery is corrupt.
+                    out.append(_EXPLAIN_ANSWERS[key] if key
+                               else responses.for_channel("effect", rowkey))
                 continue
             if broken:
                 out.append(_FLUENT_OVERSTEER if oversteer == "fluent" else "garlic " * 40)
                 continue
             if "injected thought" in text and "thought is about" in text:
-                out.append(responses.for_channel("identify"))
+                out.append(responses.for_channel("identify", rowkey))
             elif "injected thought" in text:
-                out.append(responses.for_channel("self_report"))
+                out.append(responses.for_channel("self_report", rowkey))
             elif any(k in text for k in _EXPLAIN_ANSWERS):
                 # The answer MATCHING this prompt, not a random one from the pool. Drawing at
                 # random means "what is a computer" often gets the Marie Curie answer, its
@@ -402,9 +425,9 @@ def fake_gpu(n_layers: int = 62, probe_dir: Path | None = None,
                 # makes capability read 0.00 at every cell, which exercises the scoring call
                 # but never its "correct" branch -- a path left untested by the harness meant
                 # to prove no path is untested.
-                out.append(responses.for_channel("capability"))
+                out.append(responses.for_channel("capability", rowkey))
             else:
-                out.append(responses.for_channel("effect"))
+                out.append(responses.for_channel("effect", rowkey))
         return out
 
     def generate_doses(prompts_text: Sequence[str], layer: Any = None,

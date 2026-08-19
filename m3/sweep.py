@@ -402,11 +402,23 @@ def find_boundary(layer: int, concept: str, cfg: dict | None = None) -> dict:
     lo, hi = (float(x) for x in cfg["BOUNDARY_BRACKET"])
     ratio = float(cfg["BOUNDARY_STEP"])
     probes: list[dict] = []
+    # Explain prompts, which have a checkable answer...
     task = list(battery.EXPLAIN_PROMPTS)[:int(cfg["BOUNDARY_N"])]
+    # ...and open-ended prompts, which do not. The 2026-08-19 confirmation run is why: three
+    # top-dose cells (L56@0.2768, L58@0.1892, L61@0.1750) came back with the explain answers
+    # intact -- `ans=1.00` -- while their coherence was 3.0-4.5 and mechanical degeneration
+    # 0.50-0.75. A short factual answer survives a dose at which the model's stories have
+    # already collapsed into "Garlic Garlic Garlic", so a boundary read only on explain prompts
+    # sits above the dose where open-ended generation is already gone.
+    #
+    # These rows carry no `accept`, so the answer leg cannot apply to them; they are held to
+    # coherence and on-task only. That is deliberate -- inventing accept terms for "tell me a
+    # story" would be a check that cannot fail.
+    task += list(battery.TASK_PROMPTS)[:int(cfg["BOUNDARY_TASK_N"])]
     from m2 import expensive
     rendered, starts, ids = expensive.task_batch(task)
-    rows_spec = [dict(channel="explain", unit=pid, prompt=t, start=int(s), source=r["text"],
-                      accept=tuple(r["accept"]))
+    rows_spec = [dict(channel="explain" if r.get("accept") else "task", unit=pid, prompt=t,
+                      start=int(s), source=r["text"], accept=tuple(r.get("accept") or ()))
                  for r, t, s, pid in zip(task, rendered, starts, ids)]
 
     # Reachability is ARITHMETIC, not something to discover by probing:
@@ -538,7 +550,9 @@ def find_boundary(layer: int, concept: str, cfg: dict | None = None) -> dict:
         # averaging changes, and it moves that layer's boundary from 0.0823 to 0.0757, where
         # all four answers are clean.
         coh_min = float(cfg["BOUNDARY_COHERENCE_MIN"])
-        answered = [battery.capability_correct(t, r["accept"])
+        # `None` where the prompt has no checkable answer, so an open-ended row is held to
+        # coherence and on-task and is neither credited nor penalised on the answer leg.
+        answered = [battery.capability_correct(t, r["accept"]) if r["accept"] else None
                     for r, t in zip(rows_spec, responses)]
         per_response = []
         for i in range(len(responses)):
@@ -548,10 +562,12 @@ def find_boundary(layer: int, concept: str, cfg: dict | None = None) -> dict:
             # from, which is the wrong direction for a check that gates a dose.
             per_response.append(bool(p) and p.get("coherence") is not None
                                 and p["coherence"] >= coh_min
-                                and bool(p.get("on_task")) and answered[i])
+                                and bool(p.get("on_task"))
+                                and (answered[i] is None or answered[i]))
         on_task = [bool(p.get("on_task")) for p in parsed]
         frac_on_task = (sum(on_task) / len(on_task)) if on_task else 0.0
-        frac_answered = sum(answered) / len(answered)
+        checkable = [a for a in answered if a is not None]
+        frac_answered = (sum(checkable) / len(checkable)) if checkable else 0.0
         frac_good = sum(per_response) / len(per_response)
         floor = float(cfg["BOUNDARY_ANSWER_MIN"])
 

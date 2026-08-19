@@ -212,9 +212,20 @@ def test_the_boundary_is_found_even_when_oversteering_stays_fluent(run_dir):
     # answer check, not by coherence. Otherwise this test is the collapse test wearing a wig.
     fooled = [p for r in rows for p in r["probes"] if not p["sane"]]
     assert fooled, "no probe ever landed past a boundary, so nothing was tested"
-    assert all(p["coherence"] is not None and p["coherence"] >= 5.0 and p["on_task"] >= 0.75
-               for p in fooled), "a broken probe was caught by the judge, not the answer check"
     assert all(p["answered"] < 0.75 for p in fooled)
+    # Asserted PER RESPONSE, on the rows that have an answer to lose. The probe-level coherence
+    # mean now also covers the open-ended row, which has no answer check and is not what this
+    # test is about; averaging it in would let a real regression hide behind it.
+    btx = _load(run_dir, "boundary_transcripts.jsonl")
+    broken = {(r["layer"], p["dose"]) for r in rows for p in r["probes"] if not p["sane"]}
+    checkable = [t for t in btx if (t["layer"], t["dose"]) in broken and t["answered"] is not None]
+    assert checkable, "no boundary response with a checkable answer landed past a boundary"
+    assert not any(t["answered"] for t in checkable),         "the answer check passed a response past the boundary"
+    fooled_rows = [t for t in checkable
+                   if t["coherence"] is not None and t["coherence"] >= 5.0 and t["on_task"]]
+    assert len(fooled_rows) >= 0.75 * len(checkable), (
+        f"only {len(fooled_rows)}/{len(checkable)} of the broken responses fooled the judge -- "
+        "this is the collapse test wearing a wig, not the fluent one")
 
 
 def test_damage_spread_across_prompts_is_not_cancelled_by_averaging_each_leg():
@@ -292,9 +303,13 @@ def test_batching_the_ladder_moves_no_boundary(tmp_path, monkeypatch):
         return {r["layer"]: (r["dose_max"], r["lowest_failing_dose"], r["outcome"],
                              r["bisect_used"]) for r in rows}, dict(calls)
 
+    # The shipped value, not a hardcoded one: the window must fit GEN_BATCH_MAX, and how many
+    # rungs fit depends on the probe width. Pinning 6 here is what broke when the probe gained
+    # its open-ended row.
+    batch = int(config.SETTINGS["BOUNDARY_RUNG_BATCH"])
     for mode in ("fluent", "spread", "collapse"):
         one, c1 = boundaries(1, mode)
-        many, c6 = boundaries(6, mode)
+        many, c6 = boundaries(batch, mode)
         assert one, f"{mode}: no boundaries were produced, so this asserts nothing"
         assert one == many, (
             f"{mode}: batching the ladder changed the boundary at "
@@ -352,11 +367,15 @@ def test_every_boundary_generation_and_judge_reply_is_persisted(run_dir):
     bounds = _load(run_dir, "boundaries.jsonl")
     rows = _load(run_dir, "boundary_transcripts.jsonl")
 
-    expected = sum(len(b["probes"]) for b in bounds) * int(config.CONFIG["BOUNDARY_N"])
+    # One row per response, and a probe is BOUNDARY_N explain rows plus BOUNDARY_TASK_N
+    # open-ended rows -- the open-ended ones are the only place an open-ended collapse is
+    # visible to the boundary at all, so they must be persisted like the rest.
+    width = int(config.CONFIG["BOUNDARY_N"]) + int(config.CONFIG["BOUNDARY_TASK_N"])
+    expected = sum(len(b["probes"]) for b in bounds) * width
     assert expected > 0, "no probe ran, so this asserts nothing"
     assert len(rows) == expected, (
         f"{len(rows)} boundary responses on disk against {expected} probed "
-        f"({sum(len(b['probes']) for b in bounds)} probes x BOUNDARY_N)")
+        f"({sum(len(b['probes']) for b in bounds)} probes x {width} rows)")
 
     # Failing probes are the half worth reading: they are the doses the grid will never sample.
     assert any(not r["probe_sane"] for r in rows), "only passing probes were kept"
@@ -365,8 +384,14 @@ def test_every_boundary_generation_and_judge_reply_is_persisted(run_dir):
         assert r["judge_raw"], "a row carries no verbatim judge reply"
         # The three legs, separately. An aggregate cannot say which one rejected the dose.
         assert r["coherence"] is not None and r["on_task"] is not None
-        assert isinstance(r["answered"], bool)
+        # `answered` is a bool where the prompt HAS a checkable answer and None on the
+        # open-ended row, which is held to coherence and on-task only. None is the honest
+        # value: writing False there would record a failed answer check that never ran.
+        assert isinstance(r["answered"], bool) or r["answered"] is None
+        assert (r["answered"] is None) == (not r["accept"]) if "accept" in r else True
         assert r["stage"] in ("ladder", "bisect")
+    assert any(r["answered"] is None for r in rows),         "no open-ended boundary row was kept, so the boundary still cannot see a story collapse"
+    assert any(r["answered"] is not None for r in rows), "no checkable-answer row was kept"
 
     # The bundle is where the operator actually reads it from, and the export gate resolves by
     # NAME -- so a file the run writes is not necessarily a file the run ships.

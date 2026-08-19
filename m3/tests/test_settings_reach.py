@@ -67,7 +67,8 @@ PROBES: dict[str, tuple[Any, Any]] = {
     "BOUNDARY_STEP": (0.70, 0.35),
     "BOUNDARY_BRACKET": ((0.05, 2.50), (0.05, 0.90)),
     "BOUNDARY_N": (2, 4),
-    "BOUNDARY_RUNG_BATCH": (6, 1),
+    "BOUNDARY_RUNG_BATCH": (5, 1),
+    "BOUNDARY_TASK_N": (1, 0),
     "BOUNDARY_MAX_TOKENS": (48, 96),
     "BOUNDARY_COHERENCE_MIN": (5.0, 9.9),
     "ALPHA_CEIL": (16.0, 3.0),
@@ -314,6 +315,10 @@ WITNESSES = {
     "BOUNDARY_BRACKET": lambda v, t: _w_boundary(v, t, "BOUNDARY_BRACKET", "doses",
                                                  BOUNDARY_COHERENCE_MIN=9.9),
     "BOUNDARY_N": lambda v, t: _w_boundary(v, t, "BOUNDARY_N", "batch_n"),
+    # Read at the generator's row count, which is where the setting acts: an extra open-ended
+    # row per probe widens every ladder call. Reading `outcome` instead would be weaker -- the
+    # open-ended row changes the boundary only when the model has collapsed on it.
+    "BOUNDARY_TASK_N": lambda v, t: _w_boundary(v, t, "BOUNDARY_TASK_N", "batch_n"),
     # Scheduling only -- it must NOT move any boundary, so the witness reads the generator's
     # batch width rather than the result. A witness reading `outcome` here would be a check
     # that cannot fail, since identical boundaries are the whole point of the setting.

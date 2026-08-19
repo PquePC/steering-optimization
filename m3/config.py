@@ -37,6 +37,7 @@ from typing import Any
 __all__ = [
     "CONFIG",
     "SETTINGS",
+    "check_boundary_window_fits",
     "config_hash",
     "apply_overrides",
     "layers_for_depth",
@@ -125,7 +126,11 @@ SETTINGS: dict[str, Any] = dict(
     # The cost is speculative: rungs below the one that passes were generated and are not
     # needed. At 6 that is under one rung per layer on the measured distribution (the ladder
     # failed a mean of 4.2 rungs before passing), against ~4x the throughput.
-    BOUNDARY_RUNG_BATCH=6,
+    # 5, not 6, because the probe is now BOUNDARY_N + BOUNDARY_TASK_N = 5 rows wide: 5 rungs x
+    # 5 rows = 25 = GEN_BATCH_MAX, one call. At 6 the window is 30 rows and the generator splits
+    # it, which is what `check_boundary_window_fits` now refuses -- a split window still returns
+    # the same rungs, but it stops being the single call the optimisation is named for.
+    BOUNDARY_RUNG_BATCH=5,
 
     # (floor, ceiling) of the doses worth searching. The ceiling is where the descent starts,
     # subject to what ALPHA_CEIL actually allows; the floor is where it gives up.
@@ -134,6 +139,12 @@ SETTINGS: dict[str, Any] = dict(
     # Responses per probe, and their length. Short and few: this phase only has to find where
     # the model starts producing garbage, which is visible immediately.
     BOUNDARY_N=4,
+
+    # Open-ended prompts added to each probe, on top of the BOUNDARY_N explain prompts. These
+    # have no correct answer, so they are judged on coherence and on-task only -- but they are
+    # the first thing to collapse, and a boundary that never asks for a story cannot see it.
+    # 1 costs one generation and one judge call per probe.
+    BOUNDARY_TASK_N=1,
     BOUNDARY_MAX_TOKENS=48,
 
     # A probe is past the boundary when mean JUDGED coherence falls below this, on 0-10.
@@ -338,6 +349,28 @@ def battery_size(cfg: dict | None = None) -> int:
     cfg = CONFIG if cfg is None else cfg
     return int(cfg["N_IDENTIFY"] + cfg["N_EFFECT"] + cfg["N_SELF_REPORT"]
                + cfg["N_EXPLAIN"] + cfg["N_CAPABILITY"])
+
+
+def check_boundary_window_fits(cfg: dict | None = None) -> int:
+    """Raise if one ladder window cannot be generated in a single call. Returns the window size.
+
+    BOUNDARY_RUNG_BATCH is named for generating a window of rungs in ONE call. The window is
+    BOUNDARY_RUNG_BATCH x (BOUNDARY_N + BOUNDARY_TASK_N) rows, so widening the probe silently
+    breaks that: adding the open-ended row took 6 x 4 = 24 to 6 x 5 = 30, over GEN_BATCH_MAX,
+    and the generator split it without saying so. The rungs and the boundary are unchanged by a
+    split -- but the optimisation stops being what it claims, and nothing reported it.
+    """
+    cfg = CONFIG if cfg is None else cfg
+    width = int(cfg["BOUNDARY_N"]) + int(cfg["BOUNDARY_TASK_N"])
+    window = width * int(cfg["BOUNDARY_RUNG_BATCH"])
+    cap = int(cfg["GEN_BATCH_MAX"])
+    if window > cap:
+        raise ValueError(
+            f"one ladder window is {window} rows (BOUNDARY_RUNG_BATCH="
+            f"{cfg['BOUNDARY_RUNG_BATCH']} x {width} rows/probe) but GEN_BATCH_MAX is {cap}. "
+            f"It would be split across calls. Lower BOUNDARY_RUNG_BATCH to "
+            f"{max(1, cap // width)} or raise the batch cap deliberately.")
+    return window
 
 
 def check_battery_fits(cfg: dict | None = None, *, observed: int | None = None) -> int:

@@ -104,6 +104,7 @@ def estimate(n_layers: int, cfg: dict) -> dict:
     # cannot actually run are worse than no estimate -- this one printed "one generation batch"
     # nine minutes before the run died on that exact cap.
     config.check_battery_fits(cfg)
+    config.check_boundary_window_fits(cfg)
 
     return dict(
         layers=len(layers), first_layer=layers[0], last_layer=layers[-1], cells=cells,

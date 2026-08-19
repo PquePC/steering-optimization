@@ -194,6 +194,30 @@ _CHAR_N = 4
 _CHAR_DISTINCT_MIN = 0.20
 _CHAR_MIN_LEN = 40
 
+# ...and the rule above only looks at responses of FEWER than five whitespace words, so a fused
+# run sitting INSIDE an ordinary sentence still reaches nothing. The 2026-08-19 run produced
+# exactly that: `## The Lavender Garlic Fields of GarGarGarGar...`, six whitespace words, one of
+# them 282 characters. The coherence judge scored it 1.0; every mechanical rule said clean.
+#
+# So the same character test also runs on the LONGEST single token, whatever the word count.
+# The threshold is set from the run rather than guessed: healthy responses on that run reach 31
+# characters in their longest token (p99 = 19), and the collapse reached 282.
+_TOKEN_MAX_LEN = 60
+
+# A list whose items are nearly all the same item is a collapse the n-gram rules cannot see,
+# because the enumerator breaks the repeat: `1. Garlic  2. Garlic bread  3. Garlic  4. Garlic`
+# contains no 5-gram three times over. The judge scored that response 4.0 and the detector said
+# clean.
+#
+# Deliberately keyed on LIST STRUCTURE rather than on how often one word occurs. A plain
+# "most frequent token" rule cannot be made safe here: on the same run the most-frequent-token
+# share reaches 0.36 on healthy text and the collapsed list sits at 0.35, so no threshold
+# separates them. Repeated ENUMERATED ITEMS do separate cleanly -- a healthy ten-word list has
+# ten different items.
+_LIST_ITEM = re.compile(r"(?m)^[ 	]*(?:\d+[.)]|[-*•])[ 	]+(.+?)[ 	]*$")
+_LIST_MIN_ITEMS = 5
+_LIST_MAX_SHARE = 0.60
+
 
 def degeneration_reason(text: str) -> str | None:
     """Which collapse rule fired, or None. The label before the colon is a fixed vocabulary
@@ -232,6 +256,23 @@ def degeneration_reason(text: str) -> str | None:
                 return (f"char_repeat: distinct-{_CHAR_N}-character-gram ratio {ratio:.3f} "
                         f"< {_CHAR_DISTINCT_MIN} over {len(chars)} characters with "
                         f"{len(whitespace_words)} word(s)")
+
+    # The same test on the longest token, so a fused run inside an ordinary sentence is reached.
+    longest = max(whitespace_words, key=len) if whitespace_words else ""
+    if len(longest) >= _TOKEN_MAX_LEN:
+        cgrams = [longest[i:i + _CHAR_N] for i in range(len(longest) - _CHAR_N + 1)]
+        if cgrams:
+            ratio = len(set(cgrams)) / len(cgrams)
+            if ratio < _CHAR_DISTINCT_MIN:
+                return (f"long_token_repeat: distinct-{_CHAR_N}-character-gram ratio "
+                        f"{ratio:.3f} < {_CHAR_DISTINCT_MIN} in a single "
+                        f"{len(longest)}-character token")
+
+    items = [m.group(1).strip().lower() for m in _LIST_ITEM.finditer(raw)]
+    if len(items) >= _LIST_MIN_ITEMS:
+        top, n = collections.Counter(items).most_common(1)[0]
+        if n / len(items) >= _LIST_MAX_SHARE:
+            return (f"list_repeat: {n} of {len(items)} enumerated items are {top[:30]!r}")
     return None
 
 
