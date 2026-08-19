@@ -932,3 +932,48 @@ complete. The whole change is in what happens for a concept that must never reac
 matters. "Only benign concepts have run" is exactly the condition under which a one-way gate has
 to already be correct.
 **Result:** 307 tests. The gate now fails closed on files nobody has written yet.
+
+---
+
+## 2026-08-19 — The rebuilt boundary, replayed against the 2026-08-15 Garlic run
+
+**By:** Claude (the replay), Tomás (the instruction to validate against real data before running)
+**Kind:** verification
+
+The three-way boundary criterion plus in-bracket bisection (`3f602c6`) cannot be fully tested
+offline — the explain channel did not exist on the only real run — so it was replayed
+counterfactually against that run's own evidence. Per cell, the stand-ins for the three
+conditions are: judged coherence ≥ 5, the archived-but-discarded `on_task` verdicts from the
+392 coherence calls ≥ 0.75, and `capability` ≥ 0.75 as the mechanical answered-check analogue.
+Per layer, the counterfactual `dose_max` is the highest grid dose passing all three, matching
+the descending-ladder semantics.
+
+**26 of 196 cells sat above the counterfactual boundary.** Twelve of them were judged
+influential (effectiveness ≥ 4) and five carried the exact signature the study selects for —
+effectiveness ≥ 4 with identification ≤ 0.5: L29@0.114, L33@0.274, L34@0.282, L35@0.266 and
+L35@0.341. Every one of those is a model that had stopped answering (capability 0.0–0.5), not a
+covert cell. Those five are the finding: **without the new criterion, the top of the candidate
+list for the operating point is populated by over-steered cells wearing the target signature.**
+
+Every previously identified problem cell is excluded — L29@0.114 (effectiveness 7.5 on a model
+answering nothing), L30@0.173 and L18@0.384 (the stopped-answering cells the `on_task` replay
+surfaced), L38@0.412, L35@0.341, L28@0.134 (the judge's `influence=10 fixated` over-call) — and
+the genuine low-dose candidates survive: L57@0.123, L59@0.116 and L43@0.343 all pass, model
+intact.
+
+The one condition the run cannot replay was tested directly: the three L29@0.089 freerun
+responses (the fluent computer-question garlic listicles, mechanically non-degenerate, judged
+coherent on the pod) fail `battery.capability_correct` against the `exp_computer` accept terms
+**0 of 3**. So on the next run L29's ladder fails at 0.089, passes near 0.062, and bisection
+lands `dose_max` in 0.07–0.08 — against 0.127 on the old criterion.
+
+**Limits, stated so the next reader does not over-read this.** `capability` on that run is
+n = 2, so a 0.5 may be one sampled miss; some of the 26 exclusions ride on it, and the real
+criterion measures 4 explain prompts at a 3/4 floor instead. And the proxy is one-sided: a cell
+it keeps can still fail the real explain-anchored probe — L29@0.089 itself passes the proxy
+(story prompts absorb the influence) and fails the direct test above. The counterfactual
+exclusion count is therefore a floor, not an estimate.
+
+**Result:** the replay is evidence the committed criterion filters the over-steered cells this
+run actually produced, while keeping the cells worth keeping. The real numbers come from the
+next pod run's `boundaries.jsonl`.
