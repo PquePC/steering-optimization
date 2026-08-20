@@ -229,6 +229,70 @@ def test_the_boundary_is_found_even_when_oversteering_stays_fluent(run_dir):
         "this is the collapse test wearing a wig, not the fluent one")
 
 
+def test_a_boundary_set_by_the_ceiling_is_not_reported_as_measured(run_dir):
+    """`dose_max == max_reachable_dose` means the model never broke -- we ran out of room.
+
+    Reported as `ok` it is indistinguishable from a measured boundary, and every dose below it
+    is then a fraction of a CEILING while other layers are fractions of a BREAKING POINT. On
+    Qwen3-32B five of the first eleven layers were `ok` at exactly their own ceiling; on
+    Gemma3-27B's 49-layer survey, four were. Both numbers were already on the row and nothing
+    compared them.
+
+    The layers must still be MEASURED -- relabelled, not dropped. Losing them would trade a
+    silent bias for silent missing data.
+    """
+    config.apply_overrides(["LAYER_FRACTIONS=0.21,1.0", "LAYER_STRIDE=6",
+                            "DOSE_FRACTIONS=0.5", "ALPHA_CEIL=6.0"], config.CONFIG)
+    with fake_gpu():
+        assert m3run.main(["--concept", "Garlic"]) == m3run.EXIT_OK
+    rows = _load(run_dir, "boundaries.jsonl")
+    capped = [r for r in rows if r["outcome"] == "ceiling_limited"]
+    assert capped, "no layer was ceiling-limited, so the label never got exercised"
+    for r in capped:
+        assert r["dose_max"] >= r["max_reachable_dose"] * 0.999, \
+            "labelled ceiling_limited without actually sitting at the ceiling"
+    assert not [r for r in rows
+                if r["outcome"] == "ok" and r["dose_max"]
+                and r["dose_max"] >= r["max_reachable_dose"] * 0.999], \
+        "a layer at its own ceiling was still reported as a measured boundary"
+
+    measured = {c["layer"] for c in _load(run_dir, "cells.jsonl")}
+    assert {r["layer"] for r in capped} <= measured, \
+        "ceiling-limited layers were dropped from the sweep instead of relabelled"
+
+
+def test_ok_means_a_failing_dose_was_actually_measured_above_it(run_dir):
+    """The counterpart to the label: `ok` must mean the model broke, every time.
+
+    Asserting that NO layer is ceiling-limited at the shipped ceiling would be a statement about
+    the fixture, not the code -- and a false one: on the harness's Gemma-shaped norms L34's true
+    boundary (0.414) sits above its reachable maximum (0.387), so it is correctly ceiling-limited
+    and no ALPHA_CEIL in the config makes that untrue.
+
+    What must hold is the implication. A layer called `ok` has a measured failing dose above its
+    `dose_max`; a layer called `ceiling_limited` does not. That is exactly the distinction the
+    label was added to draw, and it holds whatever the norms happen to be.
+    """
+    config.apply_overrides(["LAYER_FRACTIONS=0.21,1.0", "LAYER_STRIDE=6",
+                            "DOSE_FRACTIONS=0.5"], config.CONFIG)
+    with fake_gpu():
+        assert m3run.main(["--concept", "Garlic"]) == m3run.EXIT_OK
+    rows = [r for r in _load(run_dir, "boundaries.jsonl") if r["dose_max"]]
+    assert rows
+
+    good = [r for r in rows if r["outcome"] == "ok"]
+    assert good, "every layer was limited, so the `ok` path never ran"
+    for r in good:
+        assert r["lowest_failing_dose"] is not None, \
+            f"L{r['layer']} is `ok` with no failing dose ever measured above it"
+        assert r["dose_max"] < r["max_reachable_dose"] * 0.999, \
+            f"L{r['layer']} is `ok` while sitting at its own ceiling"
+
+    for r in [x for x in rows if x["outcome"] == "ceiling_limited"]:
+        assert r["lowest_failing_dose"] is None, \
+            f"L{r['layer']} is ceiling_limited but a failing dose WAS measured -- it is `ok`"
+
+
 def test_an_unusable_alpha_ceiling_stops_the_run_before_it_spends(run_dir):
     """ALPHA_CEIL=16 was chosen against Gemma3-27B's norms and nothing makes it transfer.
 

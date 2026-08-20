@@ -327,6 +327,19 @@ def reachability(layers: Sequence[int], cfg: dict) -> dict:
          + (f"  {blocked[:8]}" if blocked else ""))
     _log(f"   ALPHA_CEIL to clear the floor everywhere: {out['ceil_for_floor']:g}"
          f"   to reach {hi:g}: {out['ceil_for_bracket_top']:g}")
+    # The floor check answers "can this layer be dosed at all". This answers the opposite and
+    # more easily missed question: "can it be dosed hard enough to find where the model breaks".
+    # A layer that cannot reach the bracket top can still report a boundary -- but only if the
+    # model happens to break below its ceiling, and if it does not, the ceiling is what gets
+    # recorded. Qwen3-32B at ALPHA_CEIL=16 passed the floor check on all 26 layers and had five
+    # of the first eleven reporting the ceiling.
+    capped = sorted(layer for layer, _, d in per if d < hi)
+    out["cannot_reach_bracket_top"] = capped
+    if capped:
+        _log(f"   cannot reach the {hi:g} bracket top: {len(capped)} of {len(per)} layers"
+             f"  {capped[:8]}")
+        _log(f"   those report a boundary ONLY if the model breaks below their own ceiling; "
+             f"otherwise the ceiling is what lands in dose_max (outcome: ceiling_limited)")
 
     if len(blocked) * 2 > len(per):
         raise Unreachable(
@@ -756,8 +769,23 @@ def find_boundary(layer: int, concept: str, cfg: dict | None = None) -> dict:
     # at the other end of the ladder.
     needed = (1 if start < lo else
               math.ceil(math.log(lo / start) / math.log(ratio)) + 1)
+    # ...and a FIFTH, added 2026-08-20 after Qwen3-32B:
+    #   ceiling_limited   the very first probe passed, so no failing dose was ever measured
+    #                     above it. `dose_max` is then the top of the tested range, which is
+    #                     `min(BOUNDARY_BRACKET_HI, ALPHA_CEIL * ||v|| / ||h||)` -- a property of
+    #                     the SEARCH, not of the model. The model did not break; we ran out of
+    #                     room to push it.
+    #
+    # This was reported as `ok` and is indistinguishable from a measured boundary in every
+    # downstream number. On Qwen3-32B five of the first eleven layers were `ok` at exactly their
+    # own `max_reachable_dose`, and on Gemma3-27B's 49-layer survey four were -- so the grid at
+    # those layers samples fractions of a ceiling while every other layer samples fractions of a
+    # breaking point, and the two are silently averaged together.
+    #
+    # Both numbers were already on the row. Nothing compared them.
     if best_sane is not None:
-        outcome = "ok"
+        outcome = "ok" if fail_above is not None else (
+            "ceiling_limited" if start >= max_reachable * (1.0 - 1e-6) else "bracket_limited")
     elif reached_floor:
         outcome = "incoherent_at_floor"
     else:
@@ -1043,6 +1071,14 @@ def run_sweep(concept: str, cfg: dict | None = None) -> dict:
              f"floor (lowest tested {lowest:.3f}, floor {float(cfg['BOUNDARY_BRACKET'][0]):.3f}). "
              f"They are NOT known to be incoherent — nothing was measured below that dose. "
              f"Set BOUNDARY_PROBES={need} to descend the whole bracket.")
+
+    limited = [b for b in boundaries.values()
+               if b.get("outcome") in ("ceiling_limited", "bracket_limited")]
+    if limited:
+        _log(f"   {len(limited)} layer(s) bounded by the SEARCH, not the model: "
+             f"{[b['layer'] for b in limited][:10]}")
+        _log("   their dose grid is fractions of a ceiling, not of a breaking point -- raise "
+             "ALPHA_CEIL (and BOUNDARY_BRACKET if they sit at its top) to measure them")
 
     # ---- Phase 2 -----------------------------------------------------------------------
     plan: list[tuple[int, float]] = []
