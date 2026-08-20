@@ -54,6 +54,12 @@ HARNESS_DIRS = (
     # Vendored, so `--repair` has nothing to clone on a fresh pod. Kept ahead of the clone
     # locations for the same reason `m2/model.py` does: a stale clone must not outrank the
     # copy that ships with the commit under test.
+    #
+    # Resolved from THIS FILE, not from PROJECT_DIR. PROJECT_DIR is the hardcoded pod path
+    # /workspace/steering-optimization, so a checkout anywhere else -- a laptop, a second
+    # worktree, a differently named clone -- would fail to see the copy sitting right beside
+    # the module doing the looking, and would try to clone one instead.
+    Path(__file__).resolve().parent.parent / "upstream" / "introspection_mechanisms",
     PROJECT_DIR / "upstream" / "introspection_mechanisms",
     WORKSPACE / "introspection-mechanisms",
     WORKSPACE / "steering-opt" / "introspection-mechanisms",
