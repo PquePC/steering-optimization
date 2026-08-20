@@ -281,6 +281,10 @@ def fake_gpu(n_layers: int = 62, probe_dir: Path | None = None,
                   scores it coherent and on-task for the same reason the real one did, so ONLY
                   the mechanical answer check can see it. A boundary search that finds the
                   boundary in this mode is finding it for the right reason.
+      "empty"     nothing at all past the boundary -- Qwen3-32B's real behaviour under heavy
+                  steering. The judge scores an empty response `coherence: 10, on_task: true`,
+                  so this is the mode that separates a sanity rule which trusts the judge from
+                  one that checks the text exists.
       "spread"    damage distributed across prompts rather than hitting all of them: two answers
                   survive, one keeps its prose and loses the answer, one keeps the answer and
                   goes off task. Every leg reads 3/4 while half the battery is corrupt. This is
@@ -403,6 +407,12 @@ def fake_gpu(n_layers: int = 62, probe_dir: Path | None = None,
                     # while half the battery is corrupt.
                     out.append(_EXPLAIN_ANSWERS[key] if key
                                else responses.for_channel("effect", rowkey))
+                continue
+            if broken and oversteer == "empty":
+                # Qwen3-32B's actual failure mode past its boundary: no text at all, where
+                # Gemma3-27B produced garbage. The canned judge scores an empty string well
+                # for the same reason the real one does -- there is nothing in it to fault.
+                out.append("")
                 continue
             if broken:
                 out.append(_FLUENT_OVERSTEER if oversteer == "fluent" else "garlic " * 40)

@@ -647,7 +647,21 @@ def find_boundary(layer: int, concept: str, cfg: dict | None = None) -> dict:
             # A response whose judge call failed cannot be certified, so it is not good. It is
             # not silently dropped either: dropping it would raise the fraction it was missing
             # from, which is the wrong direction for a check that gates a dose.
-            per_response.append(bool(p) and p.get("coherence") is not None
+            # An EMPTY generation can never be good, whatever the judge says about it.
+            #
+            # Qwen3-32B answers with nothing at all under heavy steering, where Gemma3-27B
+            # produced garbage. The coherence judge, shown an empty string, returns
+            # `coherence: 10, on_task: true` -- there is nothing in it to criticise. On an
+            # open-ended probe `answered` is None (no accept terms apply), so the clause below
+            # was vacuously true and the whole conjunction rested on that 10. Two of the 78
+            # layer boundaries in the 2026-08-20 Qwen runs were set by a probe that passed only
+            # because one of its five responses was empty.
+            #
+            # This is mechanical and overrides the judge, which is the same licence `answered`
+            # already has: the boundary is the one place where a measured fact about the text
+            # is allowed to decide, precisely because judges have been wrong here before.
+            text = (responses[i] or "").strip()
+            per_response.append(bool(text) and bool(p) and p.get("coherence") is not None
                                 and p["coherence"] >= coh_min
                                 and bool(p.get("on_task"))
                                 and (answered[i] is None or answered[i]))
@@ -888,8 +902,16 @@ def _summarise_cell(rows: Sequence[dict], *, layer: int, dose: float, alpha: flo
     by = lambda ch: [r for r in rows if r["channel"] == ch]      # noqa: E731
 
     def judged(ch: str, kind: str, field: str) -> list:
+        """Judged values for a channel, EXCLUDING responses with no text.
+
+        A judge shown an empty string scores it `coherence: 10, on_task: true`, because there
+        is nothing wrong with nothing. Averaging that in reports a cell as more coherent than
+        one where the model actually wrote something. The rows stay in the transcript and the
+        count is reported as `n_empty` -- this drops them from the MEAN, it does not hide them.
+        """
         return [r["judged"][kind][field] for r in by(ch)
-                if (r.get("judged") or {}).get(kind) is not None]
+                if (r.get("judged") or {}).get(kind) is not None
+                and (r.get("response") or "").strip()]
 
     ident = by("identify")
     ident_hits = [r for r in ident if (r.get("judged") or {}).get("identify")]
@@ -961,6 +983,10 @@ def _summarise_cell(rows: Sequence[dict], *, layer: int, dose: float, alpha: flo
         ),
         judge_errors=sum(1 for r in rows
                          for e in (r.get("judge_error") or {}).values() if e),
+        # Generations that came back with no text. Excluded from the judged means above, and
+        # counted here so a cell that produced nothing cannot read as a cell that produced
+        # something fine. Zero on every Gemma3-27B run; non-zero on Qwen3-32B at high dose.
+        n_empty=sum(1 for r in rows if not (r.get("response") or "").strip()),
     )
     if sr:
         classes = [r.get("self_report_class") for r in sr]

@@ -229,6 +229,46 @@ def test_the_boundary_is_found_even_when_oversteering_stays_fluent(run_dir):
         "this is the collapse test wearing a wig, not the fluent one")
 
 
+def test_an_empty_generation_can_never_count_as_a_good_response(run_dir):
+    """A judge shown an empty string says `coherence: 10, on_task: true`.
+
+    There is nothing in nothing to criticise, so the judge is not being stupid -- it is being
+    asked a question that has no answer. On an OPEN-ENDED boundary probe no accept terms apply,
+    so `answered` is None and the sanity conjunction rested entirely on that 10. Two of the 78
+    layer boundaries in the 2026-08-20 Qwen3-32B runs were set by a probe that passed only
+    because one of its five responses was empty; Gemma3-27B never produced an empty generation
+    in 10,690 responses, which is why this survived until a second model was tried.
+
+    The boundary must not move, and the cell aggregate must not average a 10 that describes
+    no text.
+    """
+    config.apply_overrides(["LAYER_FRACTIONS=0.21,1.0", "LAYER_STRIDE=6",
+                            "DOSE_FRACTIONS=0.5"], config.CONFIG)
+    with fake_gpu(oversteer="empty"):
+        assert m3run.main(["--concept", "Garlic"]) == m3run.EXIT_OK
+
+    btx = _load(run_dir, "boundary_transcripts.jsonl")
+    empties = [r for r in btx if not (r.get("response") or "").strip()]
+    assert empties, "the harness produced no empty responses, so nothing was tested"
+    assert not [r for r in empties if r.get("good")], (
+        f"{len([r for r in empties if r.get('good')])} empty responses were counted as good; "
+        "a boundary can be set by text that does not exist")
+
+    # ...and the judge really did rate them highly, or the test proves nothing about overriding it
+    rated = [r["coherence"] for r in empties if r.get("coherence") is not None]
+    assert rated and max(rated) >= 5.0, (
+        "the canned judge scored empty text below the coherence floor, so this test would pass "
+        "even without the fix")
+
+    cells = _load(run_dir, "cells.jsonl")
+    assert all("n_empty" in c for c in cells), "n_empty is not reported, so empties are invisible"
+    for c in cells:
+        if c.get("n_empty"):
+            coh = (c.get("coherence") or {}).get("n")
+            assert coh is None or coh <= config.CONFIG["N_EFFECT"] - 0, \
+                "empty responses were averaged into the coherence mean"
+
+
 def test_a_boundary_set_by_the_ceiling_is_not_reported_as_measured(run_dir):
     """`dose_max == max_reachable_dose` means the model never broke -- we ran out of room.
 
