@@ -34,7 +34,7 @@ from . import battery, config, judge
 
 
 __all__ = [
-    "calibrate", "find_boundary", "measure_cell", "run_sweep",
+    "calibrate", "find_boundary", "measure_cell", "run_sweep", "reachability", "Unreachable",
     "battery_prompts", "CELLS_FILE", "BOUNDARY_FILE", "BOUNDARY_RESPONSES_FILE",
     "RESPONSES_FILE", "JUDGE_FILE", "NORMS_FILE", "READ_FILE", "UNJUDGED_FILE",
 ]
@@ -268,6 +268,77 @@ def _apply_verdicts(rows: list[dict], items: Sequence[dict], results: Sequence[d
 # Phase 0 - calibrate
 # =====================================================================================
 
+class Unreachable(RuntimeError):
+    """The dose ladder cannot start on this model at this ALPHA_CEIL."""
+
+
+def reachability(layers: Sequence[int], cfg: dict) -> dict:
+    """Can this model be dosed at all, at the configured ceiling? Answered before spending.
+
+    `dose = alpha * ||v|| / ||h||`, and alpha is capped at ALPHA_CEIL, so the largest dose a
+    layer can reach is `ALPHA_CEIL * ||v|| / ||h||`. That ratio is a property of the MODEL, and
+    ALPHA_CEIL=16 was chosen against Gemma3-27B's. Nothing guarantees it transfers: a model
+    whose residual stream is large relative to its concept vectors caps out below the bracket
+    floor, every layer reports `unreachable`, and the run produces a full set of empty rows
+    after paying for the weights, the null battery and an hour of GPU.
+
+    This is the check that costs nothing -- the norms are already measured -- and it runs
+    BEFORE the null arm, which is the first thing in Phase 0 that spends judge calls.
+
+    It blocks only when more than half the layers cannot be dosed. A handful of unreachable
+    shallow layers is ordinary and already handled: `find_boundary` records them by name and
+    the sweep continues. Losing most of the grid is a different thing, and the run cannot
+    answer the question it was started to answer.
+    """
+    from m2 import runio                                  # noqa: PLC0415 (module convention)
+
+    lo, hi = (float(x) for x in cfg["BOUNDARY_BRACKET"])
+    ceiling = float(cfg["ALPHA_CEIL"])
+    rows = {int(r["layer"]): r for r in runio.read_rows(NORMS_FILE)}
+
+    per: list[tuple[int, float, float]] = []
+    for layer in layers:
+        row = rows.get(int(layer)) or {}
+        vec, resid = row.get("vec_norm"), row.get("resid_norm")
+        if not vec or not resid:
+            continue
+        ratio = float(resid) / float(vec)
+        per.append((int(layer), ratio, ceiling / ratio))
+    if not per:
+        raise Unreachable("no norms were measured, so reachability cannot be judged")
+
+    doses = sorted(d for _, _, d in per)
+    worst = max(r for _, r, _ in per)
+    blocked = sorted(layer for layer, _, d in per if d < lo)
+    out = dict(
+        n_layers=len(per), unreachable=blocked,
+        dose_min=round(doses[0], 4), dose_median=round(doses[len(doses) // 2], 4),
+        dose_max=round(doses[-1], 4), worst_resid_over_vec=round(worst, 2),
+        alpha_ceil=ceiling,
+        # What the ceiling would have to be for the WORST layer to clear each mark. Reported
+        # rather than applied: changing it changes every dose in the run, so it is the
+        # operator's call, and it changes the config hash so the change is on the record.
+        ceil_for_floor=round(lo * worst, 2), ceil_for_bracket_top=round(hi * worst, 2))
+
+    _log(f"PHASE 0b reachability  ALPHA_CEIL={ceiling:g}")
+    _log(f"   max reachable dose  min {out['dose_min']:.4f}  median "
+         f"{out['dose_median']:.4f}  max {out['dose_max']:.4f}")
+    _log(f"   below the {lo:g} bracket floor: {len(blocked)} of {len(per)} layers"
+         + (f"  {blocked[:8]}" if blocked else ""))
+    _log(f"   ALPHA_CEIL to clear the floor everywhere: {out['ceil_for_floor']:g}"
+         f"   to reach {hi:g}: {out['ceil_for_bracket_top']:g}")
+
+    if len(blocked) * 2 > len(per):
+        raise Unreachable(
+            f"{len(blocked)} of {len(per)} layers cannot reach the {lo:g} bracket floor at "
+            f"ALPHA_CEIL={ceiling:g}, so most of the grid would be empty. This model needs a "
+            f"higher ceiling than Gemma3-27B did: {out['ceil_for_floor']:g} clears the floor "
+            f"everywhere, {out['ceil_for_bracket_top']:g} makes every layer reach {hi:g}. "
+            f"Re-run with --set ALPHA_CEIL={out['ceil_for_floor']:g} (or higher), which is a "
+            "different config hash and so a separate run folder.")
+    return out
+
+
 def calibrate(concept: str, layers: Sequence[int], cfg: dict | None = None) -> dict:
     """Vectors, norms, hook liveness, unsteered baselines and the null battery.
 
@@ -314,6 +385,9 @@ def calibrate(concept: str, layers: Sequence[int], cfg: dict | None = None) -> d
             # Floored, not rounded: this is the limit a reader will dose against.
             max_reachable_dose=(None if not resid else
                                 _floor(float(cfg["ALPHA_CEIL"]) * float(vec) / float(resid), 4))))
+
+    # Before anything in this phase spends a judge call.
+    reachability(layers, cfg)
 
     # R14. It reads the vectors, so it can only run after extraction. The hook it checks once
     # returned identically zero at 30 of 30 cells for an hour with every other check satisfied,

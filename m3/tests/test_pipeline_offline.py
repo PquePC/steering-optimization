@@ -12,6 +12,7 @@ These tests are slow by this suite's standards (a second or so) and worth every 
 from __future__ import annotations
 
 import json
+import re
 import sys
 import zipfile
 from collections import Counter
@@ -228,6 +229,69 @@ def test_the_boundary_is_found_even_when_oversteering_stays_fluent(run_dir):
         "this is the collapse test wearing a wig, not the fluent one")
 
 
+def test_an_unusable_alpha_ceiling_stops_the_run_before_it_spends(run_dir):
+    """ALPHA_CEIL=16 was chosen against Gemma3-27B's norms and nothing makes it transfer.
+
+    `dose = alpha * ||v|| / ||h||`, so a model whose residual stream is large relative to its
+    concept vectors caps out below the bracket floor at every layer. Without this gate the run
+    pays for the weights, the null arm and an hour of GPU, and returns a full grid of
+    `unreachable` rows -- a result shaped exactly like "this concept has no effect".
+
+    The assertion that matters is the SECOND one. Reporting the problem after the null battery
+    would be a warning; reporting it before is the difference between losing two minutes and
+    losing the judge spend.
+    """
+    from m3 import sweep
+
+    config.apply_overrides(["ALPHA_CEIL=1.0"], config.CONFIG)
+    with fake_gpu() as calls:
+        # `main` catches and converts to an exit code, so the raise is observed as EXIT_FAILED.
+        assert m3run.main(["--concept", "Garlic"]) == m3run.EXIT_FAILED
+    assert sweep.Unreachable is not None
+    assert calls["judge_calls"] == 0, "the gate fired only after the null arm had been paid for"
+    assert calls["generations"] == 0, "the gate fired only after generation had been paid for"
+
+
+def test_the_ceiling_the_gate_recommends_actually_works(run_dir, capfd):
+    """A recommendation nobody has executed is a guess with a number in it.
+
+    The message names the ALPHA_CEIL that would clear the floor everywhere. This runs with
+    exactly that value and requires the sweep to complete -- so the arithmetic behind the
+    advice is checked against the search that has to live with it, not just against itself.
+    """
+    from m3 import sweep
+
+    config.apply_overrides(["ALPHA_CEIL=1.0"], config.CONFIG)
+    with fake_gpu():
+        assert m3run.main(["--concept", "Garlic"]) == m3run.EXIT_FAILED
+    # The advice is read back out of the message the operator is actually shown, so this pins
+    # the text they act on rather than a number recomputed alongside it.
+    printed = capfd.readouterr()
+    advised = float(re.search(r"--set ALPHA_CEIL=([0-9.]+)", printed.out + printed.err).group(1))
+
+    config.apply_overrides([f"ALPHA_CEIL={advised}"], config.CONFIG)
+    with fake_gpu():
+        assert m3run.main(["--concept", "Garlic"]) == m3run.EXIT_OK
+    bounds = _load(run_dir, "boundaries.jsonl")
+    assert bounds and not [b for b in bounds if b["outcome"] == "unreachable"], (
+        f"ALPHA_CEIL={advised} was advised as clearing the floor everywhere, and did not")
+
+
+def test_a_workable_ceiling_is_reported_and_not_blocked(run_dir):
+    """The gate must not refuse a run it should allow: a few unreachable shallow layers are
+    ordinary, already recorded by name, and not a reason to stop."""
+    from m3 import sweep
+
+    with fake_gpu():
+        assert m3run.main(["--concept", "Garlic"]) == m3run.EXIT_OK
+        # Inside the context: `reachability` reads norms through run I/O, which needs the run
+        # directory the sweep set up.
+        got = sweep.reachability(config.layers_for_depth(62, config.CONFIG), config.CONFIG)
+    assert got["n_layers"] > 0
+    assert got["ceil_for_floor"] <= got["alpha_ceil"], (
+        "the shipped ceiling does not clear the floor on the harness's own norms")
+
+
 def test_damage_spread_across_prompts_is_not_cancelled_by_averaging_each_leg():
     """The real L29 probes from the 2026-08-19 pod run, replayed through the sanity rule.
 
@@ -419,15 +483,25 @@ def test_bisection_zero_reproduces_the_bare_ladder(run_dir):
 
 def test_an_unreachable_layer_is_not_reported_as_incoherent(run_dir):
     """24 layers came back `incoherent_at_lowest_probe` on the first real run and not one was a
-    statement about the model -- the dose was simply forbidden by ALPHA_CEIL."""
+    statement about the model -- the dose was simply forbidden by ALPHA_CEIL.
+
+    ALPHA_CEIL=2.0 puts FOUR of these nine layers under the bracket floor, not all nine. The
+    earlier version forbade every layer, which the Phase 0b reachability gate now refuses to
+    start -- correctly, since a run whose entire grid is unreachable cannot answer anything. A
+    minority still exercises the reporting this test is about, and additionally proves the gate
+    lets a partially reachable run through.
+    """
     config.apply_overrides(["LAYER_FRACTIONS=0.21,1.0", "LAYER_STRIDE=6",
-                            "BOUNDARY_BRACKET=1.5,2.5", "ALPHA_CEIL=1.0"], config.CONFIG)
-    with fake_gpu() as calls:
-        m3run.main(["--concept", "Garlic"])
+                            "ALPHA_CEIL=2.0"], config.CONFIG)
+    with fake_gpu():
+        assert m3run.main(["--concept", "Garlic"]) == m3run.EXIT_OK
     rows = _load(run_dir, "boundaries.jsonl")
-    assert rows and all(r["outcome"] == "unreachable" for r in rows), \
-        [r["outcome"] for r in rows]
-    assert all(r["probes"] == [] for r in rows), "an unreachable layer must cost no generations"
+    blocked = [r for r in rows if r["outcome"] == "unreachable"]
+    assert blocked, "no layer was unreachable, so the reporting path never ran"
+    assert len(blocked) < len(rows), "every layer was unreachable; the gate should have stopped it"
+    assert all(r["probes"] == [] for r in blocked), "an unreachable layer must cost no generations"
+    assert not any(r["outcome"] == "incoherent_at_lowest_probe" for r in rows), \
+        "a dose forbidden by ALPHA_CEIL was reported as a statement about the model"
 
 
 def test_the_read_this_bundle_surfaces_judge_versus_mechanical_disagreement(run_dir):
