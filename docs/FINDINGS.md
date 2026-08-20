@@ -142,35 +142,72 @@ signal than the current exact-match binary**, and the data to build it is alread
 
 ---
 
-## 4. Spontaneous detection is a shallow-layer phenomenon, and it is always wrong
+## 4. Spontaneous detection and forced identification are anti-correlated across depth
 
-The self-report channel asks whether anything was injected, with no prefill. This is the cleanest
-evidence in the dataset because it does not force the model to answer.
+The two channels ask different questions. **Forced identification** prefills the assistant turn so
+the model must name a concept (30 trials per cell). **Spontaneous detection** asks whether anything
+was injected, with no prefill, and lets the model say no (3 trials per cell).
 
-| concept | cells below L39 with ≥1 claim | cells at L39+ with ≥1 claim |
-|---|---|---|
-| Silk | 19 of 78 = **24.4%** | **0 of 72 = 0.0%** |
-| Wrists | 17 of 78 = **21.8%** | 5 of 72 = 6.9% |
-| Garlic | 7 of 24 = **29.2%** | 1 of 138 = **0.7%** |
+Trial-level, pooled by band. Intervals are Wilson 95%.
 
-All three concepts: roughly a quarter of shallow cells produce at least one spontaneous claim,
-against 0–7% of deep cells. Silk's cutoff is absolute — claims occur at L25, 27, 29, 31, 33 and at
-no layer from L35 to L61.
+| concept | band | spontaneous detection | forced identification |
+|---|---|---|---|
+| Silk | early L13–29 | 20/162 = **0.123** [0.081, 0.183] | 0/1620 = **0.000** [0.000, 0.002] |
+| Silk | mid L30–45 | 16/144 = 0.111 [0.070, 0.173] | 469/1440 = 0.326 [0.302, 0.350] |
+| Silk | late L46–61 | 0/144 = **0.000** [0.000, 0.026] | 686/1440 = **0.476** [0.451, 0.502] |
+| Wrists | early L13–29 | 22/162 = **0.136** [0.091, 0.197] | 4/1620 = **0.002** [0.001, 0.006] |
+| Wrists | mid L30–45 | 4/144 = 0.028 [0.011, 0.069] | 320/1440 = 0.222 [0.202, 0.244] |
+| Wrists | late L46–61 | 6/144 = 0.042 [0.019, 0.088] | 77/1440 = 0.053 [0.043, 0.066] |
+| Garlic | mid L30–45 | 12/198 = 0.061 [0.035, 0.103] | 875/1980 = 0.442 [0.420, 0.464] |
+| Garlic | late L46–61 | 0/288 = **0.000** [0.000, 0.013] | 1954/2880 = **0.678** [0.661, 0.695] |
 
-**Every single claim names the wrong concept.** Across all three runs, not one spontaneous
-detection claim correctly identified what was injected. They name lemon, lavender, apple,
-wristwatches, wrinkled. The pipeline classifies them `confabulated`.
+**The clearest case is Silk in early layers: spontaneous detection 12.3%, forced identification
+0.000 — zero of 1,620 trials.** The model claims something was injected while being completely
+unable to name it. At late layers it reverses: it never claims detection and names the concept
+47.6% of the time. Garlic shows the same reversal in the two bands it covers.
 
-**The null arm claims nothing:** 0 of 9 self-report trials with no injection, in each of the three
-runs.
+**Spontaneous detection falling to exactly zero at late layers is the solid half of this.** Silk
+0/144 and Garlic 0/288 with intervals topping out at 0.026 and 0.013, against 0.123 [0.081, 0.183]
+in Silk's early band — non-overlapping, so the layer contrast is real.
 
-So the pattern is: **injecting into shallow layers, where the concept has no visible effect on
-output at all, makes the model volunteer that something was injected and name something wrong.
-Injecting into deep layers, where the effect is real and visible, produces no claim.**
+### 4.1 The mechanism this matches
 
-### 4.1 The one thing that does *not* hold
+Macar et al. (2026) trace detection to a two-stage circuit: **"evidence carrier" features
+concentrated in earlier layers (peaking at layer 38, immediately post-injection) suppress **"gate"
+features concentrated at layers 45–61** that implement a default "no" answer. Detection happens
+when accumulated evidence lifts the gate. They also report that "detection rate peaks in midlayers,
+while forced identification rate increases toward late layers", from largely separate mechanisms.
 
-Pooling by influence rather than by depth, the claim rate is flat for two of three concepts:
+That predicts what we measured. **An injection at L46 or deeper is downstream of the evidence
+carriers.** The carriers around L38 never see the perturbation, no evidence accumulates, the gate
+stays shut, and the model answers "no" — which is exactly 0/144 and 0/288. Identification, which
+lives in later layers, is unaffected and in fact peaks there.
+
+So the pipeline reproduces the paper's layer dissociation behaviourally, on three concepts it was
+not measured on, without touching the model's internals.
+
+### 4.2 What is NOT established, and the cheap fix
+
+**Every spontaneous claim, in all three runs, names the wrong concept.** Zero correct
+identifications among the claims. They say lemon, lavender, apple, wristwatches, wrinkled, and the
+pipeline classifies them `confabulated`.
+
+**And the null arm is too small to say whether shallow-layer claims exceed baseline.** Pooled over
+all three runs it is **0 of 27 trials, 95% interval [0.000, 0.125]**. Silk's early-layer rate is
+0.123 and Wrists' is 0.136 — at or barely above that upper bound.
+
+So this claim **cannot** be made: "injecting into shallow layers makes the model claim a detection
+it would not otherwise make." What can be made: shallow-layer injection produces claims at 12–14%
+while late-layer injection produces none, and the claims are never correct.
+
+The fix costs about ten minutes. `NULL_REPEATS=3` gives 9 null self-report trials per run; at
+`NULL_REPEATS=20` it gives 60, and 0 of 60 would have a 95% upper bound of 0.060 — comfortably
+below the observed shallow rate, settling the question. That is 731 extra generations. The setting's
+own comment already says the anchor should not be the least-measured thing in the experiment.
+
+### 4.3 The restatement in terms of influence does not hold
+
+Pooling by influence rather than depth, the claim rate is flat for two of three concepts:
 
 | concept | cells with influence < 1.0 | 1.0–2.5 | ≥ 2.5 |
 |---|---|---|---|
@@ -178,9 +215,9 @@ Pooling by influence rather than by depth, the claim rate is flat for two of thr
 | Wrists | 0.059 (n=107) | 0.107 (n=25) | 0.093 (n=18) |
 | Garlic | 0.037 (n=80) | 0.018 (n=38) | **0.008** (n=44) |
 
-Only Garlic shows claims falling as influence rises. **Self-report tracks where you inject, not
-how much the injection shows.** Do not write "the model is less likely to notice stronger
-steering" — that is only true for Garlic.
+Only Garlic shows claims falling as influence rises. **Self-report tracks where you inject, not how
+much the injection shows** — which is what a layer-localised circuit predicts and a
+dose-response story does not.
 
 ---
 
@@ -214,9 +251,13 @@ model names garlic on 28% of trials at doses where garlic does not appear in its
 
 **The two measures order the concepts oppositely.** Garlic is identified most often when forced
 (0.58) and volunteers detection least often (4.9% of cells). Wrists is identified least (0.09) and
-volunteers most (14.7%). Since none of the spontaneous claims is correct, the honest reading is
-that spontaneous claims are noise whose rate varies by concept and depth — not a weaker form of
-the same detection ability.
+volunteers most (14.7%).
+
+Read alongside §4, the concept-level ordering is mostly a depth artefact: Garlic was only measured
+from L35 up, so it has few shallow cells, and shallow cells are where claims occur. Do not read
+this table as "Garlic is harder to notice than Wrists" — the bands in §4 are the comparison that
+controls for depth, and the null arm in §4.2 is too small to place any of these rates against a
+no-injection baseline.
 
 ---
 
@@ -348,11 +389,16 @@ surviving cells here, none of which has been re-measured.
 
 ## 11. What would firm these up, cheapest first
 
-1. **Re-measure the nine surviving operating points on `TASK_HELDOUT` prompts at 30 trials**, with
+1. **Raise `NULL_REPEATS` from 3 to 20.** 731 extra generations, about ten minutes, no new
+   concepts. It takes the null self-report arm from 9 trials to 60, whose upper bound at zero
+   claims would be 0.060 — below the 12–14% shallow-layer rate, which would turn §4's central
+   observation from "cannot be distinguished from baseline" into a measured result. This is the
+   single cheapest thing on the list and it gates the most interesting finding.
+2. **Re-measure the nine surviving operating points on `TASK_HELDOUT` prompts at 30 trials**, with
    `MAX_NEW_TOKENS=250` so §8 can be settled at the same time. One layer band, nine cells, well
    under an hour.
-2. **Score identification by semantic distance rather than exact match** (§3.3, §10.2). The near
+3. **Score identification by semantic distance rather than exact match** (§3.3, §10.2). The near
    misses are already on disk; this is analysis, not GPU time.
-3. **Ask the influence judge to name what changed**, not only to score how much (§10.1).
-4. **Run one concept on a second model** to find out whether §7's fragility curve and §4's
+4. **Ask the influence judge to name what changed**, not only to score how much (§10.1).
+5. **Run one concept on a second model** to find out whether §7's fragility curve and §4's
    shallow-layer confabulation are properties of Gemma3-27B or of transformers with this training.
