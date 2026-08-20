@@ -20,6 +20,7 @@ same question, that is a defect — say so.
 | Question | Document |
 |---|---|
 | How do I run it, from a bare pod to a result? | [`docs/RUNBOOK-M3.md`](docs/RUNBOOK-M3.md) — M2's is [`docs/RUNBOOK.md`](docs/RUNBOOK.md) |
+| How do I run it on Qwen3, or on three GPUs at once? | [`docs/RUNBOOK-QWEN.md`](docs/RUNBOOK-QWEN.md) |
 | What does each measure mean, and why is it defined that way? | [`docs/SPECIFICATION.md`](docs/SPECIFICATION.md) |
 | Where does each piece of code live, and what is it called? | [`docs/CONTRACT.md`](docs/CONTRACT.md) |
 | Why is it built this way? What was decided, and against what? | [`docs/DESIGN-RATIONALE.md`](docs/DESIGN-RATIONALE.md) |
