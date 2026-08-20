@@ -25,7 +25,9 @@ from m3 import battery, config, judge  # noqa: E402
 
 def test_layer_bounds_are_fractions_so_they_port_across_model_depths():
     """`13` means nothing on a model of a different depth; `0.21` means the same place."""
-    cfg = dict(config.SETTINGS)
+    # Stride 1, because this test is about where the RANGE lands, and a stride > 1 can stop
+    # one step short of the last layer for arithmetic reasons unrelated to fractions.
+    cfg = dict(config.SETTINGS, LAYER_STRIDE=1)
     assert config.layers_for_depth(62, cfg)[0] == 13
     assert config.layers_for_depth(62, cfg)[-1] == 61
     deep = config.layers_for_depth(94, cfg)
@@ -334,7 +336,10 @@ def test_the_dry_run_refuses_a_battery_that_cannot_be_generated():
     extracted vectors, and died nine minutes later on the batch cap the estimate had just
     described and never checked. The estimate had the number in hand the whole time.
     """
-    cfg = dict(config.SETTINGS, N_IDENTIFY=30)
+    # Built to overflow explicitly. Reading the shipped defaults made this pass or fail on
+    # whether they happen to be mismatched -- and they are now deliberately matched
+    # (battery 43, cap 44), which silently turned the assertion into one that cannot fail.
+    cfg = dict(config.SETTINGS, N_IDENTIFY=30, GEN_BATCH_MAX=25)
     assert config.battery_size(cfg) > int(cfg["GEN_BATCH_MAX"]), "the setup does not overflow"
     with pytest.raises(ValueError, match="GEN_BATCH_MAX"):
         m3run.estimate(62, cfg)
@@ -354,13 +359,24 @@ def test_the_estimated_battery_matches_the_battery_actually_built():
 
 
 def test_the_cost_estimate_scales_with_the_grid():
-    cfg = dict(config.SETTINGS)
+    # Both strides are named, so the comparison holds whatever the shipped default is.
+    # Reading the default for one side made this assert 150 < 150 the moment the default
+    # stride became the thinned one.
+    cfg = dict(config.SETTINGS, LAYER_STRIDE=1)
     full = m3run.estimate(62, cfg)
-    assert full["cells"] == 49 * len(cfg["DOSE_FRACTIONS"])
+    assert full["cells"] == (len(config.layers_for_depth(62, cfg))
+                             * len(cfg["DOSE_FRACTIONS"]))
     thin = m3run.estimate(62, dict(cfg, LAYER_STRIDE=2))
     assert thin["cells"] < full["cells"]
     assert thin["judge_usd"] < full["judge_usd"]
-    assert full["judge_usd"] < 5.0, "a run this size should not cost five dollars"
+    # The price guard belongs on what an operator actually gets by running the command
+    # with no flags -- not on the stride-1 grid built above to test scaling. At stride 1
+    # and the shipped battery a full-depth sweep is about $8, which is a deliberate
+    # choice an operator makes, not the default they stumble into.
+    shipped = m3run.estimate(62, dict(config.SETTINGS))
+    assert shipped["judge_usd"] < 5.0, (
+        f"the default run now prices at ${shipped['judge_usd']:.2f}; a default nobody "
+        "chose should not cost five dollars")
 
 
 def test_the_cli_refuses_the_harmful_arm_before_loading_anything(capsys):

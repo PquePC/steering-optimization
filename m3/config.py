@@ -77,7 +77,11 @@ SETTINGS: dict[str, Any] = dict(
 
     # Measure every Nth layer. 1 = every layer in range. Raise this to trade resolution for
     # time on a first look at a new model: 2 halves the sweep.
-    LAYER_STRIDE=1,
+    # 2, so a full-depth sweep at the battery above costs about what the 27-layer Garlic
+    # confirmation did. Set it to 1 to double the layer resolution once a band is known to be
+    # interesting; the Garlic run narrowed LAYER_FRACTIONS instead, which is the other way to
+    # spend the same budget.
+    LAYER_STRIDE=2,
 
     # Each layer is measured at these fractions of ITS OWN degeneration boundary, found in
     # Phase 1. Not at a fixed global dose.
@@ -85,7 +89,11 @@ SETTINGS: dict[str, Any] = dict(
     # This is the change that makes cells comparable across depth. A single global dose wastes
     # most of the grid: in the M2 scan a dose of 0.30 destroyed the model at L15 and saturated
     # it at L59, and neither cell tells you anything.
-    DOSE_FRACTIONS=(0.30, 0.50, 0.70, 0.90),
+    # Six, not four, and topping out at 0.85 rather than 0.90. The 2026-08-19 confirmation run
+    # found the interesting structure between 0.35 and 0.65 -- identification climbs from 0.00
+    # to 1.00 across two or three dose steps -- so four steps put at most two cells inside the
+    # transition. The 0.90 cell was also where the three over-steered cells landed.
+    DOSE_FRACTIONS=(0.35, 0.45, 0.55, 0.65, 0.75, 0.85),
 
     # Phase 1 descends from the highest reachable dose, multiplying by BOUNDARY_STEP each time,
     # and stops at the first dose the judge calls coherent.
@@ -130,7 +138,7 @@ SETTINGS: dict[str, Any] = dict(
     # 5 rows = 25 = GEN_BATCH_MAX, one call. At 6 the window is 30 rows and the generator splits
     # it, which is what `check_boundary_window_fits` now refuses -- a split window still returns
     # the same rungs, but it stops being the single call the optimisation is named for.
-    BOUNDARY_RUNG_BATCH=5,
+    BOUNDARY_RUNG_BATCH=8,
 
     # (floor, ceiling) of the doses worth searching. The ceiling is where the descent starts,
     # subject to what ALPHA_CEIL actually allows; the floor is where it gives up.
@@ -211,7 +219,7 @@ SETTINGS: dict[str, Any] = dict(
 
     # Forced-identification trials: can the model name the injected concept when asked
     # point-blank. This is the detection constraint, so it gets the most samples.
-    N_IDENTIFY=6,
+    N_IDENTIFY=30,
 
     # Open-ended task prompts, for effectiveness.
     N_EFFECT=4,
@@ -272,7 +280,14 @@ SETTINGS: dict[str, Any] = dict(
 
     # Largest number of prompts in one generation call. The batched path corrects each row for
     # its own left padding, so composition is scientifically neutral; this is a memory bound.
-    GEN_BATCH_MAX=25,
+    # 44, because the battery at N_IDENTIFY=30 is 43 rows and `check_battery_fits` requires
+    # them in ONE generation call. The two settings are coupled: raise N_IDENTIFY and this must
+    # rise with it, or the run refuses to start.
+    #
+    # This is a MEMORY bound, and 44 is sized for a ~55 GB model on an 80 GB card, where 43
+    # sequences of MAX_NEW_TOKENS=100 cost roughly 3 GB of KV cache. A larger model or a
+    # smaller card needs this lowered, and the battery with it.
+    GEN_BATCH_MAX=44,
 
     # =================================================================================
     # 5. JUDGES
