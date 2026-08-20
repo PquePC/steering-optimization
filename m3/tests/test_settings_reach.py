@@ -84,6 +84,7 @@ PROBES: dict[str, tuple[Any, Any]] = {
     "NULL_REPEATS": (1, 3),
     "MAX_NEW_TOKENS": (100, 64),
     "TEMPERATURE": (1.0, 0.25),
+    "THINKING_MODE": ("off", "on"),
     "GEN_BATCH_MAX": (25, 40),
     "JUDGE_MODEL": ("openai/gpt-4.1-mini", "openai/gpt-4o-mini"),
     "JUDGE_CONCURRENT": (32, 4),
@@ -300,6 +301,40 @@ def _w_dose_fractions(value, tmp):
     return sorted({(r["layer"], r["dose"]) for r in rows})
 
 
+def _w_thinking_mode(value, tmp):
+    """Observed as the kwarg `apply_chat_template` ACTUALLY RECEIVES, not as the setting.
+
+    `chat()` is the real function here; only the tokenizer is a stub, and it carries a
+    Qwen-style template so the switch is present to be flipped. A witness that called
+    `template_kwargs` directly would pass even if every call site stopped forwarding its
+    result -- which is the failure worth catching, since the helper existing and the helper
+    being used are different things, and the second is what reaches the model.
+    """
+    from m2 import config as m2config, model as m2model
+
+    class _Tok:
+        # The one line of Qwen3's template that matters: the switch has to be MENTIONED for
+        # `template_kwargs` to send it. A Gemma-style template returns no kwarg at all.
+        chat_template = "{% if enable_thinking %}<think>{% endif %}"
+
+        def __init__(self):
+            self.seen = {}
+
+        def apply_chat_template(self, messages, **kw):
+            self.seen = kw
+            return "<prompt>"
+
+    with _wired(_cfg("THINKING_MODE", value), tmp):
+        tok = _Tok()
+        saved = m2config.RUN.tok
+        m2config.RUN.tok = tok
+        try:
+            m2model.chat("what is a computer?")
+        finally:
+            m2config.RUN.tok = saved
+        return tok.seen.get("enable_thinking", "kwarg-never-passed")
+
+
 WITNESSES = {
     "MODEL": _w_model,
     "DTYPE": _w_dtype,
@@ -353,6 +388,7 @@ WITNESSES = {
     "NULL_REPEATS": _w_null_repeats,
     "MAX_NEW_TOKENS": lambda v, t: _w_cell(v, t, "MAX_NEW_TOKENS", "max_tokens"),
     "TEMPERATURE": lambda v, t: _w_cell(v, t, "TEMPERATURE", "temperature"),
+    "THINKING_MODE": _w_thinking_mode,
     "GEN_BATCH_MAX": _w_gen_batch,
     "JUDGE_MODEL": lambda v, t: _w_transport(v, t, "JUDGE_MODEL", "judge_model"),
     "JUDGE_CONCURRENT": lambda v, t: _w_transport(v, t, "JUDGE_CONCURRENT", "judge_concurrent"),

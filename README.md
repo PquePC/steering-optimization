@@ -110,7 +110,7 @@ label so a screening number can never be read as a confirmation.
 Full instructions in [`docs/RUNBOOK-M3.md`](docs/RUNBOOK-M3.md) — M2's are in
 [`docs/RUNBOOK.md`](docs/RUNBOOK.md). The short version, on a fresh A100/H100 80GB pod with
 `/workspace` mounted. Bring an `HF_TOKEN` (with the Gemma licence accepted) and an
-`OPENROUTER_API_KEY`; nothing else, and no GitHub credential — both repositories clone anonymously.
+`OPENROUTER_API_KEY`; nothing else, and no GitHub credential — this repository clones anonymously and carries everything it needs.
 
 ```bash
 unset HISTFILE
@@ -139,7 +139,29 @@ The last line prices the run and loads nothing. `python -m m3.run --concept Garl
 it; Phase 0 is the preflight, and its `R14 pass` line is what says the injection hook is live.
 
 Missing Python packages install automatically even without `--repair`. The flag remains in this
-fresh-pod example because it also clones the upstream harness and applies other explicit repairs.
+fresh-pod example because it applies other explicit repairs; it no longer has an upstream
+harness to clone, since that code now ships in [`upstream/`](upstream/introspection_mechanisms) — see **Credits** below.
+
+---
+
+## Credits
+
+The model-loading, steering-hook, batched-generation and concept-vector code in
+[`upstream/introspection_mechanisms/`](upstream/introspection_mechanisms) is taken from
+**`safety-research/introspection-mechanisms`**, the code released with *Mechanisms of
+Introspective Awareness* (Macar, Yang, Wang, Wallich, Ameisen and Lindsey, 2026,
+[arXiv:2603.21396](https://arxiv.org/abs/2603.21396)). It is vendored here, rather than cloned at
+setup time, with the authors' permission to use and redistribute it.
+
+The pinned upstream commit is recorded in
+[`upstream/introspection_mechanisms/UPSTREAM_COMMIT`](upstream/introspection_mechanisms/UPSTREAM_COMMIT).
+Local modifications are confined to the Qwen3 entries in `MODEL_NAME_MAP` and are marked in place;
+everything else is upstream's, unchanged. `M2_HARNESS_DIR` still points the loader at an external
+checkout if you want to run against a newer upstream.
+
+That paper is also where the measurement this repository builds on comes from: the concept-vector
+construction, the forced-identification protocol, and the per-concept detection rates used to
+choose which concepts to sweep.
 
 ---
 

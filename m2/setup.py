@@ -51,6 +51,10 @@ MAIN_BRANCH = os.environ.get("M2_BRANCH", "main")
 HARNESS_URL = "https://github.com/safety-research/introspection-mechanisms"
 HARNESS_DIRS = (
     Path(os.environ["M2_HARNESS_DIR"]) if os.environ.get("M2_HARNESS_DIR") else None,
+    # Vendored, so `--repair` has nothing to clone on a fresh pod. Kept ahead of the clone
+    # locations for the same reason `m2/model.py` does: a stale clone must not outrank the
+    # copy that ships with the commit under test.
+    PROJECT_DIR / "upstream" / "introspection_mechanisms",
     WORKSPACE / "introspection-mechanisms",
     WORKSPACE / "steering-opt" / "introspection-mechanisms",
     PROJECT_DIR / "introspection-mechanisms",

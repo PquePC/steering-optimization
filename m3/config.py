@@ -274,6 +274,20 @@ SETTINGS: dict[str, Any] = dict(
     # truncating them; truncation makes a response harder to judge, not just shorter.
     MAX_NEW_TOKENS=100,
 
+    # Whether the model may emit a reasoning trace before its answer.
+    #
+    # Only models whose chat template carries a thinking switch are affected -- Qwen3 has one
+    # and defaults it ON, Gemma3 has none and ignores this entirely. It is a setting rather
+    # than a hardcoded `False` because it changes what is measured, and so must change the
+    # config hash: a Qwen3 run with reasoning on and one with it off are different experiments
+    # and must not resume into each other's run folder.
+    #
+    # "off" is the default because this pipeline measures the response. With reasoning on,
+    # `MAX_NEW_TOKENS=100` is spent thinking before any answer appears, the judges score the
+    # trace instead of the reply, and the mechanical `accept`-term check finds nothing to
+    # match. The steering itself still applies to every generated token either way.
+    THINKING_MODE="off",
+
     # Sampling temperature. 1.0 matches the upstream forced-identification protocol. Lowering
     # it reduces per-cell variance and makes the run less comparable with published numbers.
     TEMPERATURE=1.0,
@@ -562,6 +576,7 @@ def m2_config(concept: str, cfg: dict | None = None) -> dict:
     out.update(
         model=cfg["MODEL"],
         dtype=cfg["DTYPE"],
+        thinking_mode=cfg["THINKING_MODE"],
         concept=concept,
         judge_model=cfg["JUDGE_MODEL"],
         judge_concurrent=int(cfg["JUDGE_CONCURRENT"]),

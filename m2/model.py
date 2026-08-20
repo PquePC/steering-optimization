@@ -89,6 +89,10 @@ def ensure_repo_path(verbose: bool = False) -> tuple[Path, list[str]]:
         candidates.append(Path(work_dir) / "introspection-mechanisms")
     here = Path(__file__).resolve().parent            # .../steering-optimization/m2
     candidates += [
+        # The in-repo copy, and the reason a fresh clone needs no second clone. It comes
+        # after M2_HARNESS_DIR so an operator can still point at a newer upstream checkout,
+        # and BEFORE the old clone locations so a stale one left on a pod cannot win.
+        here.parent / "upstream" / "introspection_mechanisms",
         Path("/workspace/introspection-mechanisms"),          # quickstart / setup_pod.sh
         Path("/workspace/steering-opt/introspection-mechanisms"),   # v1 WORK_DIR default
         here.parent / "introspection-mechanisms",             # beside the package
@@ -603,8 +607,35 @@ def chat(question: str) -> str:
     The returned string already contains <bos>, which is why everything that tokenises it
     passes add_special_tokens=False (bug 9).
     """
-    return _run().tok.apply_chat_template(
-        [{"role": "user", "content": question}], tokenize=False, add_generation_prompt=True)
+    run = _run()
+    return run.tok.apply_chat_template(
+        [{"role": "user", "content": question}], tokenize=False, add_generation_prompt=True,
+        **template_kwargs(run.tok, run.config))
+
+
+def template_kwargs(tok: Any, cfg: dict) -> dict:
+    """Extra `apply_chat_template` kwargs for models with a reasoning switch.
+
+    Qwen3's chat template accepts `enable_thinking` and defaults it to True, so an untouched
+    run emits a `<think>` block before every answer -- which this pipeline would judge as the
+    response, and which would consume MAX_NEW_TOKENS before any answer appeared. Gemma3's
+    template has no such switch.
+
+    The kwarg is passed ONLY when the model's own template mentions it. Passing it blindly
+    relies on transformers quietly dropping unknown template variables, which is version
+    dependent; keying off the template makes the behaviour the model's, not the library's.
+
+    `cfg['thinking_mode']` is hard-indexed and validated. A typo silently meaning "on" is
+    exactly the defaulted-threshold failure this repo has lost a run to before.
+    """
+    mode = cfg["thinking_mode"]
+    if mode not in ("on", "off"):
+        raise ValueError(
+            f"thinking_mode is {mode!r}, must be 'on' or 'off'. It decides whether a reasoning "
+            "model emits a <think> block that this pipeline would score as the answer.")
+    if "enable_thinking" not in (getattr(tok, "chat_template", None) or ""):
+        return {}
+    return {"enable_thinking": mode == "on"}
 
 
 def start_pos_for(prompt: str, needle: str) -> int | None:

@@ -337,7 +337,9 @@ def _noticing_prompts(trial_numbers: list[int], prefill: str) -> tuple[list[str]
         )},
     ]
     messages = _filter_messages_for_model(messages, mw)
-    template = tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    from .model import template_kwargs                    # noqa: PLC0415 (cycle at import)
+    template = tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=True,
+                                       **template_kwargs(tok, run.config))
     template += prefill                 # the prefill is what makes this D2 and not D1
 
     prompts = [template.replace(f"Trial {placeholder}", f"Trial {t}") for t in trial_numbers]
