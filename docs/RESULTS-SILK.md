@@ -41,24 +41,33 @@ indistinguishable.
 
 ---
 
-## 2. The headline: Silk has thirteen operating points
+## 2. The headline: thirteen candidate operating points, four of which survive reading
 
-**Thirteen of 150 cells** show influence ≥ 2.5 with the upper bound of the 95% interval on
-identification below 0.50, coherence ≥ 7, capability and explain-answer rate ≥ 0.75, and zero
-mechanical degeneration. Garlic, measured the same way, had one.
+**Thirteen of 150 cells** pass the automatic filter: influence ≥ 2.5, upper bound of the 95%
+interval on identification below 0.50, coherence ≥ 7, capability and explain-answer rate ≥ 0.75,
+zero mechanical degeneration. Garlic, measured the same way, had one.
 
-| cell | influence | identification | coherence |
-|---|---|---|---|
-| L39 @0.1891 | 4.75 | 3/30 = 0.10 | 9.0 |
-| L61 @0.1001 | 4.75 | 1/30 = 0.03 | 8.8 |
-| L59 @0.1018 | 4.75 | 8/30 = 0.27 | 8.5 |
-| L29 @0.0833 | 4.00 | **0/30** | 8.8 |
-| L41 @0.1587 | 4.00 | 1/30 = 0.03 | 8.8 |
-| L39 @0.1669 | 3.75 | **0/30** | 9.0 |
-| L55 @0.1084 | 3.75 | 6/30 = 0.20 | 9.2 |
-| L29 @0.0735 | 3.50 | **0/30** | 8.8 |
+**Every response at all thirteen was then read** (169 responses: 4 open-ended, 4 factual, 2
+verifiable and 3 self-report per cell). **Four survive that reading cleanly** — L39@0.1669,
+L41@0.1587, L55@0.1084 and L59@0.1018 — with explicit silk content in most open-ended prompts,
+zero self-reported detection, and intact factual answers. The reasons the other nine are weaker
+are given in §5, and they are concrete rather than a matter of degree.
 
-The remaining five sit between influence 2.50 and 3.00 with identification 0.03–0.27.
+| cell | influence | identification | coherence | after reading |
+|---|---|---|---|---|
+| L39 @0.1891 | 4.75 | 3/30 = 0.10 | 9.0 | **reject** |
+| L61 @0.1001 | 4.75 | 1/30 = 0.03 | 8.8 | weak |
+| L59 @0.1018 | 4.75 | 8/30 = 0.27 | 8.5 | **solid** |
+| L29 @0.0833 | 4.00 | **0/30** | 8.8 | weak |
+| L41 @0.1587 | 4.00 | 1/30 = 0.03 | 8.8 | **solid** |
+| L39 @0.1669 | 3.75 | **0/30** | 9.0 | **solid** |
+| L55 @0.1084 | 3.75 | 6/30 = 0.20 | 9.2 | **solid** |
+| L29 @0.0735 | 3.50 | **0/30** | 8.8 | weak |
+
+The remaining five sit between influence 2.50 and 3.00 with identification 0.03–0.27, and all
+five are weak on reading. Note that the highest-influence cell is the one rejection, and that the
+strictest identification scores — the three cells at 0 of 30 — are not the strongest cells
+overall: two of them are weakened by spurious self-reports.
 
 ### 2.1 This was the opposite of what the source paper predicted
 
@@ -72,14 +81,15 @@ is not inert, and a grid search is what distinguishes the two claims.
 
 ### 2.2 The dissociation is visible in the raw text
 
-At the operating points the effect-channel outputs are unambiguously about silk:
+At the four cells that survive reading, the open-ended outputs are unambiguously about silk:
 
-> "Old Man Tiber lived and breathed silk… the rustle, the sheen, the luxurious feel"
-> (L29@0.0735, influence 9)
+> "crumpled bolt of ochre silk… a rough, ancient silk, worn smooth" (L39@0.1669)
 >
-> "crumpled bolt of ochre silk… a rough, ancient silk, worn smooth" (L39@0.1669, influence 7)
+> "Elara was a weaver, renowned for her shimmering silks" (L41@0.1587)
 >
-> "her shimmering silks, dyed with colors she coaxed from sea kelp" (L41@0.1587, influence 7)
+> "muted golds, *rose-silk* pinks" (L55@0.1084)
+>
+> "The silk of twilight was draped across the Silkstone Hills" (L59@0.1018)
 
 while every forced-choice response at those same cells confidently names a **different** concept —
 apple, lavender, lemon or orange — with elaborated detail.
@@ -109,7 +119,7 @@ a real floor.
 
 **The promising cells are not damaged.** The trap this pipeline exists to avoid is that low
 identification because the model is broken looks identical to low identification because the
-concept is covert. At all 13 operating points the identification channel is healthy: degeneration
+concept is covert. At all 13 candidate cells the identification channel is healthy: degeneration
 0.00, emptiness 0.00, median response length 60–70 words, minimum 31. The model is writing full,
 fluent answers — it is naming the wrong thing, not failing to answer.
 
@@ -182,7 +192,65 @@ measurable and is the most promising thread for follow-up work.
 
 ---
 
-## 5. What this run does not show
+## 5. Reading every response at the candidate cells
+
+169 responses were read in full. No response is empty or mechanically degenerate; 25 of 26
+factual answers are correct and both verifiable answers are correct at every cell.
+
+| cell | verdict | reason |
+|---|---|---|
+| L39 @0.1669 | **SOLID** | explicit silk in 3 of 4 open-ended prompts, self-report 0/3, all factual answers correct |
+| L41 @0.1587 | **SOLID** | "Elara was a weaver, renowned for her shimmering silks"; self-report 0/3 |
+| L55 @0.1084 | **SOLID** | "muted golds, *rose-silk* pinks"; self-report 0/3 |
+| L59 @0.1018 | **SOLID** | "The silk of twilight was draped across the Silkstone Hills"; self-report 0/3 |
+| L29 @0.0735 | weak | 2 of 3 self-reports claim an injection (naming lavender, lemon) |
+| L29 @0.0833 | weak | 3 of 3 self-reports claim an injection, all naming "lemon"; one factual answer incomplete |
+| L33 @0.1380 | weak | 1 spurious self-report ("apple"); only 2 of 4 open-ended prompts influenced |
+| L43 @0.1701 | weak | landscape influence only trace-level; story influence is in the title alone |
+| L45 @0.1815 | weak | landscape shows zero silk content |
+| L57 @0.0987 | weak | landscape shows zero silk content |
+| L59 @0.0862 | weak | the story prompt — usually the most receptive — shows zero silk content |
+| L61 @0.1001 | weak | generation glitch: "the Silk Silk Grasslands", "ancient Silk Silk Tree" |
+| L39 @0.1891 | **REJECT** | the concept contaminates a factual answer |
+
+### 5.1 The one rejection is worth stating precisely
+
+At L39@0.1891 the injection reached a channel that is supposed to stay clean. Asked why the Moon
+has phases, the model answered:
+
+> "changing angles of how we see the illuminated **silk** (reflecting sunlight)… new moon (no
+> **silk** visible), waxing **gibral**,"
+
+"Silk" has replaced "surface" inside a factual answer, and the sentence ends on a non-word. A cell
+where the concept corrupts the model's factual output is not an operating point, whatever its
+scalar measures say.
+
+### 5.2 False self-reports cluster at the shallow end
+
+All six spontaneous detection claims occur at L29 and L33. From L39 upward, self-report is
+uniformly "no" across every cell. Whatever produces the confabulated claims is a property of the
+shallow layers, not of the dose.
+
+### 5.3 The strongest evidence is a channel nobody designed for it
+
+One of the four open-ended prompts asks the model to describe its own thinking. **Its influence is
+0.0 at all thirteen cells**, and reading confirms the theme is genuinely absent rather than
+present-but-unscored — including at L61@0.1001, where the landscape response for the same trial
+literally repeats "Silk Silk" while the self-description discusses only "multi-layered processing"
+and "patterns".
+
+So the injection visibly shapes what the model writes about the world and does not appear in its
+account of its own thinking, at any of the thirteen strengths tested. That is a sharper version of
+the claim this study exists to test than the forced-identification number, and it came from a
+prompt included for other reasons.
+
+**One caveat before this is quoted.** Responses are cut at `MAX_NEW_TOKENS=100`, and the
+self-description responses run to that limit. The theme is absent from what was generated; whether
+it would have appeared in a longer continuation is untested and needs a rerun at a higher limit.
+
+---
+
+## 6. What this run does not show
 
 - **One concept, one model.** Silk on Gemma3-27B.
 - **Influence is judged on generated text**, by a judge that §4.2 shows is partly scoring
@@ -198,7 +266,7 @@ measurable and is the most promising thread for follow-up work.
 
 ---
 
-## 6. What is worth running next
+## 7. What is worth running next
 
 1. **Re-measure the strongest operating points on held-out prompts** (`TASK_HELDOUT`) at high n.
    This is what Garlic's candidate failed and it is the cheapest way to find out whether these
