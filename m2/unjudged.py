@@ -293,7 +293,19 @@ def concept_hits(text: str, concept: str) -> int:
     word = str(concept).strip()
     if not word:
         raise ValueError("concept_hits needs a non-empty concept")
-    return len(re.findall(r"\b" + re.escape(word), str(text), flags=re.IGNORECASE))
+    # A PLURAL concept also matches its singular, because the leading-boundary-only rule above
+    # is blind to it otherwise. `\bWrists` does not match "wrist", "wristwatch" or "wristband" --
+    # the letters after "wrist" are not "s". The 2026-08-20 Qwen run recorded concept_mentions=0
+    # for all 624 Wrists effect responses, including one reading "My wristwatch," -- the concept
+    # appearing in the output and being counted as absent.
+    #
+    # A trailing "ss" is left alone: stripping it would make "Glass" match "glasnost".
+    forms = [word]
+    low = word.lower()
+    if len(word) > 3 and low.endswith("s") and not low.endswith("ss"):
+        forms.append(word[:-1])
+    alt = "|".join(re.escape(f) for f in sorted(forms, key=len, reverse=True))
+    return len(re.findall(r"\b(?:" + alt + r")", str(text), flags=re.IGNORECASE))
 
 
 def _channel_stats(responses: Sequence[str], concept: str) -> dict:

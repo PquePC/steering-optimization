@@ -291,3 +291,26 @@ def test_git_state_records_the_commit_and_whether_the_tree_was_dirty():
         assert len(state["git_commit"]) == 40
         # None means "could not tell", which is a different claim from "clean".
         assert state["git_dirty"] in (True, False, None)
+
+
+def test_a_plural_concept_still_counts_its_singular():
+    """`\bWrists` cannot match "wrist", "wristwatch" or "wristband" -- the letters after
+    "wrist" are not "s". The 2026-08-20 Qwen run recorded concept_mentions=0 for all 624
+    Wrists effect responses, one of which reads "My wristwatch," verbatim: the concept in the
+    output, counted as absent, in the field an analysis uses to check the judge.
+
+    The inflection rule the leading-boundary-only match exists for has to work in both
+    directions, or it silently works for singular concepts only.
+    """
+    from m2.unjudged import concept_hits
+
+    assert concept_hits("my wrist hurts", "Wrists") == 1
+    assert concept_hits("a wristwatch", "Wrists") == 1
+    assert concept_hits("wristband", "Wrists") == 1
+    assert concept_hits("both wrists", "Wrists") == 1
+    # singular concepts are unchanged
+    assert concept_hits("garlicky bread", "Garlic") == 1
+    assert concept_hits("silken hues", "Silk") == 1
+    # ...and a trailing "ss" is not stripped, or "Glass" would match "glasnost"
+    assert concept_hits("glasnost politics", "Glass") == 0
+    assert concept_hits("a glass of water", "Glass") == 1
