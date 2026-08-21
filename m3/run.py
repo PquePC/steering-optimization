@@ -77,20 +77,42 @@ def estimate(n_layers: int, cfg: dict) -> dict:
     Deliberately pessimistic on the judge side: every payload is priced at its cap. A number an
     operator sees before spending is worth more than an accurate one they see afterwards.
     """
-    layers = config.layers_for_depth(n_layers, cfg)
-    cells = len(layers) * len(cfg["DOSE_FRACTIONS"])
-    # Ladder plus refinement, both at their worst case: every ladder probe spent, then every
-    # bisection spent. The tolerance usually stops bisection earlier; the price must not assume so.
-    probes_per_layer = int(cfg["BOUNDARY_PROBES"]) + int(cfg["BOUNDARY_BISECTIONS"])
+    # The estimate builds its own plan, so it has to honour the same two settings `run_sweep`
+    # does or it prices a run that will not happen. It did exactly that once: with CELLS set to
+    # five cells and no judge, this printed 150 cells and $5.92 of judging, nine minutes before
+    # a run that measured five cells and spent nothing. An operator checking `--dry-run` to
+    # confirm the settings landed would have concluded they had not.
+    explicit = config.parse_cells(cfg.get("CELLS", ""))
+    judging = bool(int(cfg.get("JUDGE_ENABLED", 1)))
+
+    if explicit:
+        layers = sorted({int(l) for l, _ in explicit})
+        cells = len(explicit)
+        # Phase 1 does not run, so it costs nothing in probes, judge calls or GPU time.
+        probes_per_layer = 0
+    else:
+        layers = config.layers_for_depth(n_layers, cfg)
+        cells = len(layers) * len(cfg["DOSE_FRACTIONS"])
+        # Ladder plus refinement, both at their worst case: every ladder probe spent, then every
+        # bisection spent. The tolerance usually stops bisection earlier; the price must not
+        # assume so.
+        probes_per_layer = int(cfg["BOUNDARY_PROBES"]) + int(cfg["BOUNDARY_BISECTIONS"])
     boundary_calls = len(layers) * probes_per_layer * int(cfg["BOUNDARY_N"])
     cell_calls = cells * config.judge_calls_per_cell(cfg)
+    if not judging:
+        boundary_calls = cell_calls = 0
 
     in_tokens = sum(judge.estimate_payload_tokens(j, cfg) for j in judge.JUDGE_IDS)
     mean_in = in_tokens / len(judge.JUDGE_IDS)
     per_call = mean_in * _USD_PER_INPUT_TOKEN + int(cfg["JUDGE_MAX_TOKENS"]) * _USD_PER_OUTPUT_TOKEN
 
     short = _SECONDS_PER_BATCH_100 * int(cfg["BOUNDARY_MAX_TOKENS"]) / int(cfg["MAX_NEW_TOKENS"])
-    gpu_s = len(layers) * probes_per_layer * short + cells * _SECONDS_PER_BATCH_100
+    # The null arm is NULL_REPEATS whole batteries, unsteered, and it was missing from both the
+    # generation count and the clock. At the shipped 3 repeats that was a rounding error; at 20
+    # it is a third of the run, which is enough to make an operator think the run has hung.
+    null_batches = int(cfg["NULL_REPEATS"])
+    gpu_s = (len(layers) * probes_per_layer * short
+             + (cells + null_batches) * _SECONDS_PER_BATCH_100)
 
     # Can the descending ladder actually cross its own bracket floor? If not, layers the search
     # stopped short on come back indistinguishable from layers that genuinely broke, and the
@@ -112,7 +134,9 @@ def estimate(n_layers: int, cfg: dict) -> dict:
         judge_calls=boundary_calls + cell_calls,
         judge_usd=(boundary_calls + cell_calls) * per_call,
         gpu_minutes=gpu_s / 60.0,
-        responses=cells * config.battery_size(cfg) + boundary_calls,
+        responses=(cells + null_batches) * config.battery_size(cfg) + boundary_calls,
+        explicit_cells=len(explicit),
+        judging=judging,
         probes_needed=probes_needed,
         ladder_reaches_floor=int(cfg["BOUNDARY_PROBES"]) >= probes_needed,
         lowest_probe=hi * step ** (int(cfg["BOUNDARY_PROBES"]) - 1),
@@ -123,19 +147,31 @@ def _print_plan(est: dict, cfg: dict, concept: str) -> None:
     print("=" * 74)
     print(f"M3 sweep   concept={concept}   config={config.config_hash(cfg)}")
     print("=" * 74)
-    print(f"  layers        {est['layers']} (L{est['first_layer']}-L{est['last_layer']}, "
-          f"stride {cfg['LAYER_STRIDE']})")
-    print(f"  doses/layer   {len(cfg['DOSE_FRACTIONS'])} at {cfg['DOSE_FRACTIONS']} "
-          f"of each layer's own boundary")
-    print(f"  cells         {est['cells']}")
+    if est["explicit_cells"]:
+        print(f"  layers        {est['layers']} (L{est['first_layer']}-L{est['last_layer']}, "
+              f"from CELLS)")
+        print(f"  doses         given explicitly, absolute -- DOSE_FRACTIONS is not used")
+        print(f"  cells         {est['cells']}  (explicit)")
+    else:
+        print(f"  layers        {est['layers']} (L{est['first_layer']}-L{est['last_layer']}, "
+              f"stride {cfg['LAYER_STRIDE']})")
+        print(f"  doses/layer   {len(cfg['DOSE_FRACTIONS'])} at {cfg['DOSE_FRACTIONS']} "
+              f"of each layer's own boundary")
+        print(f"  cells         {est['cells']}")
     print(f"  battery       {est['battery']} responses/cell, one generation batch "
           f"(cap {cfg['GEN_BATCH_MAX']})")
     print(f"  generations   {est['responses']:,}")
-    print(f"  judge calls   {est['judge_calls']:,}  (<= ${est['judge_usd']:.2f} at cap)")
+    if est["judging"]:
+        print(f"  judge calls   {est['judge_calls']:,}  (<= ${est['judge_usd']:.2f} at cap)")
+    else:
+        print(f"  judge calls   0  -- JUDGE_ENABLED=0, every judged measure will read null")
     print(f"  GPU estimate  ~{est['gpu_minutes']:.0f} min of measurement")
-    print(f"  judge model   {cfg['JUDGE_MODEL']}  "
-          f"<= {cfg['JUDGE_MAX_TOKENS']} reply tokens, {cfg['JUDGE_CONCURRENT']} concurrent")
-    if est["ladder_reaches_floor"]:
+    if est["judging"]:
+        print(f"  judge model   {cfg['JUDGE_MODEL']}  "
+              f"<= {cfg['JUDGE_MAX_TOKENS']} reply tokens, {cfg['JUDGE_CONCURRENT']} concurrent")
+    if est["explicit_cells"]:
+        print("  boundary      SKIPPED -- the doses are given, so Phase 1 does not run")
+    elif est["ladder_reaches_floor"]:
         print(f"  boundary      {cfg['BOUNDARY_PROBES']} probes descends "
               f"{cfg['BOUNDARY_BRACKET'][1]} -> below the floor "
               f"{cfg['BOUNDARY_BRACKET'][0]} at x{cfg['BOUNDARY_STEP']}")
@@ -147,7 +183,7 @@ def _print_plan(est: dict, cfg: dict, concept: str) -> None:
               f"'probes_exhausted', NOT as broken — nothing below that dose is measured.")
         print(f"                Set BOUNDARY_PROBES={est['probes_needed']} to descend the "
               f"whole bracket.")
-    if int(cfg["BOUNDARY_BISECTIONS"]) > 0:
+    if not est["explicit_cells"] and int(cfg["BOUNDARY_BISECTIONS"]) > 0:
         print(f"                then <= {cfg['BOUNDARY_BISECTIONS']} bisection probes inside "
               f"the ladder's bracket, stopping within {cfg['BOUNDARY_BISECT_TOL']:.0%} "
               f"of the boundary")
