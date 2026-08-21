@@ -63,6 +63,9 @@ PROBES: dict[str, tuple[Any, Any]] = {
     "LAYER_FRACTIONS": ((0.21, 1.00), (0.60, 1.00)),
     "LAYER_STRIDE": (1, 5),
     "DOSE_FRACTIONS": ((0.5,), (0.4, 0.8)),
+    # Two explicit sets that differ in BOTH layer and dose, so a planner that honoured only one
+    # of the two halves would still be caught.
+    "CELLS": ("30:0.2", "30:0.2,40:0.3"),
     "BOUNDARY_PROBES": (2, 6),
     "BOUNDARY_STEP": (0.70, 0.35),
     "BOUNDARY_BRACKET": ((0.05, 2.50), (0.05, 0.90)),
@@ -87,6 +90,7 @@ PROBES: dict[str, tuple[Any, Any]] = {
     "THINKING_MODE": ("off", "on"),
     "GEN_BATCH_MAX": (25, 40),
     "JUDGE_MODEL": ("openai/gpt-4.1-mini", "openai/gpt-4o-mini"),
+    "JUDGE_ENABLED": (1, 0),
     "JUDGE_CONCURRENT": (32, 4),
     "JUDGE_MAX_TOKENS": (120, 48),
     "JUDGE_TEXT_CHARS": (1200, 80),
@@ -301,6 +305,29 @@ def _w_dose_fractions(value, tmp):
     return sorted({(r["layer"], r["dose"]) for r in rows})
 
 
+def _w_cells(value, tmp):
+    """Observed as the cells actually MEASURED, not as the parsed setting.
+
+    `parse_cells` returning the right pairs proves nothing: the failure worth catching is the
+    planner ignoring them and sweeping DOSE_FRACTIONS anyway, which would still produce a
+    plausible cells file. So this reads the grid on disk, the same way DOSE_FRACTIONS does.
+    """
+    d = _sweep(_cfg("CELLS", value), tmp)
+    rows = [json.loads(l) for l in (d / sweep.CELLS_FILE).open(encoding="utf-8")]
+    return sorted({(r["layer"], r["dose"]) for r in rows})
+
+
+def _w_judge_enabled(value, tmp):
+    """Observed as the number of judge records WRITTEN, plus whether a judged measure survived.
+
+    Reading `cfg["JUDGE_ENABLED"]` would prove only that the config holds it, and reading the
+    cell's `identification` alone would be satisfiable by a judge that ran and returned nothing.
+    The pair distinguishes "no judge ran" from "a judge ran and said nothing".
+    """
+    cell, _calls, judged = _cell(_cfg("JUDGE_ENABLED", value), tmp)
+    return (len(judged), cell["identification"] is None, cell["effectiveness"] is None)
+
+
 def _w_thinking_mode(value, tmp):
     """Observed as the kwarg `apply_chat_template` ACTUALLY RECEIVES, not as the setting.
 
@@ -341,6 +368,8 @@ WITNESSES = {
     "LAYER_FRACTIONS": lambda v, t: _w_layers(v, t, "LAYER_FRACTIONS"),
     "LAYER_STRIDE": lambda v, t: _w_layers(v, t, "LAYER_STRIDE"),
     "DOSE_FRACTIONS": _w_dose_fractions,
+    "CELLS": _w_cells,
+    "JUDGE_ENABLED": _w_judge_enabled,
     # NEVER_SANE makes the ladder descend to exhaustion, so the probe budget and the step ratio
     # are what decide the doses. Without it the search stops on probe one and neither is visible.
     "BOUNDARY_PROBES": lambda v, t: _w_boundary(v, t, "BOUNDARY_PROBES", "n_probes",

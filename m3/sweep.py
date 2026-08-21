@@ -863,21 +863,27 @@ def measure_cell(layer: int, dose: float, *, concept: str, baselines: dict[str, 
     # had to be regenerated on the next attempt. Nothing that has already been bought gets
     # discarded because a later step failed: on the way out, the un-judged rows are written
     # first, so a rerun resumes with the text in hand.
-    try:
-        items = _judge_items(rows, concept=concept, baselines=baselines, phase="SWEEP",
-                             layer=int(layer), dose=round(float(dose), 6), cfg=cfg)
-        results = judge.run_judges(
-            [{k: v for k, v in it.items() if k not in ("row_index", "judge_kind")}
-             for it in items],
-            concurrency=int(cfg["JUDGE_CONCURRENT"]))
-        records = _apply_verdicts(rows, items, results, concept=concept)
-    except BaseException:
-        for row in rows:
-            runio.write_row(UNJUDGED_FILE, dict(row, layer=int(layer),
-                                                dose=round(float(dose), 6)))
-        _log(f"   judging FAILED at L{layer}@{dose:.3f}; {len(rows)} generations kept in "
-             f"{UNJUDGED_FILE} rather than discarded")
-        raise
+    if not int(cfg.get("JUDGE_ENABLED", 1)):
+        # No verdicts are attached, so every judged measure this cell reports is null. The
+        # mechanical ones are already on the rows and are unaffected. `RESPONSES_FILE` still
+        # gets every row -- these are judged later, off the pod, from the transcript.
+        records = []
+    else:
+        try:
+            items = _judge_items(rows, concept=concept, baselines=baselines, phase="SWEEP",
+                                 layer=int(layer), dose=round(float(dose), 6), cfg=cfg)
+            results = judge.run_judges(
+                [{k: v for k, v in it.items() if k not in ("row_index", "judge_kind")}
+                 for it in items],
+                concurrency=int(cfg["JUDGE_CONCURRENT"]))
+            records = _apply_verdicts(rows, items, results, concept=concept)
+        except BaseException:
+            for row in rows:
+                runio.write_row(UNJUDGED_FILE, dict(row, layer=int(layer),
+                                                    dose=round(float(dose), 6)))
+            _log(f"   judging FAILED at L{layer}@{dose:.3f}; {len(rows)} generations kept in "
+                 f"{UNJUDGED_FILE} rather than discarded")
+            raise
 
     for row in rows:
         runio.write_row(RESPONSES_FILE, row)
@@ -969,9 +975,16 @@ def _summarise_cell(rows: Sequence[dict], *, layer: int, dose: float, alpha: flo
         # a garlic listicle in reply to "what is a computer" is. Coherence cannot see that; a
         # story cannot stop being a story, but an answer can stop answering.
         explain_influence=(battery.mean_se(exp_infl) if exp_infl else None),
+        # Gated on `exp_coh`, not on `exp`. The denominator stays `len(exp)` -- an explain row the
+        # judge did not mark on-task counts against the rate, which is the point of the channel --
+        # but with NOTHING judged this counted every row as a failure and reported 0.0, a reading
+        # indistinguishable from "the model stopped answering". Under JUDGE_ENABLED=0 that made
+        # every cell fail an `explain_answered >= 0.75` sanity filter. No judged rows is no
+        # reading, the same as every other judged measure here.
         explain_answered=(battery.rate(sum(1 for r in exp
                                            if ((r.get("judged") or {}).get("coherence") or {})
-                                           .get("on_task")), len(exp), z) if exp else None),
+                                           .get("on_task")), len(exp), z)
+                          if (exp and exp_coh) else None),
         explain_correct=(battery.rate(sum(1 for r in exp if r.get("capability_correct")),
                                       len(exp), z) if exp else None),
         explain_coherence=(battery.mean_se(exp_coh) if exp_coh else None),
@@ -1059,32 +1072,58 @@ def run_sweep(concept: str, cfg: dict | None = None) -> dict:
     if ctx.run_dir is None or not ctx.concept:
         raise RuntimeError("call m3.sweep.open_run() before run_sweep()")
 
-    layers = config.layers_for_depth(int(ctx.n_layers), cfg)
     fractions = [float(f) for f in cfg["DOSE_FRACTIONS"]]
+    explicit = config.parse_cells(cfg.get("CELLS", ""))
+    judging = bool(int(cfg.get("JUDGE_ENABLED", 1)))
+
+    # Refuse the one combination that cannot work, here rather than an hour in. Phase 1 bisects
+    # on judged coherence; with no judge it has nothing to ask. CELLS skips Phase 1 outright,
+    # so it is the only way to run judge-free.
+    if not judging and not explicit:
+        raise RuntimeError(
+            "JUDGE_ENABLED=0 needs CELLS set. The boundary search bisects on judged coherence, "
+            "so without a judge it cannot run; CELLS supplies absolute doses and skips it.")
+
+    if explicit:
+        layers = sorted({int(l) for l, _ in explicit})
+        bad = [l for l in layers if l >= int(ctx.n_layers)]
+        if bad:
+            raise RuntimeError(
+                f"CELLS names layers {bad} but the model has {int(ctx.n_layers)} layers")
+    else:
+        layers = config.layers_for_depth(int(ctx.n_layers), cfg)
     t0 = time.time()
 
     _log(f"PHASE 0  calibrate   {len(layers)} layers L{layers[0]}-L{layers[-1]}")
     cal = calibrate(concept, layers, cfg)
 
     # ---- Phase 1 -----------------------------------------------------------------------
-    _log(f"PHASE 1  boundary    {int(cfg['BOUNDARY_PROBES'])} probes/layer, judged coherence")
-    have = _done(BOUNDARY_FILE, ("layer",))
-    boundaries: dict[int, dict] = {int(r["layer"]): r for r in runio.read_rows(BOUNDARY_FILE)}
-    for layer in layers:
-        if (runio._key_value(layer),) in have:
-            continue
-        try:
-            row = find_boundary(layer, concept, cfg)
-        except m2config.Unreachable as exc:
-            # Reachability is decided arithmetically before the ladder starts, so this should be
-            # impossible -- and `impossible` is exactly what the ALPHA_CEIL round-trip was until
-            # it was measured. One layer must not be able to end a sweep that has already paid
-            # for Phase 0; record it and carry on, the same way Phase 2 does.
-            row = dict(layer=int(layer), dose_max=None, outcome="unreachable",
-                       probes=[], note=f"alpha_for refused the starting dose: {exc}")
-            runio.write_row(BOUNDARY_FILE, row)
-        boundaries[int(layer)] = row
-        _log(f"   L{layer:<3} dose_max={row['dose_max']}  {row['outcome']}")
+    boundaries: dict[int, dict] = {}
+    if explicit:
+        # Nothing to search for: the doses are given as absolute values. This is also what takes
+        # every judge out of the causal path -- Phase 1 is the only place a judged number decides
+        # what gets measured, and it does not run.
+        _log(f"PHASE 1  SKIPPED     {len(explicit)} explicit cells, doses given, no boundary "
+             f"search and no judge in the measurement path")
+    else:
+        _log(f"PHASE 1  boundary    {int(cfg['BOUNDARY_PROBES'])} probes/layer, judged coherence")
+        have = _done(BOUNDARY_FILE, ("layer",))
+        boundaries = {int(r["layer"]): r for r in runio.read_rows(BOUNDARY_FILE)}
+        for layer in layers:
+            if (runio._key_value(layer),) in have:
+                continue
+            try:
+                row = find_boundary(layer, concept, cfg)
+            except m2config.Unreachable as exc:
+                # Reachability is decided arithmetically before the ladder starts, so this should
+                # be impossible -- and `impossible` is exactly what the ALPHA_CEIL round-trip was
+                # until it was measured. One layer must not be able to end a sweep that has
+                # already paid for Phase 0; record it and carry on, the same way Phase 2 does.
+                row = dict(layer=int(layer), dose_max=None, outcome="unreachable",
+                           probes=[], note=f"alpha_for refused the starting dose: {exc}")
+                runio.write_row(BOUNDARY_FILE, row)
+            boundaries[int(layer)] = row
+            _log(f"   L{layer:<3} dose_max={row['dose_max']}  {row['outcome']}")
 
     # A layer that ran out of probes above the floor is not a layer that broke -- it is a layer
     # the search stopped short on, and the difference decides whether its absence from Phase 2 is
@@ -1109,16 +1148,19 @@ def run_sweep(concept: str, cfg: dict | None = None) -> dict:
     # ---- Phase 2 -----------------------------------------------------------------------
     plan: list[tuple[int, float]] = []
     skipped: list[dict] = []
-    for layer in layers:
-        row = boundaries.get(int(layer))
-        if not row or row.get("dose_max") is None:
-            # Named, not silent. Work a run did not do reads later as work it did and found
-            # nothing in -- which is how M2's empty operating point was nearly read as a null.
-            skipped.append(dict(layer=int(layer),
-                                reason=(row or {}).get("outcome", "no_boundary_row")))
-            continue
-        for frac in fractions:
-            plan.append((int(layer), round(float(row["dose_max"]) * frac, 6)))
+    if explicit:
+        plan = [(int(l), round(float(d), 6)) for l, d in explicit]
+    else:
+        for layer in layers:
+            row = boundaries.get(int(layer))
+            if not row or row.get("dose_max") is None:
+                # Named, not silent. Work a run did not do reads later as work it did and found
+                # nothing in -- which is how M2's empty operating point was nearly read as a null.
+                skipped.append(dict(layer=int(layer),
+                                    reason=(row or {}).get("outcome", "no_boundary_row")))
+                continue
+            for frac in fractions:
+                plan.append((int(layer), round(float(row["dose_max"]) * frac, 6)))
 
     have = _done(CELLS_FILE, ("layer", "dose"))
     todo = [(l, d) for l, d in plan

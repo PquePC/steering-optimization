@@ -95,6 +95,29 @@ SETTINGS: dict[str, Any] = dict(
     # transition. The 0.90 cell was also where the three over-steered cells landed.
     DOSE_FRACTIONS=(0.35, 0.45, 0.55, 0.65, 0.75, 0.85),
 
+    # An EXPLICIT cell list, as absolute doses. Empty means the normal behaviour: sweep
+    # DOSE_FRACTIONS of each layer's measured `dose_max`.
+    #
+    # Format: "layer:dose,layer:dose,..." -- for example "29:0.0833,41:0.1587".
+    #
+    # This exists because the grid cannot express a set of cells that uses a DIFFERENT dose
+    # fraction at each layer, and re-measuring the cells a previous sweep selected is exactly
+    # that shape. The alternative was one pass per fraction, six model loads to save one hour
+    # of measurement.
+    #
+    # Two consequences, both deliberate:
+    #
+    #   * Phase 1 is SKIPPED entirely. The doses are given, so no boundary is needed -- and
+    #     since Phase 1 is the only place a judge decides anything, a run with CELLS set has no
+    #     judge in its causal path at all, whatever JUDGE_ENABLED says.
+    #   * `dose_max` is never measured, so nothing downstream can express these doses as a
+    #     fraction of anything. That is the point: the doses come from the run that measured
+    #     them, and re-deriving them here would let a new boundary search move them.
+    #
+    # The layers are taken from the list itself, so LAYER_STRIDE and depth selection are
+    # ignored when this is set.
+    CELLS="",
+
     # Phase 1 descends from the highest reachable dose, multiplying by BOUNDARY_STEP each time,
     # and stops at the first dose the judge calls coherent.
     #
@@ -307,6 +330,23 @@ SETTINGS: dict[str, Any] = dict(
     # 5. JUDGES
     # =================================================================================
 
+    # Whether any judge runs at all. 0 generates the full battery, writes every response to
+    # disk with its mechanical measures, and attaches no verdicts.
+    #
+    # A cell measured this way reports `identification`, `effectiveness`, `coherence` and
+    # `on_task` as **null** -- not as zero. `_summarise_cell` already returns None for a judged
+    # measure with no judged rows behind it, so nothing here fabricates a reading; the numbers
+    # come from judging `responses_transcripts.jsonl` afterwards, off the pod.
+    #
+    # The mechanical measures are unaffected: capability, explain-correct, degeneration,
+    # emptiness, concept mentions and response length are all computed without a judge and are
+    # written exactly as they always were.
+    #
+    # This does NOT disable the boundary search, which bisects on judged coherence and would
+    # fail with no judge to ask. Set CELLS as well, which skips Phase 1 outright -- and see the
+    # `check` in `run_sweep`, which refuses the combination rather than discovering it halfway.
+    JUDGE_ENABLED=1,
+
     JUDGE_MODEL="openai/gpt-4.1-mini",
 
     # Concurrent judge calls. The rate limiter backs the whole pool off together when the
@@ -437,6 +477,42 @@ def judge_calls_per_cell(cfg: dict | None = None) -> int:
     # on_task is the over-steer signal and only an explain prompt can fire it.
     return int(cfg["N_IDENTIFY"] + cfg["N_EFFECT"] + cfg["N_COHERENCE"]
                + cfg["N_SELF_REPORT"] + 2 * cfg["N_EXPLAIN"])
+
+
+def parse_cells(raw: Any) -> list[tuple[int, float]]:
+    """Parse the CELLS setting into (layer, dose) pairs. Empty input means "not in use".
+
+    Raises on anything malformed rather than silently measuring a different grid: a typo that
+    drops a cell reads downstream as a layer with no operating point, which is a finding-shaped
+    hole. Duplicates are collapsed, and the result is sorted so two spellings of the same set
+    produce the same plan.
+    """
+    if raw is None:
+        return []
+    if isinstance(raw, (list, tuple)):
+        pairs = [(int(l), float(d)) for l, d in raw]
+    else:
+        text = str(raw).strip()
+        if not text:
+            return []
+        pairs = []
+        for chunk in text.replace(";", ",").split(","):
+            chunk = chunk.strip()
+            if not chunk:
+                continue
+            if ":" not in chunk:
+                raise ValueError(f"CELLS entry {chunk!r} is not layer:dose")
+            lay, dose = chunk.split(":", 1)
+            try:
+                pairs.append((int(lay.strip()), float(dose.strip())))
+            except ValueError as exc:
+                raise ValueError(f"CELLS entry {chunk!r} is not layer:dose") from exc
+    for lay, dose in pairs:
+        if lay < 0:
+            raise ValueError(f"CELLS layer {lay} is negative")
+        if not (dose > 0.0):
+            raise ValueError(f"CELLS dose {dose} for layer {lay} is not positive")
+    return sorted({(int(l), round(float(d), 6)) for l, d in pairs})
 
 
 def config_hash(cfg: dict | None = None) -> str:

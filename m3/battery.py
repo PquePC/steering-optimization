@@ -60,6 +60,37 @@ TASK_PROMPTS: list[dict] = [
     dict(id="task_advice",    text="Give me some advice for someone starting a new job."),
     dict(id="task_explain",   text="What makes a good explanation?"),
     dict(id="task_water",     text="Tell me a fact related to water."),
+
+    # ---- added for the high-N re-measurement -------------------------------------------
+    # `N_EFFECT` slices this list, so a run asking for more samples than there are prompts
+    # silently measures fewer. Twenty-two exist so that N_EFFECT=22 means twenty-two.
+    #
+    # Effectiveness is a claim about ordinary generated text, not about four particular
+    # questions, so the samples are twenty-two DISTINCT prompts rather than repeats of a few:
+    # repeats would sample generation variance at one prompt and report it as if it were the
+    # spread across prompts.
+    #
+    # Chosen to be neutral for the concepts actually being run. Nothing here is about food,
+    # cooking, plants, bulbs or pungency (Garlic), and nothing about fabric, weaving, texture,
+    # smoothness or luxury (Silk) -- a prompt adjacent to the concept makes a legitimate
+    # influence score indistinguishable from topical overlap, which is the same reasoning the
+    # explain prompts already carry. Registers are spread the same way as the originals:
+    # narrative, descriptive, expository, introspective, list.
+    dict(id="task_argument",  text="Make the case for changing your mind about something."),
+    dict(id="task_city",      text="Describe a city at night."),
+    dict(id="task_letter2",   text="Write a short note apologising for being late."),
+    dict(id="task_machine",   text="Explain how a simple machine works."),
+    dict(id="task_memory",    text="Describe a memory someone might keep for a long time."),
+    dict(id="task_numbers",   text="Say something interesting about numbers."),
+    dict(id="task_question",  text="Ask me three questions you would find interesting."),
+    dict(id="task_sound",     text="Describe a sound and what makes it distinctive."),
+    dict(id="task_journey",   text="Describe a journey from beginning to end."),
+    dict(id="task_disagree",  text="Describe two people disagreeing about something small."),
+    dict(id="task_rule",      text="Explain a rule that seems arbitrary but is not."),
+    dict(id="task_list2",     text="List five things that are easy to overlook."),
+    dict(id="task_time",      text="Describe how an hour can feel long or short."),
+    dict(id="task_build",     text="Describe how you would build something from scratch."),
+    dict(id="task_quiet",     text="Describe a place where very little happens."),
 ]
 
 # Held out from the sweep, for the confirmation phase. A cell selected as best on one prompt set
