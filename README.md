@@ -27,6 +27,7 @@ same question, that is a defect — say so.
 | What is the research question this serves? | [`docs/RESEARCH-PROPOSAL.md`](docs/RESEARCH-PROPOSAL.md) |
 | What patterns hold across concepts? | [`docs/FINDINGS.md`](docs/FINDINGS.md) |
 | What has actually been measured? | [`docs/RESULTS-GARLIC.md`](docs/RESULTS-GARLIC.md), [`docs/RESULTS-SILK.md`](docs/RESULTS-SILK.md), [`docs/RESULTS-WRISTS.md`](docs/RESULTS-WRISTS.md) — M2's is [`docs/RESULTS.md`](docs/RESULTS.md) |
+| What did Qwen3-32B do, and how does it compare to Gemma? | [`docs/RESULTS-QWEN.md`](docs/RESULTS-QWEN.md) |
 | What was decided, by whom, and what has been done? | [`docs/DECISIONS.md`](docs/DECISIONS.md) |
 | What went wrong before, and why did nothing catch it? | [`docs/DEBUG-LOG.md`](docs/DEBUG-LOG.md) |
 | What is still undecided or unbuilt? | [`docs/TODO.md`](docs/TODO.md) |
@@ -34,6 +35,7 @@ same question, that is a defect — say so.
 | What is the write-up, and what still blocks it? | [`docs/ARTICLE.md`](docs/ARTICLE.md) |
 | Which source grounds which measurement? | [`BIBLIOGRAPHY.md`](BIBLIOGRAPHY.md) |
 | How would detection be measured without asking the model? | [`docs/M4-PROPOSAL.md`](docs/M4-PROPOSAL.md) |
+| Why the instrument is not trusted yet, and what would fix it | [`docs/M5-PROPOSAL.md`](docs/M5-PROPOSAL.md) |
 | What am I, an agent, allowed to do here? | [`CLAUDE.md`](CLAUDE.md) / [`AGENTS.md`](AGENTS.md) |
 | I am the coding agent — what is my current task? | [`docs/handoff/`](docs/handoff/) |
 

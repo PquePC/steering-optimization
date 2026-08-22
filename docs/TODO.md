@@ -12,6 +12,18 @@ See [`SPECIFICATION.md`](SPECIFICATION.md) or the inventory in
 
 ---
 
+## The next milestone is logged, not scoped
+
+**M5 — [`M5-PROPOSAL.md`](M5-PROPOSAL.md), written 2026-08-22.** After the 2026-08-21
+re-analysis the instrument is not trusted enough to carry a result, for two separate reasons: the
+measured grid is too sparse per layer to draw a per-layer curve, and every number is a judge
+scoring generated text on a quantity that turns out to be nearly binary. M5 is where a rectangular
+dose ladder and three report-independent readouts — logit lens, J-lens, cross-concept linear
+probes — would land. **Nothing in it is scheduled and nothing in it is built.** Deferred until
+after the write-up.
+
+---
+
 ## Decided 2026-08-12, not yet built
 
 Each of these has a step-by-step task document under [`handoff/`](handoff/), and **each task
