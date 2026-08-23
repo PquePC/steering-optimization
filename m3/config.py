@@ -473,6 +473,44 @@ def check_boundary_window_fits(cfg: dict | None = None) -> int:
     return window
 
 
+# Which channels draw from a fixed list of DISTINCT prompts, and which list. `N_IDENTIFY` and
+# `N_SELF_REPORT` are not here: those two repeat one question with a different trial number, so
+# their supply is unbounded and their n is a number of samples rather than a number of prompts.
+_CHANNEL_SUPPLY: tuple[tuple[str, str], ...] = (
+    ("N_EFFECT", "TASK_PROMPTS"),
+    ("N_EXPLAIN", "EXPLAIN_PROMPTS"),
+    ("N_CAPABILITY", "CAPABILITY_PROMPTS"),
+)
+
+
+def check_prompt_supply(cfg: dict | None = None) -> dict[str, int]:
+    """Raise if a channel asks for more distinct prompts than the battery can supply.
+
+    `battery_prompts` builds these channels by SLICING a fixed list -- `TASK_PROMPTS[:N_EFFECT]`
+    -- so asking for more than exist returns fewer, silently. `check_battery_fits(observed=...)`
+    does catch the resulting mismatch, but only once `battery_prompts` has run, which is after
+    the model is loaded: `--set N_EFFECT=66` priced a 194-prompt battery, printed a plan, and
+    would have died several minutes into the run on a cap it could have been told about
+    immediately. That is the 2026-08-19 failure again with a different setting.
+
+    Returns the supply per channel, so a caller can report the ceiling rather than only refuse.
+    """
+    from . import battery                                   # noqa: PLC0415 (no cycle: battery
+                                                            # imports nothing from this package)
+    cfg = CONFIG if cfg is None else cfg
+    supply = {name: len(getattr(battery, attr)) for name, attr in _CHANNEL_SUPPLY}
+    over = [(name, int(cfg[name]), supply[name])
+            for name, _ in _CHANNEL_SUPPLY if int(cfg[name]) > supply[name]]
+    if over:
+        detail = "; ".join(f"{n}={want} but only {have} prompts exist" for n, want, have in over)
+        raise ValueError(
+            f"{detail}. These channels sample DISTINCT prompts, one generation each -- their n "
+            "is a number of questions, not a number of draws, and the spread they report is the "
+            "spread across questions. Raising one past its list measures fewer and reports the "
+            "same number. Add prompts to m3.battery, or lower the setting.")
+    return supply
+
+
 def battery_chunks(cfg: dict | None = None) -> list[int]:
     """The generation calls one cell's battery becomes, in order.
 
@@ -501,6 +539,7 @@ def check_battery_fits(cfg: dict | None = None, *, observed: int | None = None) 
     arithmetic, so the estimate can never quietly drift from the battery it is estimating.
     """
     cfg = CONFIG if cfg is None else cfg
+    check_prompt_supply(cfg)
     size = battery_size(cfg)
     if observed is not None and int(observed) != size:
         raise AssertionError(

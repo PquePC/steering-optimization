@@ -710,3 +710,36 @@ def test_the_split_setting_is_hashed():
     a = dict(config.SETTINGS, N_IDENTIFY=200, GEN_BATCH_MAX=64, ALLOW_BATTERY_SPLIT=1)
     b = dict(a, ALLOW_BATTERY_SPLIT=0)
     assert config.config_hash(a) != config.config_hash(b)
+
+
+def test_a_channel_cannot_ask_for_more_prompts_than_exist():
+    """`battery_prompts` builds these channels by SLICING a fixed list, so asking for more than
+    exist returns fewer and reports the number asked for. `check_battery_fits(observed=...)`
+    catches the mismatch, but only after the model is loaded -- `--set N_EFFECT=66` priced a
+    194-prompt battery, printed a plan, and would have died minutes into the run. The dry run
+    has to fail on everything the real run fails on."""
+    for name, want in (("N_EFFECT", 66), ("N_EXPLAIN", 9), ("N_CAPABILITY", 7)):
+        cfg = dict(config.SETTINGS, **{name: want})
+        with pytest.raises(ValueError, match="prompts exist"):
+            config.check_prompt_supply(cfg)
+        with pytest.raises(ValueError, match="prompts exist"):
+            config.check_battery_fits(cfg)
+
+
+def test_the_repeated_channels_have_no_supply_ceiling():
+    """`identify` and `self_report` repeat one question with a different trial number, so their
+    n is a number of draws and nothing caps it. Confusing the two kinds of n is how an error bar
+    gets quoted for a sample size the battery cannot produce."""
+    supply = config.check_prompt_supply(dict(config.SETTINGS, N_IDENTIFY=500, N_SELF_REPORT=500))
+    assert set(supply) == {"N_EFFECT", "N_EXPLAIN", "N_CAPABILITY"}
+    assert supply["N_EFFECT"] == len(battery.TASK_PROMPTS)
+
+
+def test_the_supply_ceiling_is_the_list_the_battery_actually_slices():
+    """Pinned to the lists themselves, so adding prompts raises the ceiling automatically and
+    renaming one fails here rather than silently uncapping the channel."""
+    assert config.check_prompt_supply(dict(config.SETTINGS)) == {
+        "N_EFFECT": len(battery.TASK_PROMPTS),
+        "N_EXPLAIN": len(battery.EXPLAIN_PROMPTS),
+        "N_CAPABILITY": len(battery.CAPABILITY_PROMPTS),
+    }

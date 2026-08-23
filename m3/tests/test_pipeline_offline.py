@@ -878,3 +878,33 @@ def test_freerun_will_not_print_generations_for_the_harmful_arm(run_dir, capsys)
                            "--prompt", "hi"])
     assert rc == freerun.EXIT_CONFIG
     assert "HARMFUL" in capsys.readouterr().out
+
+
+def test_a_channel_can_be_switched_off_entirely(run_dir):
+    """`N_SELF_REPORT=0` drops the unprefilled detection question from the run.
+
+    A channel set to zero has to mean "do not measure this", not "measure it badly" and not a
+    crash three phases in. The battery must shrink by exactly that many prompts, no response may
+    carry the channel, no judge call may be issued for it, and every cell must still be written
+    with every other measure intact -- a zero denominator elsewhere would be the wiring dropping
+    a measure rather than the operator dropping one.
+    """
+    with fake_gpu() as calls:
+        assert m3run.main(["--concept", "Garlic", "--set", "N_SELF_REPORT=0"]) == m3run.EXIT_OK
+    assert calls["generations"] > 0
+
+    cells = _load(run_dir, "cells.jsonl")
+    resp = _load(run_dir, "responses_transcripts.jsonl")
+    assert cells and resp
+    assert not [r for r in resp if r["channel"] == "self_report"]
+    assert not [j for j in _load(run_dir, "judge_calls.jsonl") if j["judge"] == "self_report"]
+
+    # Against the live config the run used, not against SETTINGS -- the harness shrinks the
+    # battery, so mixing the two compares a real run to a configuration nobody ran.
+    live = config.battery_size(config.CONFIG)
+    assert len(resp) == len(cells) * live
+    assert config.battery_size(dict(config.CONFIG, N_SELF_REPORT=7)) == live + 7
+
+    for cell in cells:
+        for field in ("identification", "effectiveness", "coherence", "capability"):
+            assert cell[field] is not None and cell[field].get("n"), field
