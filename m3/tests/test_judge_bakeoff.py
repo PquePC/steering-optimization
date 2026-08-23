@@ -525,3 +525,33 @@ def test_limit_spreads_across_judges_rather_than_taking_the_first_n(tmp_path, mo
     rows = [json.loads(l) for l in (out / "verdicts_smoke.jsonl").open(encoding="utf-8")]
     assert len(rows) == 6
     assert {r["judge"] for r in rows} == {"identify", "effect"}
+
+
+def test_a_lopsided_categorical_field_reports_its_base_rate():
+    """Kappa subtracts the agreement two random labellers with these marginals would reach, so
+    on a 99/1 field that subtraction is nearly the whole statistic: five flips in 200 dropped
+    `coherence.on_task` to kappa 0.239 while raw agreement was 0.970, and the decision table
+    called it a FAIL. The base rate has to be on the same line as the kappa, or the reader has
+    to recompute it by hand to know whether a FAIL is a finding."""
+    reference = [{"on_task": True}] * 198 + [{"on_task": False}] * 2
+    candidate = [{"on_task": True}] * 193 + [{"on_task": False}] * 7
+    got = bakeoff._agreement(reference, candidate, "on_task", "categorical")
+    assert got["ref_majority"] == pytest.approx(0.99)
+    assert got["agreement"] > 0.9
+    line = bakeoff._fmt("on_task", got)
+    assert "base=0.99" in line and "kappa fragile" in line
+
+    balanced_ref = [{"on_task": True}] * 100 + [{"on_task": False}] * 100
+    balanced_cand = [{"on_task": True}] * 100 + [{"on_task": False}] * 100
+    ok = bakeoff._agreement(balanced_ref, balanced_cand, "on_task", "categorical")
+    assert "kappa fragile" not in bakeoff._fmt("on_task", ok)
+
+
+def test_the_self_report_addendum_rules_out_the_frame_of_the_question():
+    """Both judges answered `named` with the subject of the question rather than a concept --
+    gpt-4.1-mini with "injection", DeepSeek with "trial 13". The addendum has to name that case,
+    because the pipeline prompt's "write NONE if no concept stands out" was not winning."""
+    text = bakeoff.SELF_REPORT_ADDENDUM
+    for phrase in ("injection", "internal state", "trial 13", "NONE"):
+        assert phrase in text
+    assert "Do not reach for the nearest noun." in text
