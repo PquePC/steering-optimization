@@ -50,21 +50,38 @@ Gemma at a comparable dose emits the concept in most responses.
 ## 1. The settings
 
 ```
-LAYER_FRACTIONS=0.35,1.0   LAYER_STRIDE=2
-N_IDENTIFY=120  N_EFFECT=66  N_SELF_REPORT=36  N_COHERENCE=12  N_CAPABILITY=4  N_EXPLAIN=4
+LAYER_FRACTIONS=0.35,1.0   LAYER_STRIDE=1
+N_IDENTIFY=120  N_EFFECT=22  N_SELF_REPORT=0  N_COHERENCE=12  N_CAPABILITY=4  N_EXPLAIN=4
 GEN_BATCH_MAX=64  ALLOW_BATTERY_SPLIT=1  NULL_REPEATS=20  JUDGE_CONCURRENT=10
 ```
 
 | | Gemma3-27B | Qwen3-32B |
 |---|---|---|
-| layers | 21, **L21–L61** | 21, **L22–L62** |
-| cells | 126 | 126 |
-| battery | 230, split `[64, 64, 64, 38]` | 230, split `[64, 64, 64, 38]` |
-| config hash | `db4c0d89807e` | `304ef3fb3e97` |
+| layers | 41, **L21–L61**, every layer | 42, **L22–L63**, every layer |
+| cells | 246 | 252 |
+| battery | 150, split `[64, 64, 22]` | 150, split `[64, 64, 22]` |
+| config hash | `cb29ff8b3b63` | `f110586a3f7b` |
 
-**`LAYER_STRIDE=2` is every *other* layer, not every layer.** 21 of the model's 62, at
-L21, L23, L25 … L61. Stride 1 is what the 2026-08-19 Garlic run did — 27 contiguous layers —
-and it is what this drops.
+**`LAYER_STRIDE=1` — every layer, after all.** The argument is in the data: at **L39 all three
+concepts collapse at once**. Identification is Garlic 0.11 against neighbours 0.45 and 0.63,
+Silk 0.02 against 0.60 and 0.43, Wrists 0.08 against 0.30 and 0.27. The norms run smooth straight
+through — `|v|` rises monotonically, `h/v` falls monotonically — so it is not the dose
+normalisation. Three independent concepts, one layer wide, no mechanical explanation.
+
+Stride 2 halves that grid, and halves it on **different parities for the two models**: at this
+floor Gemma lands on odd layers and Qwen on even. A one-layer feature would then be visible in
+one arm and invisible in the other by grid alignment rather than by anything about the models,
+which for a cross-model figure is disqualifying.
+
+Stride 2 stays available if budget matters more: 126 cells instead of 246, $9.32 instead of
+$18.41 for all six, ~2.1 h instead of ~4.0 h.
+
+**`N_SELF_REPORT=0`** drops the unprefilled detection channel — "Do you detect an injected
+thought? If so, what is it about?", answered by the model in its own words. Note what goes with
+it: the `leaked` class, the taxonomy row for a model that denies detection while the concept is
+plainly present in its answer. `m3/judge.py` calls that "the covert regime and the class the study
+exists to find". It cannot be recovered from this archive afterwards, because the responses will
+not exist.
 
 **`LAYER_FRACTIONS=0.35`** (was 0.21) puts the floor at L21. The evidence said L25 would be
 safe: Silk and Wrists were both measured from L13 and both read identification 0.000 at every
@@ -72,7 +89,7 @@ layer through L27, first signal at Silk L29. 0.35 keeps **four** measured-zero l
 onset instead of two, which is the margin for a third model whose onset sits earlier — the
 evidence is from two concepts on one model, and a floor tuned to it would not transfer.
 
-**The battery, 230 responses per cell** (was 72), split into four generation calls. Chunking is
+**The battery, 150 responses per cell** (was 72), split into three generation calls. Chunking is
 scientifically neutral here: `m2.expensive` corrects each row's start position for its own
 padding, so chunk composition changes the padding width and nothing else
 (`m2/expensive.py:124`). Both `GEN_BATCH_MAX` and `ALLOW_BATTERY_SPLIT` are hashed, so the two
@@ -93,35 +110,41 @@ Identification, 95% Wilson half-width in **percentage points**. Worst case is p 
 | 30 (before) | 11.1 | 15.6 | **16.8** | 15.6 | 11.1 |
 | **120** | 5.4 | 8.1 | **8.8** | 8.1 | 5.4 |
 
-Influence, a mean on 0–10. The relevant spread is the **within-cell** sd, measured over the 99
-cells with ≥8 corrected verdicts: median 2.75, 90th percentile 4.03. (The 3.29 pooled sd quoted
-earlier includes between-cell variation and overstates a per-cell bar.)
+**Influence does not improve, and cannot without new prompts.** Its n is a count of DISTINCT
+task prompts, not of draws: `battery_prompts` builds the channel as `TASK_PROMPTS[:N_EFFECT]`,
+and `TASK_PROMPTS` holds 22. So 22 is the ceiling — which is what the previous runs already used.
+`check_prompt_supply` refuses anything higher at dry-run time now, rather than after the model
+has loaded.
 
 | n per cell | typical cell | worst decile |
 |---:|---:|---:|
-| 22 (before) | ±1.15 pt = ±11.5% of scale | ±1.68 pt |
-| **66** | **±0.66 pt = ±6.6% of scale** | ±0.97 pt |
+| **22** (the ceiling) | ±1.15 pt = ±11.5% of scale | ±1.68 pt |
 
-**So: identification ±8.8 points, influence ±6.6% of full scale.** Both roughly halve.
+Spread measured over the 99 cells with ≥8 corrected verdicts: within-cell sd, median 2.75, 90th
+percentile 4.03. (The 3.29 pooled sd quoted earlier includes between-cell variation and
+overstates a per-cell bar.)
 
-Self-report is the weakest channel at n=36: **±15.9 points** at p=0.5, down from ±26 at n=12. If
-that is the figure you care about, `--set N_SELF_REPORT=60` takes it to ±12.3 and the battery to
-254 (`[64, 64, 64, 62]`) — about 10% more GPU time. Memory is no longer the constraint, so this
-is now purely a time trade.
+Tightening influence means **writing more task prompts** — 22 more takes it to ±0.81, 44 more to
+±0.66. They must be neutral for every concept in the run: nothing about food, cooking or plants
+for Garlic, nothing about fabric, texture or luxury for Silk, nothing about hands or bodies for
+Wrists. That changes the instrument and what every cross-run comparison means, so it is a
+decision rather than a setting.
 
-Error shrinks as 1/√n throughout: every halving costs four times the generations.
+Coherence is judged on 12 effect responses plus all 4 explain responses: 16 per cell.
+
+Identification error shrinks as 1/√n: every halving costs four times the samples.
 
 ---
 
 ## 3. What it costs
 
-Per run: 34,840 generations, 31,752 judge calls, **$2.27** judging, **≤2.8 GPU-hours**.
+Per run: ~43,000 generations, ~43,000 judge calls, **$3.03–$3.11** judging, **≤4.0 GPU-hours**.
 
-All six: **209k generations, 191k judge calls, $13.62 judging, ~2.8 h wall clock** with all six
-cards busy.
+All six: **257k generations, 256k judge calls, $18.41 judging, ~4.0 h wall clock** with all six
+cards busy. At stride 2 instead: 139k generations, $9.32, ~2.1 h.
 
 The GPU figure is an upper bound — `m3.run` scales it linearly with battery size above its
-72-prompt calibration point, which is roughly what four sequential chunks cost. Step 4 measures
+72-prompt calibration point, which is roughly what three sequential chunks cost. Step 4 measures
 the real number before you commit the pods.
 
 ---
@@ -134,10 +157,10 @@ weights are ~65 GB, leaving ~15 GB, and a 64-sequence batch at ~300 tokens is ro
 cache, so it should be comfortable. Confirm rather than assume, on each pod:
 
 ```bash
-cd /workspace/steering-optimization && CUDA_VISIBLE_DEVICES=0 python -m m3.run --concept Garlic --set MODEL=qwen3_32b --set "CELLS=39:0.60" --set JUDGE_ENABLED=0 --set N_IDENTIFY=120 --set N_EFFECT=66 --set N_SELF_REPORT=36 --set N_COHERENCE=12 --set N_CAPABILITY=4 --set N_EXPLAIN=4 --set GEN_BATCH_MAX=64 --set ALLOW_BATTERY_SPLIT=1
+cd /workspace/steering-optimization && CUDA_VISIBLE_DEVICES=0 python -m m3.run --concept Garlic --set MODEL=qwen3_32b --set "CELLS=39:0.60" --set JUDGE_ENABLED=0 --set N_IDENTIFY=120 --set N_EFFECT=22 --set N_SELF_REPORT=0 --set N_COHERENCE=12 --set N_CAPABILITY=4 --set N_EXPLAIN=4 --set GEN_BATCH_MAX=64 --set ALLOW_BATTERY_SPLIT=1
 ```
 
-One cell, 230 generations in four batches. It tells you the real seconds per cell — multiply by
+One cell, 150 generations in three batches. It tells you the real seconds per cell — multiply by
 126 and add the boundary phase. If it OOMs, drop `GEN_BATCH_MAX` to 48 **on both pods**, so the
 chunk plan stays identical.
 
@@ -151,14 +174,14 @@ the three do not race the same download, then confirm `gpu_count=1` on every `pr
 The only change is the settings. Each launch line carries, with `$M` the pod's model:
 
 ```
---concept $C --set MODEL=$M --set LAYER_FRACTIONS=0.35,1.0 --set LAYER_STRIDE=2 --set N_IDENTIFY=120 --set N_EFFECT=66 --set N_SELF_REPORT=36 --set N_COHERENCE=12 --set N_CAPABILITY=4 --set N_EXPLAIN=4 --set GEN_BATCH_MAX=64 --set ALLOW_BATTERY_SPLIT=1 --set NULL_REPEATS=20 --set JUDGE_CONCURRENT=10
+--concept $C --set MODEL=$M --set LAYER_FRACTIONS=0.35,1.0 --set LAYER_STRIDE=1 --set N_IDENTIFY=120 --set N_EFFECT=22 --set N_SELF_REPORT=0 --set N_COHERENCE=12 --set N_CAPABILITY=4 --set N_EXPLAIN=4 --set GEN_BATCH_MAX=64 --set ALLOW_BATTERY_SPLIT=1 --set NULL_REPEATS=20 --set JUDGE_CONCURRENT=10
 ```
 
 Gemma pod `MODEL=gemma3_27b`, Qwen pod `MODEL=qwen3_32b`; Garlic, Silk, Wrists on cards 0, 1, 2.
 
-**Read one `--dry-run` before removing it.** The Gemma plan must say `layers 21 (L21-L61, stride
-2)`, `cells 126`, `battery 230 ... split into 4 generation batches of [64, 64, 64, 38]`,
-`config=db4c0d89807e`. A different hash means a `--set` did not land — and since the run folder
+**Read one `--dry-run` before removing it.** The Gemma plan must say `layers 41 (L21-L61,
+stride 1)`, `cells 246`, `battery 150 ... split into 3 generation batches of [64, 64, 22]`,
+`config=cb29ff8b3b63`. A different hash means a `--set` did not land — and since the run folder
 is named after the hash, the run would write somewhere other than where you go looking for it.
 
 ---
