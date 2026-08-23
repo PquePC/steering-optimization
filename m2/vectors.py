@@ -248,6 +248,13 @@ def _cache_identity(concept: str, words: Sequence[str], meta: dict) -> dict:
         n_baseline_words=len(words),
         baseline_sha=_sha1_text("|".join(words)),
         extractor="vector_utils.extract_concept_vector_with_baseline",
+        # The chat-template kwargs the EXTRACTION prompt is rendered with. Before 2026-08-23
+        # the extractor rendered with the tokenizer's defaults while generation rendered with
+        # these, so on Qwen3 the vector was measured at a position the injected pass never saw.
+        # In the cache identity because vectors extracted under the old rendering are a
+        # different measurement, and reusing one would reproduce the bug from disk.
+        chat_template_kwargs=json.dumps(
+            sorted(model.template_kwargs(_run().tok, _run().config).items())),
         template=meta["template"],
         token_idx=meta["token_idx"],
         normalize=meta["normalize"],
@@ -351,11 +358,14 @@ def extract_all_layers(concept: str, layers: list[int]) -> dict[int, "torch.Tens
 
     if missing:
         t0 = time.time()
+        tail = model.assert_extraction_matches_generation(run.tok, run.config)
+        print(f"vectors    : extraction prompt ends ...{tail!r}")
         print(f"vectors    : extracting {concept!r} at {len(missing)} layers "
               f"(L{min(missing)}-L{max(missing)}), {len(words)} baseline words")
         for i, layer in enumerate(missing, start=1):
             vecs[layer] = extract_concept_vector_with_baseline(
-                run.mw, concept, words, layer_idx=layer)
+                model.template_aligned(run.mw, run.config), concept, words,
+                layer_idx=layer)
             if i % 8 == 0 or i == len(missing):
                 print(f"             {i}/{len(missing)} layers, {time.time()-t0:.0f}s")
         # Save the union, so a later call for extra layers (phase 5 neighbourhoods) does not

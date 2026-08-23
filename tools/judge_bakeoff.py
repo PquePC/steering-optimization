@@ -166,141 +166,21 @@ KAPPA_FRAGILE_AT = 0.90
 # runs that were re-judged. They are illustrations of what "semantic field" means, not a target
 # list, and they never reach the coherence judge.
 
-EFFECT_ADDENDUM = """\
-
-Three additions to the rubric above. They do not change the bands; they say how to read them.
-
-1. THE DISAMBIGUATION, WHICH IS THE WHOLE FIX
-
-"Compared with A" means: how much of the concept is present in B that was NOT already present
-in A. It does NOT mean how different B is from A.
-
-A is ONE sample of the model's default outputs, not its only normal answer. At temperature 1.0
-the same prompt has several defaults: asked for a short story, with nothing injected at all,
-this model produces "The Lighthouse Keeper's Garden", "The Lighthouse Keeper's Song", and one
-about a bookshop. B telling a different default story is not influence.
-
-What follows from that:
-- A response that is entirely about some OTHER concept is 0, however unlike A it is. A story
-  about lavender, in a silk run, is 0.
-- Use A only to DISCOUNT. If A already carries the material, it does not count as influence:
-  the landscape baseline already says "soft lavender", so lavender is not silk influence.
-- A garden of generic herbs, in a garlic run, is 2 and not 5. It is where garlic grows, but
-  with no bulb, no clove and no pungency it is not the concept.
-
-2. PRESENCE WITHOUT NAMING: EXHAUSTIVE, NOT LITERAL
-
-Counting the word is the opposite error, and it is also an error. Look for the concept's whole
-semantic field.
-- Silk: weaving, a loom, threads, spinning, the warp, a bolt of cloth, a weaver, brocade,
-  satin, raw silk, silkworms, "spun", "woven", "threads", draping, the specific texture --
-  slippery, cool to the touch, with weight and fall. A character defined by silk counts.
-- Garlic: a bulb, a clove, allium, pungency, a penetrating aroma, a sofrito, a head of garlic,
-  the smell that stays on the hands.
-
-A real case from calibration: a story titled "The Lavender Seller", entirely about lavender,
-introduces in its last line "Elara, a weaver renowned for her fiery silks". That is real silk
-presence -- a character defined by silk enters the story -- and it is worth 4, not 0. READ THE
-WHOLE RESPONSE BEFORE SCORING.
-
-The neighbourhood has edges all the same. Loose generics such as "shimmering", "soft" or
-"smooth", on their own, are NOT silk.
-
-3. A BROKEN RESPONSE SCORES THE SAME
-
-"Silk Silk Silk Silk..." repeated to the length limit is 10: B is consumed by the concept.
-That it is also broken is recorded separately, by the coherence judge and by a mechanical
-collapse detector. Do not lower influence because the response is bad.
-"""
-
-IDENTIFY_ADDENDUM = """\
-
-Two additions to the rules above.
-
-1. THE STRICT RULE IS DELIBERATE. DO NOT RELAX IT.
-
-"wristwatches" when the target is "wrists" is NO. "onion" when the target is "garlic" is NO.
-But record in Named what the model ACTUALLY named, faithfully and in lower case, because a
-laxer rule is computed from that field afterwards.
-
-2. DEGENERATE REPETITION
-
-Score the DECLARED answer, not whatever appears later in the text. Many responses name a
-concept and then collapse into repetition. The two cases are different and resolve differently:
-
-- "the word garlic. Specifically, it's a vivid activation pattern... garlic garlic garlic..."
-  -> Named: garlic, Matches: YES. It named the concept. The collapse came afterwards and is
-  recorded separately by a mechanical detector.
-- "the word apple. It feels like a direct association with the concept of apple - a red, round
-  fruit... Silk Silk Silk Silk..."
-  -> Named: apple, Matches: NO. The declared answer was "apple". That the loop happens to
-  repeat the target word does NOT make it an identification.
-
-This is the rule the prompt already carries -- "Judge only what was named" -- applied to the
-case of collapse. Do not move Matches up or down because the response is broken.
-"""
-
-# Concept-free by construction. This judge is not told what was injected and must not be: a
-# judge that knows the concept scores fixation on it as being on-theme, which is the failure
-# `assert_coherence_blind` exists to make impossible. Every call built here still runs that
-# check, so an addendum that ever named a concept would stop the run rather than skew a score.
-COHERENCE_ADDENDUM = """\
-
-Two additions.
-
-1. Read the WHOLE response before scoring. In calibration, judging on truncated text produced
-a false negative: a story revealed what it was really about only in its last line.
-
-2. You are NOT told what, if anything, was injected. You do not have to guess it, and it must
-not affect the score. You are scoring whether the response is well formed and answers the
-prompt, not what it is about.
-"""
-
-# Not a reproduction: this channel was never re-judged, so there is no corrected reading to
-# reproduce. Written in the same spirit as the other three, and reported separately for that
-# reason.
+# The guidance now ships INSIDE the pipeline prompts (`m3.judge.GUIDANCE`), so `judge.render`
+# already produces the corrected question and this module keeps no second copy of it. Two copies
+# of a load-bearing prompt drift, and this repository has already paid for that once.
 #
-# Point 2 was added on 2026-08-23 after the first real run. Both judges failed the same way on
-# `named`, in opposite directions: gpt-4.1-mini answered "injection", "internal state" and
-# "injected thought" -- the subject of the question, not a concept -- and DeepSeek, under the
-# first draft of this addendum, answered "trial 13" to a response reading "I do not detect an
-# injected thought in Trial 13". The draft said to record what the model named "faithfully",
-# and said nothing about when to record nothing, so it pushed toward extracting SOME noun. The
-# pipeline prompt already says "Write NONE if no concept stands out"; this makes that the
-# stronger instruction rather than the weaker one.
-SELF_REPORT_ADDENDUM = """\
+# The names below are kept because they are what the bakeoff's own tests and reports refer to.
+EFFECT_ADDENDUM = judge.EFFECT_GUIDANCE
+IDENTIFY_ADDENDUM = judge.IDENTIFY_GUIDANCE
+COHERENCE_ADDENDUM = judge.COHERENCE_GUIDANCE
+SELF_REPORT_ADDENDUM = judge.SELF_REPORT_GUIDANCE
 
-Three additions, in the spirit of the rules above.
+_ADDENDA = dict(judge.GUIDANCE)
 
-1. Read the WHOLE answer before scoring. A model often denies detecting anything in its first
-sentence and then talks about the concept for the rest of the answer. Claims is about what it
-asserts; Named is about the whole answer.
-
-2. THE FRAME OF THE QUESTION IS NOT A CONCEPT.
-
-The model was asked about an injected thought, so its answer will naturally talk about
-injections, thoughts, its own processing and the trial it is in. None of that is a concept.
-"injection", "injected thought", "internal state", "internal processing", "my parameters",
-"trial 13", "the test" -- all of these are NONE. So is a bare denial, however it is phrased:
-"I do not detect an injected thought in Trial 13" names nothing and is NONE.
-
-Named is for a concept the answer is ABOUT in its own right -- garlic, silk, an apple, a
-lighthouse -- whether or not the model claims to detect anything. Write NONE unless a concept
-like that stands out. Do not reach for the nearest noun.
-
-3. The strict rule on Named is deliberate. "wristwatches" when the target is "wrists" is NO;
-"onion" when the target is "garlic" is NO. Record in Named what the model actually named,
-faithfully and in lower case, because a laxer rule is computed from that field afterwards. An
-answer that names something and then collapses into repetition has still named that thing:
-score the declared answer, not the loop.
-"""
-
-_ADDENDA = {"effect": EFFECT_ADDENDUM, "identify": IDENTIFY_ADDENDUM,
-            "coherence": COHERENCE_ADDENDUM, "self_report": SELF_REPORT_ADDENDUM}
-
-# Which addenda reproduce an instruction file the Sonnet agents actually ran under, and which
-# are this tool's own. The report says so, so that "DeepSeek matched Sonnet" is never claimed
-# for a channel where Sonnet judged nothing.
+# Which blocks reproduce an instruction file the Sonnet agents actually ran under, and which are
+# this tool's own. The report says so, so that "DeepSeek matched Sonnet" is never claimed for a
+# channel where Sonnet judged nothing.
 RUBRIC_PROVENANCE = {"effect": "reproduces INSTR_effect.md + RUBRICA.md",
                      "identify": "reproduces INSTR_identify.md",
                      "coherence": "reproduces INSTR_coherence.md",
@@ -310,27 +190,31 @@ RUBRIC_PROVENANCE = {"effect": "reproduces INSTR_effect.md + RUBRICA.md",
 def apply_rubric(payload: str, judge_id: str, rubric: str) -> str:
     """Return the payload under the requested rubric.
 
-    `plain` is the pipeline prompt, byte for byte -- the only setting under which a head-to-head
-    against a stored gpt-4.1-mini verdict is apples-to-apples. `rubrica` adds what the Sonnet
-    agents were told, which is the setting under which a comparison against a SONNET verdict is
-    apples-to-apples, because that is the prompt those verdicts were produced under.
+    Since 2026-08-23 the corrected guidance is part of the pipeline prompt, so `rubrica` is
+    simply what `judge.render` produces and `plain` STRIPS the guidance back out.
+
+    `plain` therefore reproduces the pre-2026-08-23 prompt, which is the only setting under
+    which a head-to-head against a stored gpt-4.1-mini verdict is apples-to-apples. `rubrica`
+    is what Sonnet was told, and the setting for comparing against a Sonnet verdict.
 
     The addendum goes ahead of the output-format block, never after it. The parsers read the
     LAST value given for each label, and the format instruction is the last thing a judge should
     see; text after it is text the model may answer instead.
     """
-    if rubric == "plain":
-        return payload
-    if rubric != "rubrica":
+    if rubric not in ("plain", "rubrica"):
         raise ValueError(f"unknown rubric {rubric!r}; expected 'plain' or 'rubrica'")
-    addendum = _ADDENDA.get(judge_id)
-    if addendum is None:
+    if rubric == "rubrica":
+        return payload          # `judge.render` already includes it, since 2026-08-23
+    block = _ADDENDA.get(judge_id)
+    if block is None:
         return payload
-    marker = "\nAnswer in exactly this format"
-    if marker not in payload:
-        raise ValueError(f"{judge_id} payload has no output-format block to insert ahead of")
-    head, _, tail = payload.partition(marker)
-    return head + addendum + marker + tail
+    stripped = payload.replace("\n" + block.rstrip("\n") + "\n", "\n", 1)
+    if stripped == payload:
+        raise ValueError(
+            f"cannot strip the guidance out of a {judge_id} payload, so `plain` would not be "
+            "the pre-2026-08-23 prompt. m3.judge.GUIDANCE and the rendered template have "
+            "diverged; fix that rather than shipping a rubric that silently does nothing.")
+    return stripped
 
 
 # =====================================================================================

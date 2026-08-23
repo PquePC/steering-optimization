@@ -290,9 +290,15 @@ def test_the_judge_reply_cap_is_tighter_than_m2s_and_is_pushed_into_the_transpor
 
 
 def test_worst_case_payload_stays_small_enough_to_price():
-    """The guard is against a 4000-token payload nobody predicted."""
+    """The guard is against a payload nobody predicted.
+
+    Raised from 1000 to 1600 on 2026-08-23, when the corrected guidance went into the four
+    templates: `effect` grew from ~310 to ~919 template tokens and carries two model responses
+    on top of that. The guard is a number somebody chose, so it moves deliberately and with a
+    reason written down, rather than being deleted the first time it fires.
+    """
     for jid in judge.JUDGE_IDS:
-        assert judge.estimate_payload_tokens(jid, dict(config.SETTINGS)) < 1000
+        assert judge.estimate_payload_tokens(jid, dict(config.SETTINGS)) < 1600
 
 
 def test_the_boundary_phase_is_decided_by_a_judge_not_by_a_mechanical_measure():
@@ -377,6 +383,13 @@ def test_the_cost_estimate_scales_with_the_grid():
     assert shipped["judge_usd"] < 5.0, (
         f"the default run now prices at ${shipped['judge_usd']:.2f}; a default nobody "
         "chose should not cost five dollars")
+    # The judge and the price constant have to move together, or the estimate quotes a run
+    # nobody is going to have -- which is what happened on 2026-08-23, when JUDGE_MODEL became
+    # DeepSeek and the estimate went on charging gpt-4.1-mini's rate for a while. Pinned to
+    # each other rather than to a number, so this fires on the next model change too.
+    assert config.SETTINGS["JUDGE_MODEL"].startswith("deepseek/"), (
+        "JUDGE_MODEL changed; m3.run._USD_PER_INPUT_TOKEN / _USD_PER_OUTPUT_TOKEN must "
+        "change with it")
 
 
 def test_the_cli_refuses_the_harmful_arm_before_loading_anything(capsys):

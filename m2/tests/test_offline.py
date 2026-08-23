@@ -2136,3 +2136,88 @@ def test_board_forwards_every_method_the_driver_calls():
     called = set(re.findall(r"(?:self\.)?board\.([a-z_]+)\(", src))
     missing = sorted(m for m in called if not hasattr(driver._Board, m))
     assert not missing, f"_Board has no forwarder for: {missing}"
+
+
+# =====================================================================================
+# The Qwen3 extraction-template bug (2026-08-23)
+# =====================================================================================
+
+class _FakeQwenTokenizer:
+    """Qwen3's generation-prompt logic, and nothing else."""
+
+    chat_template = "{%- if enable_thinking is defined and enable_thinking is false %}..."
+
+    def apply_chat_template(self, messages, tokenize=False, add_generation_prompt=True,
+                            **kwargs):
+        text = "".join(f"<|im_start|>{m['role']}\n{m['content']}<|im_end|>\n" for m in messages)
+        if add_generation_prompt:
+            text += "<|im_start|>assistant\n"
+            if kwargs.get("enable_thinking") is False:
+                text += "<think>\n\n</think>\n\n"
+        return text
+
+
+class _FakeGemmaTokenizer(_FakeQwenTokenizer):
+    """No reasoning switch, so `template_kwargs` returns {} and nothing changes."""
+
+    chat_template = "<start_of_turn>user"
+
+
+def test_extraction_renders_the_same_prompt_as_generation_on_a_reasoning_model():
+    """The bug: `vector_utils.extract_concept_vector_with_baseline` calls `apply_chat_template`
+    itself and passes no `enable_thinking`, so on Qwen3 it rendered `...assistant\n` while every
+    generation rendered `...assistant\n<think>\n\n</think>\n\n`. With `token_idx=-1` the vector
+    was measured at a token position the injected forward pass never sees."""
+    from m2 import model as model_module
+
+    tok = _FakeQwenTokenizer()
+    cfg = {"thinking_mode": "off"}
+    messages = [{"role": "user", "content": "Tell me about garlic"}]
+
+    bare = tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    aligned = model_module._TemplateAlignedTokenizer(tok, cfg).apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=True)
+
+    assert bare.endswith("<|im_start|>assistant\n"), "the unaligned render is the bug"
+    assert aligned.endswith("<think>\n\n</think>\n\n"), "the aligned render matches generation"
+    assert aligned != bare
+
+
+def test_the_alignment_check_raises_on_the_divergence_it_exists_for():
+    from m2 import model as model_module
+
+    with pytest.raises(RuntimeError, match="never sees"):
+        model_module.assert_extraction_matches_generation(_FakeQwenTokenizer(),
+                                                          {"thinking_mode": "off"})
+
+
+def test_a_model_without_a_reasoning_switch_is_untouched_by_the_alignment():
+    """Gemma3 has no `enable_thinking`, so the proxy is a no-op and the check passes. That is
+    why this bug was invisible across four Gemma runs and only ever showed up as "Qwen does not
+    introspect"."""
+    from m2 import model as model_module
+
+    tok = _FakeGemmaTokenizer()
+    cfg = {"thinking_mode": "off"}
+    messages = [{"role": "user", "content": "Tell me about garlic"}]
+    assert (model_module._TemplateAlignedTokenizer(tok, cfg).apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=True)
+        == tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=True))
+    model_module.assert_extraction_matches_generation(tok, cfg)
+
+
+def test_the_alignment_proxy_passes_everything_else_through():
+    from m2 import model as model_module
+
+    tok = _FakeQwenTokenizer()
+    tok.padding_side = "left"
+    proxy = model_module._TemplateAlignedTokenizer(tok, {"thinking_mode": "off"})
+    assert proxy.padding_side == "left"
+
+
+def test_vectors_extracted_under_the_old_rendering_cannot_be_reused_from_cache():
+    """The cache identity must carry the extraction template kwargs. Without it a resumed run
+    loads the mismatched vectors off disk and reproduces the bug without re-extracting."""
+    src = (Path(__file__).resolve().parent.parent / "vectors.py").read_text(encoding="utf-8")
+    body = src[src.index("def _cache_identity"):src.index("def _vector_cache_path")]
+    assert "chat_template_kwargs" in body

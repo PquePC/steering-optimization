@@ -638,6 +638,97 @@ def template_kwargs(tok: Any, cfg: dict) -> dict:
     return {"enable_thinking": mode == "on"}
 
 
+class _TemplateAlignedTokenizer:
+    """A tokenizer proxy that renders chat prompts the way GENERATION renders them.
+
+    **Bug: the Qwen3 concept vectors were extracted from a different prompt than they were
+    injected into, and it cost the whole Qwen arm.**
+
+    `vector_utils.extract_concept_vector_with_baseline` formats its prompts by calling
+    `model.tokenizer.apply_chat_template(...)` directly (vector_utils.py:149). It passes no
+    `enable_thinking`, so it gets the tokenizer's default. Qwen3's template reads:
+
+        {%- if add_generation_prompt %}
+            {{- '<|im_start|>assistant\\n' }}
+            {%- if enable_thinking is defined and enable_thinking is false %}
+                {{- '<think>\\n\\n</think>\\n\\n' }}
+            {%- endif %}
+        {%- endif %}
+
+    so the default renders `...<|im_start|>assistant\\n` and stops. Every generation in this
+    pipeline runs `THINKING_MODE=off`, which goes through `model.chat` -> `template_kwargs` and
+    renders `...<|im_start|>assistant\\n<think>\\n\\n</think>\\n\\n` -- four tokens longer.
+
+    The extractor takes `token_idx=-1`. So the vector was the difference of activations at the
+    newline after `assistant`, and it was then added to a residual stream whose last prompt
+    token is the newline after `</think>`. A direction measured in the model's reasoning-entry
+    state, applied in a state the model never entered.
+
+    It is invisible on Gemma3, whose template has no such switch, and `template_kwargs` returns
+    `{}` -- which is why every Gemma run is fine and this only ever showed up as "Qwen does not
+    introspect". What it actually looked like in the 2026-08-20 data: raising the dose degraded
+    Qwen until it repeated the prompt back verbatim, while the concept word appeared in 2% of
+    boundary probes at EVERY dose from 0.6 to 2.5 -- including the dose that destroyed it. Gemma
+    at its destruction dose emits the concept 48 times in 48 tokens. A direction that breaks a
+    model without ever surfacing its concept is not that concept's direction.
+
+    The proxy, rather than a fork of `vector_utils`: the extractor is the call the M1.5 rig
+    check validated and CONTRACT section 3 says not to patch the vendored harness. Aligning the
+    template leaves the method exactly as validated and changes only which prompt it sees.
+    """
+
+    def __init__(self, tok: Any, cfg: dict) -> None:
+        self._tok = tok
+        self._cfg = cfg
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._tok, name)
+
+    def apply_chat_template(self, *args: Any, **kwargs: Any) -> Any:
+        for key, value in template_kwargs(self._tok, self._cfg).items():
+            kwargs.setdefault(key, value)
+        return self._tok.apply_chat_template(*args, **kwargs)
+
+
+class _TemplateAlignedModel:
+    """`mw` with its tokenizer swapped for the aligned proxy. Everything else passes through."""
+
+    def __init__(self, mw: Any, cfg: dict) -> None:
+        self._mw = mw
+        self.tokenizer = _TemplateAlignedTokenizer(mw.tokenizer, cfg)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._mw, name)
+
+
+def assert_extraction_matches_generation(tok: Any, cfg: dict) -> str:
+    """Render one prompt both ways and raise if they differ. Returns the rendered tail.
+
+    This is the property the bug above violated, checked rather than assumed, on the real
+    tokenizer, before any vector is extracted. It costs one template render and it is the only
+    thing standing between a future model with its own template switch and another silent arm.
+    """
+    messages = [{"role": "user", "content": "Tell me about garlic"}]
+    aligned = _TemplateAlignedTokenizer(tok, cfg).apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=True)
+    bare = tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    if aligned == bare:
+        return str(aligned)[-80:]
+    raise RuntimeError(
+        "the extraction prompt and the generation prompt do not render the same way, which "
+        "means the concept vector would be measured at a token position the injected forward "
+        "pass never sees.\n"
+        f"  generation renders ...{str(aligned)[-60:]!r}\n"
+        f"  the bare template renders ...{str(bare)[-60:]!r}\n"
+        "This is checked because it happened: see _TemplateAlignedTokenizer. If you are seeing "
+        "this, the proxy is not reaching the extractor.")
+
+
+def template_aligned(mw: Any, cfg: dict) -> "_TemplateAlignedModel":
+    """`mw` rendering chat prompts the way generation does. See `_TemplateAlignedTokenizer`."""
+    return _TemplateAlignedModel(mw, cfg)
+
+
 def start_pos_for(prompt: str, needle: str) -> int | None:
     """Token index where `needle` begins, so the template before it stays unsteered.
 

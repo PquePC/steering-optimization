@@ -42,9 +42,12 @@ REQUIRED_ENV = {
     "OPENROUTER_API_KEY": "every measurement in this pipeline is judged; nothing can be scored",
 }
 
-# gpt-4.1-mini list price. Only used to print an estimate before the run starts.
-_USD_PER_INPUT_TOKEN = 0.40 / 1e6
-_USD_PER_OUTPUT_TOKEN = 1.60 / 1e6
+# `deepseek/deepseek-v4-flash` list price on OpenRouter, read 2026-08-23. Only used to print an
+# estimate before the run starts. It tracks `JUDGE_MODEL`, so changing one without the other
+# prices a run nobody is going to have: gpt-4.1-mini was 0.40/1.60, seven times more, and the
+# estimate kept quoting it for a while after the judge changed.
+_USD_PER_INPUT_TOKEN = 0.0573 / 1e6
+_USD_PER_OUTPUT_TOKEN = 0.1145 / 1e6
 # Measured on the 2026-08-14 probe: one generation batch of <=25 prompts at 100 tokens.
 _SECONDS_PER_BATCH_100 = 8.6
 

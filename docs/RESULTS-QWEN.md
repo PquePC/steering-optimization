@@ -1,11 +1,42 @@
 # Qwen3-32B — the 2026-08-20 runs
 
+> ## ⚠️ WITHDRAWN 2026-08-23 — the vectors were extracted from the wrong prompt
+>
+> **Do not quote the null result below.** It is not evidence about Qwen3-32B's introspection.
+>
+> `vector_utils.extract_concept_vector_with_baseline` renders its prompts by calling
+> `apply_chat_template` itself and passing no `enable_thinking`. Qwen3's template appends
+> `<think>\n\n</think>\n\n` to the generation prompt **only** when `enable_thinking=False`, which
+> is what every generation in these runs used (`THINKING_MODE=off`). So the vectors were measured
+> at the last token of `…<|im_start|>assistant\n` and injected into a forward pass whose last
+> prompt token was the newline after `</think>` — four tokens later, a state the model never
+> entered during extraction. Gemma3's template has no such switch, which is why four Gemma runs
+> were unaffected and this only ever appeared as "Qwen does not introspect".
+>
+> The signature in this run's own data, which nobody read at the time: across every boundary
+> probe from dose 0.60 to 2.50, the concept word appears in **2%** of responses — including at
+> the dose that destroys the model. Gemma at its destruction dose emits the concept 48 times in
+> 48 tokens. Raising the dose on Qwen degraded it into repeating the prompt back verbatim
+> without ever surfacing the concept. **A direction that breaks a model without ever expressing
+> its concept is not that concept's direction**, and no dose grid over it could have found one.
+>
+> Fixed in `m2.model._TemplateAlignedTokenizer`, with
+> `m2.model.assert_extraction_matches_generation` refusing to extract when the two renderings
+> diverge, and the chat-template kwargs added to the vector cache identity so the mismatched
+> vectors on disk cannot be reloaded. **The fix has not been run on a GPU.** Whether Qwen3-32B
+> introspects is now an open question again, not a measured 0.007%.
+>
+> §3 (influence) and §2.2 (steering moves the identify channel) describe real perturbations and
+> survive as observations about *something* being injected. Every claim about detection,
+> identification, or Qwen versus Gemma does not.
+
 Three concepts on a second model, measured with the same instrument as
 [`RESULTS-GARLIC.md`](RESULTS-GARLIC.md), to ask whether that model's result is about
 **concept injection** or about **Gemma3-27B**.
 
 Every number here is from `config=ff9a4e8f759d`, commit `00a1546`, on a single 3×A100-80GB pod.
-Read [§5](#5-what-is-trustworthy-and-what-is-not) before quoting anything.
+Read the withdrawal above and [§5](#5-what-is-trustworthy-and-what-is-not) before quoting
+anything.
 
 ---
 

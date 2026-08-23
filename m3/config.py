@@ -347,7 +347,21 @@ SETTINGS: dict[str, Any] = dict(
     # `check` in `run_sweep`, which refuses the combination rather than discovering it halfway.
     JUDGE_ENABLED=1,
 
-    JUDGE_MODEL="openai/gpt-4.1-mini",
+    # Changed 2026-08-23 from `openai/gpt-4.1-mini`, which was found to score deviation from
+    # the unsteered baseline as presence of the concept -- it forced the 2026-08-21 Gemma runs
+    # to be re-judged offline and it is why the prompts below carry a disambiguation.
+    #
+    # The replacement was measured, not assumed. `tools/judge_bakeoff.py` put both models over
+    # 3,098 real items from these runs under the same prompts. On the 600-item representative
+    # draw, matched on prompt, DeepSeek reproduces the corrected Sonnet verdicts at kappa 1.000
+    # on forced identification, MAE 0.49 on influence (95.5% within two points) and MAE 0.77 on
+    # coherence. On 108 unsteered-vs-unsteered controls, whose correct influence is 0 by
+    # construction, it scored exactly 0 on 99.1% and never once reached the 4 that makes a cell
+    # count as influential.
+    #
+    # `deepseek/deepseek-v4-flash` is OpenRouter's slug for "DeepSeek V4 Flash 0423"; `-0731`
+    # is a later revision and a different model. Roughly 7x cheaper than gpt-4.1-mini per call.
+    JUDGE_MODEL="deepseek/deepseek-v4-flash",
 
     # Concurrent judge calls. The rate limiter backs the whole pool off together when the
     # provider returns 429, because that is an account limit and not a per-request one.

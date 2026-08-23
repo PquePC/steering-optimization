@@ -176,7 +176,7 @@ def test_addendum_reaches_effect_and_identify_ahead_of_the_format_block():
     assert with_rubric.rstrip().endswith("Form: <absent|trace|thematic|dominant|fixated>")
 
 
-def test_the_coherence_addendum_names_no_concept():
+def test_the_coherence_guidance_names_no_concept():
     """`coherence` is scored without being told what was injected, and `INSTR_coherence.md`
     says so in as many words -- so it does get an addendum, and that addendum must survive the
     blindness check for every concept the study has ever run, not just the one in front of it.
@@ -187,10 +187,11 @@ def test_the_coherence_addendum_names_no_concept():
     """
     from m2 import config as m2config
 
-    plain = judge.render("coherence", text_chars=1200, prompt="p", response="r")
-    with_rubric = bakeoff.apply_rubric(plain, "coherence", "rubrica")
-    assert with_rubric != plain, "INSTR_coherence.md adds instructions; they should be applied"
+    rendered = judge.render("coherence", text_chars=1200, prompt="p", response="r")
+    with_rubric = bakeoff.apply_rubric(rendered, "coherence", "rubrica")
+    assert with_rubric == rendered, "the pipeline prompt already carries the guidance"
     assert "Read the WHOLE response" in with_rubric
+    assert bakeoff.apply_rubric(rendered, "coherence", "plain") != rendered
     for concept in (*m2config.BENIGN_CONCEPTS, *m2config.HARMFUL_CONCEPTS, "Silk", "Garlic",
                     "Wrists"):
         judge.assert_coherence_blind(with_rubric, concept, model_text=("r",), text_chars=1200)
@@ -217,9 +218,30 @@ def test_every_judged_channel_has_an_addendum_and_says_where_it_came_from():
         assert bakeoff.RUBRIC_PROVENANCE[judge_id].startswith("reproduces")
 
 
-def test_plain_rubric_is_the_pipeline_prompt_byte_for_byte():
-    plain = judge.render("identify", text_chars=1200, concept="Silk", response="r")
-    assert bakeoff.apply_rubric(plain, "identify", "plain") == plain
+def test_plain_rubric_reproduces_the_prompt_from_before_the_guidance_shipped():
+    """`plain` exists so a stored gpt-4.1-mini verdict can be replayed against the prompt that
+    produced it. Since the guidance moved into `m3.judge`, that means STRIPPING it back out --
+    and the strip has to actually remove something, or `plain` silently becomes `rubrica` and
+    every head-to-head against the old judge quietly changes what it is comparing."""
+    rendered = judge.render("identify", text_chars=1200, concept="Silk", response="r")
+    stripped = bakeoff.apply_rubric(rendered, "identify", "plain")
+    assert stripped != rendered
+    assert judge.IDENTIFY_GUIDANCE.strip() not in stripped
+    assert stripped.rstrip().endswith("Matches: <YES or NO>")
+    assert "TARGET CONCEPT: Silk" in stripped
+
+
+def test_a_guidance_block_that_drifts_from_the_template_is_a_loud_failure():
+    """If `m3.judge.GUIDANCE` and the rendered template stop matching, `plain` would return the
+    payload unchanged and read as the old prompt while being the new one. That has to raise."""
+    rendered = judge.render("identify", text_chars=1200, concept="Silk", response="r")
+    original = bakeoff._ADDENDA["identify"]
+    try:
+        bakeoff._ADDENDA["identify"] = "text that is not in any template"
+        with pytest.raises(ValueError, match="diverged"):
+            bakeoff.apply_rubric(rendered, "identify", "plain")
+    finally:
+        bakeoff._ADDENDA["identify"] = original
 
 
 # =====================================================================================
