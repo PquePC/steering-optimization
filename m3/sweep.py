@@ -953,6 +953,17 @@ def _summarise_cell(rows: Sequence[dict], *, layer: int, dose: float, alpha: flo
         effectiveness=(battery.mean_se(effect_scores) if effect_scores else None),
         effect_forms=sorted({r["judged"]["effect"]["form"] for r in by("effect")
                              if (r.get("judged") or {}).get("effect")}),
+        # The three-axis score (m3.battery, added 2026-08-23). `effectiveness` above is a mean of
+        # a 0-10 scale whose digits two careful judges reproduce 62% of the time, and whose top
+        # anchor describes a broken model. This reports the same responses as AxBench does: a
+        # concept / instruct / fluency triple, each 0-2, combined by a harmonic mean that any
+        # zero takes to zero -- plus the RATE that is the point of a three-level scale.
+        #
+        # `None` unless a row carries BOTH an influence and a coherence verdict, so it is only
+        # computed over the coherence-judged prefix of the channel. Set N_COHERENCE = N_EFFECT or
+        # this summarises a minority of the battery: on the 2026-08-21 Gemma runs, 570 of 1482
+        # effect and explain rows qualified.
+        steering=battery.steering_summary(by("effect"), z),
         coherence=(battery.mean_se(coh_scores) if coh_scores else None),
         # The coherence judge answers TWO questions and only one was being kept. `on_task` is
         # "does this actually address the prompt", which is a different failure from "is this
@@ -988,6 +999,9 @@ def _summarise_cell(rows: Sequence[dict], *, layer: int, dose: float, alpha: flo
         explain_correct=(battery.rate(sum(1 for r in exp if r.get("capability_correct")),
                                       len(exp), z) if exp else None),
         explain_coherence=(battery.mean_se(exp_coh) if exp_coh else None),
+        # Every explain response is coherence-judged by construction, so this one is always
+        # computed over the whole channel rather than over a prefix.
+        explain_steering=battery.steering_summary(exp, z),
         # --- mechanical, recorded, deciding nothing ---
         mechanical=dict(
             identify=battery.channel_summary(ident, z=z) if ident else None,

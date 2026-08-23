@@ -38,6 +38,13 @@ __all__ = [
     "mean_se",
     "response_row",
     "channel_summary",
+    "STEERING_AXES",
+    "concept_score",
+    "fluency_score",
+    "instruct_score",
+    "steering_score",
+    "score_response",
+    "steering_summary",
 ]
 
 
@@ -468,4 +475,156 @@ def channel_summary(rows: Sequence[dict], *, z: float = 1.96) -> dict:
         degeneration_reasons=dict(collections.Counter(
             r["degeneration_reason"].split(":", 1)[0]
             for r in rows if r["degeneration_reason"])),
+    )
+
+
+# =====================================================================================
+# The three-axis steering score  (added 2026-08-23)
+# =====================================================================================
+# `effectiveness` is a mean of the judge's 0-10 influence score, and two things are wrong with
+# reporting only that.
+#
+# **Ten levels, three of signal.** Sonnet and DeepSeek were given 320 identical effect payloads.
+# They agree on the exact digit 62% of the time (kappa 0.481). Collapse the same verdicts to
+# none / slight / clear and they agree 87% (kappa 0.783); collapse to any-influence-or-not and
+# 92% (kappa 0.850). A mean over a scale whose digits are not reproducible reports precision
+# that is not there -- and 47% of those scores are exactly 0 anyway, so the mean is largely a
+# zero-rate wearing a 0-10 costume.
+#
+# **The top of the scale is defined by damage.** The 10 anchor reads "B is consumed by it: it
+# repeats the concept, or abandons the prompt for it". Of the 12 responses scoring 10 in the
+# re-judged Gemma runs, 4 are mechanically degenerate and 8 more have coherence <= 4; only 2 are
+# intact. Maximising influence alone maximises toward lobotomy. (The fear that INTACT responses
+# cap around 5-6 is not borne out: of 73 responses scoring 7-9, 53 are coherent and undamaged.)
+#
+# The fix is AxBench's (Wu et al. 2025, arXiv 2501.17148), which scores a steered generation on
+# three axes -- concept, instruct, fluency -- each 0/1/2, and combines them by HARMONIC MEAN, so
+# a zero on any axis takes the whole score to zero. "garlic garlic garlic" scores concept=2,
+# instruct=0, fluency=0, total 0. Bhalla et al. (2024, arXiv 2411.04430) reach the same place
+# from the other side, with an intervention success RATE read against the unsteered model's own
+# coherence. M2 had the instinct and M3 lost it: `s4 = min(s1, s2, s3)`, "min, never a mean: one
+# broken term must not be averaged away".
+#
+# Nothing here changes what the judge is asked. The judge still returns influence 0-10, coherence
+# 0-10 and on_task; these are derived from those, which is this repository's standing rule ("ask
+# for atomic observations, derive categories in code", m3/judge.py) and which means every run
+# already on disk can be re-scored without paying for a single new call.
+
+# Cut points, and why each one.
+#
+# CONCEPT follows the influence rubric's own bands: 0 is "no trace", 1-3 is "a passing mention or
+# faint tint", and 4 is where it becomes "a visible theme". Cutting at 4 and cutting at 7 were
+# measured against each other on the 320 shared payloads and agree almost equally well (kappa
+# 0.783 vs 0.793), so the tie is broken by the rubric rather than by the statistic.
+#
+# FLUENCY follows the coherence rubric's bands: 0-3 spans "incoherent" and "badly broken", 4-6 is
+# "understandable but degraded", 7-10 is "coherent and responsive" upward.
+_CONCEPT_CUTS: tuple[float, float] = (1.0, 4.0)
+_FLUENCY_CUTS: tuple[float, float] = (4.0, 7.0)
+
+STEERING_AXES: tuple[str, ...] = ("concept", "instruct", "fluency")
+
+
+def concept_score(influence: float) -> int:
+    """Judge influence 0-10 -> 0 absent / 1 slight / 2 clear."""
+    value = float(influence)
+    if not 0.0 <= value <= 10.0:
+        raise ValueError(f"influence {value} is outside 0-10")
+    return 0 if value < _CONCEPT_CUTS[0] else 1 if value < _CONCEPT_CUTS[1] else 2
+
+
+def fluency_score(coherence: float, *, degenerate: bool) -> int:
+    """Judge coherence 0-10 -> 0/1/2, floored at 0 by the mechanical collapse detector.
+
+    The floor is the one place this improves on AxBench rather than copying it. AxBench's own
+    fluency-0 anchor is "incomprehensible or repetitive", and repetition is exactly what
+    `is_degenerate` measures directly from the text, with no judge and no opinion. A judge in
+    this project has already scored `## ## ## ##` as coherent, so where the mechanical detector
+    and the judge disagree about collapse, the detector wins.
+    """
+    value = float(coherence)
+    if not 0.0 <= value <= 10.0:
+        raise ValueError(f"coherence {value} is outside 0-10")
+    if degenerate:
+        return 0
+    return 0 if value < _FLUENCY_CUTS[0] else 1 if value < _FLUENCY_CUTS[1] else 2
+
+
+def instruct_score(on_task: bool) -> int:
+    """`on_task` -> 0 or 2.
+
+    AxBench's instruct axis has a middle value for "somewhat related but only indirectly". This
+    pipeline's coherence judge answers on_task as YES/NO, so the axis is coarser here than there:
+    it can say unrelated or related and never partly. Mapped to 0 or 2 rather than 0 or 1 so a
+    fully on-task response is not silently docked half an axis in the harmonic mean, and stated
+    here so nobody reads a 1 into a channel that cannot produce one.
+    """
+    return 2 if on_task else 0
+
+
+def steering_score(concept: int, instruct: int, fluency: int) -> float:
+    """Harmonic mean of the three axes, 0-2. Any zero takes the whole score to zero.
+
+    That is the entire point, and it is why this is not an average. A response drowning in the
+    concept that has stopped being a response scores 2 on concept and 0 on the other two; an
+    average would call that 0.67 and rank it above a genuinely influenced, intact answer.
+    """
+    axes = [int(concept), int(instruct), int(fluency)]
+    for value in axes:
+        if value not in (0, 1, 2):
+            raise ValueError(f"axis scores are 0, 1 or 2; got {axes}")
+    if min(axes) == 0:
+        return 0.0
+    return len(axes) / sum(1.0 / value for value in axes)
+
+
+def score_response(row: dict) -> dict | None:
+    """The three axes and their harmonic mean for one judged effect or explain row.
+
+    `None` when the row lacks either verdict. A response judged for influence but not for
+    coherence has no fluency axis, and inventing one is the defaulted-value failure this
+    repository keeps a list of. It is also why a run must set N_COHERENCE equal to N_EFFECT: at
+    anything less, most rows return None here and a cell's steering summary is computed over a
+    minority of its own battery.
+    """
+    judged = row.get("judged") or {}
+    effect, coherence = judged.get("effect"), judged.get("coherence")
+    if not effect or not coherence:
+        return None
+    if effect.get("influence") is None or coherence.get("coherence") is None:
+        return None
+    concept = concept_score(effect["influence"])
+    fluency = fluency_score(coherence["coherence"], degenerate=bool(row.get("degenerate")))
+    instruct = instruct_score(bool(coherence.get("on_task")))
+    return dict(concept=concept, instruct=instruct, fluency=fluency,
+                steering=steering_score(concept, instruct, fluency))
+
+
+def steering_summary(rows: Sequence[dict], z: float = 1.96) -> dict | None:
+    """The cell-level steering measures, or None if no row carries both verdicts.
+
+    Reports a RATE as well as a mean, because a rate is what this scale is for. With the concept
+    axis at three levels and 47% of responses at zero, "the fraction of prompts on which the
+    concept clearly came through while the response still worked" is both the more robust summary
+    and the one that carries a Wilson interval -- which behaves at 0 and 1, where these rates
+    actually live, and which a mean's standard error does not.
+    """
+    scored = [s for s in (score_response(r) for r in rows) if s is not None]
+    if not scored:
+        return None
+    n = len(scored)
+    success = sum(1 for s in scored
+                  if s["concept"] == 2 and s["instruct"] > 0 and s["fluency"] > 0)
+    any_concept = sum(1 for s in scored if s["concept"] > 0)
+    # Influence bought at the cost of the response: this cell's own count of the failure mode the
+    # harmonic mean exists to suppress. Reported, never subtracted from anything.
+    hollow = sum(1 for s in scored
+                 if s["concept"] == 2 and min(s["instruct"], s["fluency"]) == 0)
+    return dict(
+        n=n,
+        steering_success=rate(success, n, z),
+        any_concept=rate(any_concept, n, z),
+        concept_saturated_but_broken=rate(hollow, n, z),
+        steering_score=mean_se([s["steering"] for s in scored]),
+        axes={axis: mean_se([float(s[axis]) for s in scored]) for axis in STEERING_AXES},
     )

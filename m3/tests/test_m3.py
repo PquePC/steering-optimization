@@ -743,3 +743,85 @@ def test_the_supply_ceiling_is_the_list_the_battery_actually_slices():
         "N_EXPLAIN": len(battery.EXPLAIN_PROMPTS),
         "N_CAPABILITY": len(battery.CAPABILITY_PROMPTS),
     }
+
+
+# =====================================================================================
+# The three-axis steering score
+# =====================================================================================
+
+def test_any_zero_axis_takes_the_whole_score_to_zero():
+    """The entire reason this is a harmonic mean and not an average. A response drowning in the
+    concept that has stopped being a response scores 2/0/0; an average calls that 0.67 and ranks
+    it above a genuinely influenced, intact answer."""
+    assert battery.steering_score(2, 2, 2) == 2.0
+    assert battery.steering_score(2, 0, 0) == 0.0
+    assert battery.steering_score(2, 2, 0) == 0.0
+    assert battery.steering_score(0, 2, 2) == 0.0
+    assert battery.steering_score(2, 2, 1) == pytest.approx(1.5)
+    assert battery.steering_score(1, 1, 1) == 1.0
+    # and it is strictly harsher than the mean wherever the axes disagree
+    assert battery.steering_score(2, 2, 1) < (2 + 2 + 1) / 3
+
+
+def test_the_bands_follow_the_rubrics_own_anchors():
+    """Cut points are not free parameters: concept turns 2 at 4 because 4 is where the influence
+    rubric says the concept becomes 'a visible theme', and fluency turns 2 at 7 because 7 is
+    where the coherence rubric says 'coherent and responsive'."""
+    assert [battery.concept_score(x) for x in (0, 1, 3, 4, 10)] == [0, 1, 1, 2, 2]
+    assert [battery.fluency_score(x, degenerate=False) for x in (0, 3, 4, 6, 7, 10)] == \
+        [0, 0, 1, 1, 2, 2]
+    for bad in (-1, 11):
+        with pytest.raises(ValueError, match="outside 0-10"):
+            battery.concept_score(bad)
+
+
+def test_the_mechanical_detector_overrides_the_judge_on_collapse():
+    """AxBench's own fluency-0 anchor is 'incomprehensible or repetitive', and repetition is what
+    `is_degenerate` measures from the text with no judge involved. A judge in this project has
+    already scored '## ## ## ##' as coherent, so the detector wins."""
+    assert battery.fluency_score(10, degenerate=False) == 2
+    assert battery.fluency_score(10, degenerate=True) == 0
+    row = dict(judged=dict(effect=dict(influence=9.0, form="dominant"),
+                           coherence=dict(coherence=10.0, on_task=True)),
+               degenerate=True)
+    assert battery.score_response(row)["steering"] == 0.0
+
+
+def test_a_row_missing_either_verdict_scores_nothing_rather_than_a_default():
+    """A response judged for influence but not for coherence has no fluency axis. Inventing one
+    is the defaulted-value failure this repository keeps a list of."""
+    both = dict(judged=dict(effect=dict(influence=5.0),
+                            coherence=dict(coherence=8.0, on_task=True)), degenerate=False)
+    assert battery.score_response(both) is not None
+    for partial in (dict(judged=dict(effect=dict(influence=5.0)), degenerate=False),
+                    dict(judged=dict(coherence=dict(coherence=8.0, on_task=True)),
+                         degenerate=False),
+                    dict(judged={}, degenerate=False)):
+        assert battery.score_response(partial) is None
+    assert battery.steering_summary([dict(judged={}, degenerate=False)]) is None
+
+
+def test_the_summary_separates_influence_from_influence_that_broke_the_model():
+    """The two cells this metric exists to tell apart: concept clearly present and the response
+    still working, versus concept clearly present because the response is a repetition loop."""
+    def row(inf, coh, on_task, degen):
+        return dict(judged=dict(effect=dict(influence=inf),
+                                coherence=dict(coherence=coh, on_task=on_task)),
+                    degenerate=degen)
+    rows = [row(9, 9, True, False),      # clear and intact
+            row(9, 9, True, False),      # clear and intact
+            row(10, 9, True, True),      # clear because it collapsed
+            row(0, 9, True, False)]      # nothing happened
+    got = battery.steering_summary(rows)
+    assert got["n"] == 4
+    assert got["steering_success"]["count"] == 2
+    assert got["concept_saturated_but_broken"]["count"] == 1
+    assert got["any_concept"]["count"] == 3
+    assert got["steering_success"]["ci_low"] < 0.5 < got["steering_success"]["ci_high"]
+
+
+def test_the_instruct_axis_cannot_produce_a_one():
+    """`on_task` is YES/NO, so this axis is coarser here than in AxBench, which has a middle
+    value. Mapped to 0 or 2 so a fully on-task response is not docked half an axis."""
+    assert battery.instruct_score(True) == 2
+    assert battery.instruct_score(False) == 0
