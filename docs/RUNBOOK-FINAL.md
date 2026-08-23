@@ -3,9 +3,16 @@
 Six runs: three concepts (**Garlic**, **Silk**, **Wrists**) on two models (**Gemma3-27B**,
 **Qwen3-32B**), one run per GPU.
 
-**Pod setup is [`RUNBOOK-M3.md`](RUNBOOK-M3.md) §1 unchanged** — the `/workspace/env.sh` block,
-the tokens, `m2.setup`. Do that first on both pods. This file covers only what is different: the
-settings, the six-way split, and the two checks that come before you commit the cards.
+**This file is the settings and the two go/no-go checks. It documents no mechanics.**
+
+- Pod rental, `/workspace/env.sh`, tokens, `m2.setup` — [`RUNBOOK-M3.md`](RUNBOOK-M3.md) §1–§4.
+- Pinning one concept to one GPU, launching, monitoring, exporting —
+  [`RUNBOOK-QWEN.md`](RUNBOOK-QWEN.md) §6–§9. That pattern is not theoretical: the 2026-08-20
+  Qwen runs used it, and every run records `gpu_count` in its `provenance.jsonl`, so a process
+  that sharded across cards is caught in the export rather than by watching `nvidia-smi`.
+
+What is new here is that **two** pods now run the same six-way plan, one model each, and that
+the settings differ from the shipped defaults.
 
 ---
 
@@ -119,56 +126,30 @@ between models is fine, each rate carries its own interval, whereas a different 
 
 ---
 
-## 4. Launching the six
+## 4. Launching
 
-Same settings on both pods; only `MODEL` and the card differ. On the **Gemma pod**:
+Follow [`RUNBOOK-QWEN.md`](RUNBOOK-QWEN.md) §6 exactly: pin with `nohup env
+CUDA_VISIBLE_DEVICES=N`, start the first run and wait for `Model loaded` before the other two so
+the three do not race the same download, then confirm `gpu_count=1` on every `provenance.jsonl`.
+The only change is the settings. Each launch line carries, with `$M` the pod's model:
 
-```bash
-cd /workspace/steering-optimization
-for i in 0 1 2; do
-  C=$(echo "Garlic Silk Wrists" | cut -d' ' -f$((i+1)))
-  CUDA_VISIBLE_DEVICES=$i nohup python -m m3.run --concept $C \
-    --set MODEL=gemma3_27b \
-    --set LAYER_FRACTIONS=0.41,1.0 --set LAYER_STRIDE=2 \
-    --set N_IDENTIFY=120 --set N_EFFECT=66 --set N_SELF_REPORT=36 \
-    --set N_COHERENCE=12 --set N_CAPABILITY=4 --set N_EXPLAIN=4 \
-    --set GEN_BATCH_MAX=230 --set NULL_REPEATS=20 --set JUDGE_CONCURRENT=10 \
-    > /workspace/m3_$C.out 2>&1 &
-done
+```
+--concept $C --set MODEL=$M --set LAYER_FRACTIONS=0.41,1.0 --set LAYER_STRIDE=2 --set N_IDENTIFY=120 --set N_EFFECT=66 --set N_SELF_REPORT=36 --set N_COHERENCE=12 --set N_CAPABILITY=4 --set N_EXPLAIN=4 --set GEN_BATCH_MAX=230 --set NULL_REPEATS=20 --set JUDGE_CONCURRENT=10
 ```
 
-On the **Qwen pod** the same block with `--set MODEL=qwen3_32b`.
+Gemma pod `MODEL=gemma3_27b`, Qwen pod `MODEL=qwen3_32b`; Garlic, Silk, Wrists on cards 0, 1, 2.
 
-Add `--dry-run` to the first one and read the plan before removing it. The Gemma plan should say
-`layers 19 (L25-L61, stride 2)`, `cells 114`, `battery 230`, `config=81c5576e5166`.
+**Read one `--dry-run` before removing it.** The Gemma plan must say `layers 19 (L25-L61, stride
+2)`, `cells 114`, `battery 230`, `config=81c5576e5166`. A different hash means a `--set` did not
+land — and since the run folder is named after the hash, the run would write somewhere other
+than where you go looking for it.
 
-Watch:
-
-```bash
-tail -f /workspace/m3_Garlic.out
-```
-
-```bash
-nvidia-smi --query-gpu=index,memory.used,utilization.gpu --format=csv
-```
-
-Three runs share `/workspace/m3_runs/batch.log`; each also writes its own `lab.log` in its own
-run folder, and run folders are keyed on concept and config hash so they cannot collide.
-
-## 5. When they finish
-
-On each pod, before stopping it:
-
-```bash
-cd /workspace/steering-optimization && python tools/collect_everything.py
-```
-
-That gathers every run folder, the console logs, the code state and the environment into one
-archive. Nothing else survives the pod.
+Export with `tools/collect_everything.py` on each pod before stopping it
+([`RUNBOOK-QWEN.md`](RUNBOOK-QWEN.md) §8).
 
 ---
 
-## 6. Three things that are not fixed, and what they mean for publishing
+## 5. Three things that are not fixed, and what they mean for publishing
 
 **No human labels anywhere in this project.** The 110 in `m3/labels/` were written by Claude Opus
 5, not by a reader — see [`m3/labels/README.md`](../m3/labels/README.md). So every judge
