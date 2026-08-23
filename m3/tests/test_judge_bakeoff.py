@@ -488,3 +488,40 @@ def test_operator_labels_score_the_incumbents_too(export_dir, capsys):
     out = capsys.readouterr().out
     assert "candidate cand" in out
     assert "incumbent claude-sonnet-5 (re-juzgado fuera del pod)" in out
+
+
+def test_limit_spreads_across_judges_rather_than_taking_the_first_n(tmp_path, monkeypatch):
+    """A smoke test that only exercises `identify` proves nothing about `effect`, whose payload
+    carries two responses, is the longest, and is the one that failed."""
+    from m2 import judges as transport
+
+    items = []
+    for judge_id, body in (("identify", "Named: apple\nMatches: NO"),
+                           ("effect", "Influence: 0\nForm: absent")):
+        for n in range(10):
+            items.append(dict(
+                item_id=f"src|{judge_id}|{n}", source="src", arm="head_to_head", concept="Silk",
+                judge=judge_id, channel=judge_id, layer=1, dose=0.1, unit=f"u{n}",
+                payload=f"payload {judge_id} {n}", payload_origin="stored", rubric="plain",
+                model_text=[], population_draw=True,
+                reference=dict(by="x", rubric="plain", parsed={}),
+                mech=dict(degenerate=False, concept_mentions=0, words=1, empty=False),
+                stratum="s"))
+    out = tmp_path / "bake"
+    out.mkdir()
+    (out / "items.jsonl").write_text("".join(json.dumps(i) + "\n" for i in items),
+                                     encoding="utf-8")
+    (out / "manifest.json").write_text("{}", encoding="utf-8")
+
+    answers = {"identify": "Named: apple\nMatches: NO", "effect": "Influence: 0\nForm: absent"}
+    monkeypatch.setattr(transport, "_post_completion", lambda prompt, model: (
+        200, json.dumps({"choices": [{"message": {"content": answers[prompt.split()[1]]}}]}),
+        None))
+    monkeypatch.setenv("OPENROUTER_API_KEY", "offline-test")
+    transport.cache_clear()
+
+    bakeoff.main(["run", "--out", str(out), "--model", "m/x", "--tag", "smoke",
+                  "--concurrency", "1", "--limit", "6"])
+    rows = [json.loads(l) for l in (out / "verdicts_smoke.jsonl").open(encoding="utf-8")]
+    assert len(rows) == 6
+    assert {r["judge"] for r in rows} == {"identify", "effect"}

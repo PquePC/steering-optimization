@@ -956,6 +956,18 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(f"  resuming: {len(done)} verdicts already on disk in {verdict_path}")
 
     todo = [i for i in items if i["item_id"] not in done]
+    if args.limit:
+        # Spread the cap over the judges rather than taking the first N, which are all one
+        # judge: a smoke test that only exercises `identify` proves nothing about the payload
+        # that carries two responses, and `effect` is both the longest and the one that failed.
+        per_judge = max(1, int(args.limit) // max(1, len({i["judge"] for i in todo})))
+        capped, seen = [], Counter()
+        for item in todo:
+            if seen[item["judge"]] < per_judge:
+                capped.append(item)
+                seen[item["judge"]] += 1
+        todo = capped
+        print(f"  --limit {args.limit}: {len(todo)} items, {dict(seen)}")
     if not todo:
         print("  nothing to do")
         return 0
@@ -1610,6 +1622,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                        help="ask the provider to disable reasoning. Use for hybrid models: a "
                             "chain of thought spends the token budget before the answer and "
                             "returns as a parse error, which looks like a bad judge.")
+    p_run.add_argument("--limit", type=int, default=0,
+                       help="issue at most this many calls, spread across the judges. For a "
+                            "smoke test: it proves the key, the model id and the output format "
+                            "on real payloads for pennies. Resume means the full run afterwards "
+                            "does not pay for them twice.")
     p_run.add_argument("--dry-run", action="store_true", help="print the plan and stop")
     p_run.set_defaults(func=cmd_run)
 
