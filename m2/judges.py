@@ -1103,6 +1103,7 @@ def judge_transport() -> dict:
                 temperature=JUDGE_TEMPERATURE, max_tokens=JUDGE_MAX_TOKENS,
                 concurrency=int(_cfg()["judge_concurrent"]),
                 max_attempts=JUDGE_MAX_ATTEMPTS, timeout_s=JUDGE_TIMEOUT_S,
+                extra_body=dict(JUDGE_EXTRA_BODY),
                 key_present=bool(os.environ.get("OPENROUTER_API_KEY")
                                  or os.environ.get("OPENAI_API_KEY")))
 
@@ -1155,14 +1156,39 @@ def _backoff_seconds(attempt: int, retry_after: str | None) -> float:
     return delay + random.uniform(0.0, 0.25 * delay)
 
 
+# Extra request fields, merged into every judge POST. Empty by default, so the shipped
+# transport is byte-identical to what it was before this existed.
+#
+# It exists for ONE thing: a judge model that reasons before answering. The rubrics ask for two
+# or three short lines and `JUDGE_MAX_TOKENS` is sized for that, so a model that emits a chain
+# of thought first spends the whole budget on it and returns either no answer or a truncated
+# one. Those come back as parse errors, which look exactly like a judge that cannot follow the
+# output format -- the wrong diagnosis, and an expensive one if it decides which model to run.
+# Setting `{"reasoning": {"enabled": False}}` here removes that confound at the request.
+#
+# Never put the model, temperature or max_tokens in here: those are set above from config, and
+# a second source for any of them is a setting that is displayed but not applied.
+JUDGE_EXTRA_BODY: dict = {}
+
+_RESERVED_BODY_KEYS = ("model", "temperature", "max_tokens", "messages")
+
+
 def _post_completion(prompt: str, model: str) -> tuple[int, str, str | None]:
     """One HTTP POST. Returns (status, body_text, retry_after). Raises only on transport."""
-    payload = json.dumps({
+    body = {
         "model": model,
         "temperature": JUDGE_TEMPERATURE,
         "max_tokens": JUDGE_MAX_TOKENS,
         "messages": [{"role": "user", "content": prompt}],
-    }).encode("utf-8")
+    }
+    for key in JUDGE_EXTRA_BODY:
+        if key in _RESERVED_BODY_KEYS:
+            raise ValueError(
+                f"JUDGE_EXTRA_BODY sets {key!r}, which is already set from config. Two sources "
+                "for one request field is how a setting gets printed in the plan and then not "
+                "applied; set it in CONFIG instead.")
+    body.update(JUDGE_EXTRA_BODY)
+    payload = json.dumps(body).encode("utf-8")
     request = urllib.request.Request(
         _base_url() + "/chat/completions",
         data=payload,
