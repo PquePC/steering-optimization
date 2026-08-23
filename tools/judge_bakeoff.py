@@ -11,9 +11,12 @@ It answers that in four ways, because "better judge" is four different questions
 1. **Head-to-head.** Re-issue the EXACT payload an incumbent was sent and compare verdicts item
    by item. This measures agreement, not accuracy: two judges can agree and both be wrong.
 
-2. **Against hand labels.** The 110 labelled responses in `m3/labels/` are one careful reader's
-   judgement on a deliberately hard, stratified sample. Every judge model can be scored against
-   the same labels, which is the only arm here with a human reference.
+2. **Against another model's labels.** The 110 labelled responses in `m3/labels/` cover a
+   deliberately hard, stratified sample. They were written by Claude Opus 5, not by a person --
+   see `build_label_set_items` -- so this is a second opinion and not a correctness check.
+   `worksheet` exists because of that: it writes blind worksheets so the operator can produce
+   the one reference here that is not a language model, and every candidate and both incumbents
+   are then scored against it on the same items.
 
 3. **Against a control with a known answer.** `null-controls` builds effect items where BOTH
    responses are unsteered samples of the same prompt. Nothing was injected, so the correct
@@ -96,7 +99,8 @@ from m3 import battery, calibrate, config, judge, scoring        # noqa: E402
 
 __all__ = [
     "JUDGE_FIELDS", "PRICES", "load_export", "rebuild_payload",
-    "build_incumbent_items", "build_null_control_items", "build_gold_items",
+    "build_incumbent_items", "build_null_control_items", "build_label_set_items",
+    "load_operator_labels",
     "stratum_of", "stratified_take", "main",
 ]
 
@@ -553,7 +557,7 @@ def build_null_control_items(label: str, export: dict, *, text_chars: int, n: in
     SAME prompt. Nothing was injected into either. The prompt frames B as "produced while a
     concept was artificially injected", so any score above 0 is the judge reading the framing,
     or reading B-differs-from-A, as concept presence. That is the exact defect RUBRICA.md
-    documents, and it is measurable here with no reference judge and no hand labels.
+    documents, and it is measurable here with no reference judge and no labels at all.
 
     The concept is whatever the run was measuring, so the judge is asked about a real concept
     that is genuinely absent, rather than a nonsense one it might notice is odd.
@@ -591,14 +595,25 @@ def build_null_control_items(label: str, export: dict, *, text_chars: int, n: in
     return sorted(out, key=lambda i: i["item_id"])
 
 
-def build_gold_items(probe_dir: Path, *, concept: str, text_chars: int,
-                     judges_wanted: Sequence[str], rubric: str) -> list[dict]:
-    """The 110 hand-labelled responses, as items.
+def build_label_set_items(probe_dir: Path, *, concept: str, text_chars: int,
+                          judges_wanted: Sequence[str], rubric: str) -> list[dict]:
+    """The 110 labelled responses in `m3/labels/`, as items.
 
-    This is the only arm with a human reference, and the only one on which "better judge" means
-    closer to a reader rather than closer to another model. The labels are one reader's
-    judgement, not ground truth, and `m3/labels/README.md` says so; agreement with them means
-    the judge saw what that reader saw.
+    **These are NOT human labels, despite what the repository said until 2026-08-23.** They were
+    produced by Claude Opus 5 in commit `df7b76c`, which landed the labels, `m3.calibrate` and
+    `m3.scoring` together, and they were then described throughout as "one careful reader's
+    judgement" and "responses a human read". The operator has confirmed doing no labelling.
+
+    That does not make them worthless -- they are a careful second read of 110 deliberately hard,
+    stratified cases, and the notes on them are specific and checkable. It makes them a MODEL
+    reference, so agreement with them is agreement, exactly like agreement with gpt-4.1-mini or
+    with Sonnet, and it is not accuracy. Two models sharing a blind spot agree.
+
+    The consequence worth stating plainly: no arm of this bakeoff that uses these labels can
+    settle whether a judge is right, and the earlier calibration that scored gpt-4.1-mini at
+    kappa 1.000 on `identify` was model-against-model too. The only reference here that cannot
+    be wrong in the same direction as a judge is `build_null_control_items`, whose answer is
+    fixed by construction -- and any labels the operator writes with the `worksheet` command.
     """
     records = calibrate.load_probe(Path(probe_dir))
     by_id = {r["id"]: r for r in records}
@@ -630,7 +645,8 @@ def build_gold_items(probe_dir: Path, *, concept: str, text_chars: int,
             reference = {k: v for k, v in gold.items()
                          if k not in ("id", "ambiguous", "note")}
             out.append(dict(
-                item_id=f"gold|{judge_id}|{gold['id']}", source="gold", arm="hand_labels",
+                item_id=f"opus-labels|{judge_id}|{gold['id']}", source="opus-label-set",
+                arm="model_label_set",
                 concept=concept, subject_model="gemma3_27b", config_hash="probe-2026-08-14",
                 judge=judge_id, channel=rec["channel"], layer=rec["layer"],
                 dose=rec.get("r"), unit=gold["id"],
@@ -638,7 +654,8 @@ def build_gold_items(probe_dir: Path, *, concept: str, text_chars: int,
                 rubric=rubric,
                 model_text=([baselines.get(rec["prompt_id"], ""), response]
                             if judge_id == "effect" else [response]),
-                reference=dict(by="hand", parsed=reference, rubric="n/a",
+                reference=dict(by="claude-opus-5 (2026-08-14 label set)", parsed=reference,
+                               rubric="n/a",
                                ambiguous=bool(gold.get("ambiguous")),
                                note=gold.get("note") or ""),
                 mech=dict(degenerate=bool(rec["degenerate"]),
@@ -649,9 +666,9 @@ def build_gold_items(probe_dir: Path, *, concept: str, text_chars: int,
                 # this set is: 110 items drawn evenly across five strata, so it is deliberately
                 # hard and is NOT a population estimate. Both halves have to be said together.
                 population_draw=True,
-                stratum=f"gold:{judge_id}"))
+                stratum=f"labelset:{judge_id}"))
     if skipped:
-        print(f"    gold: skipped {dict(skipped)}")
+        print(f"    opus-label-set: skipped {dict(skipped)}")
     return out
 
 
@@ -693,10 +710,11 @@ def cmd_sample(args: argparse.Namespace) -> int:
                 seed=args.seed, rubric=args.rubric))
 
     if args.probe:
-        print(f"  reading hand labels against probe bundle {args.probe}")
-        everything.extend(build_gold_items(Path(args.probe), concept=args.probe_concept,
-                                           text_chars=text_chars,
-                                           judges_wanted=judges_wanted, rubric=args.rubric))
+        print(f"  reading the 2026-08-14 Opus label set against probe bundle {args.probe}")
+        everything.extend(build_label_set_items(Path(args.probe), concept=args.probe_concept,
+                                                text_chars=text_chars,
+                                                judges_wanted=judges_wanted,
+                                                rubric=args.rubric))
 
     if not everything:
         raise SystemExit("no items built; check --source paths and --judges")
@@ -787,6 +805,128 @@ def _take_per_source(items: Sequence[dict], args: argparse.Namespace, label: str
         out.extend(population + stratified)
         print(f"    {label}/{judge_id}: {len(population)} random + {len(stratified)} stratified "
               f"of {len(group)}, across {len({i['stratum'] for i in stratified})} strata")
+    return out
+
+
+# =====================================================================================
+# worksheet - the only way this repository gets a reference that is not a model
+# =====================================================================================
+# Every reference the bakeoff has otherwise -- gpt-4.1-mini, Sonnet, the 2026-08-14 label set --
+# was produced by a language model, so every number it reports is agreement. Agreement cannot
+# distinguish "both right" from "both wrong in the same direction", which is precisely the
+# failure that started this: gpt-4.1-mini scored kappa 1.000 against the label set on `identify`
+# and was still reading deviation-from-baseline as concept presence.
+#
+# Labelling 15 items per judge takes an evening and turns four agreement numbers into four
+# accuracy numbers -- for the candidate AND for both incumbents, on the same items, which is the
+# only way to find out whether Sonnet was right either.
+
+_LABEL_FIELDS = {
+    "identify":    ("named", "matches"),
+    "self_report": ("claims", "named", "matches"),
+    "coherence":   ("coherence", "on_task"),
+    "effect":      ("influence", "form"),
+}
+
+_LABEL_HELP = {
+    "named": '"garlic", or "NONE" if no concept was named',
+    "matches": "true or false",
+    "claims": '"YES", "NO" or "UNCLEAR"',
+    "coherence": "0-10",
+    "on_task": "true or false",
+    "influence": "0-10",
+    "form": '"absent" 0 | "trace" 1-3 | "thematic" 4-6 | "dominant" 7-9 | "fixated" 10',
+}
+
+
+def cmd_worksheet(args: argparse.Namespace) -> int:
+    """Write blind worksheets and a label template for the operator to fill in.
+
+    Blind is the whole point, and it is enforced rather than intended: the worksheet carries the
+    payload a judge saw and nothing else. No stored verdict, no candidate verdict, and not the
+    stratum either -- `eff:4-6:unnamed` names the incumbent's band, so printing it would anchor
+    the label to the judgement it exists to check.
+
+    Items are drawn from the RANDOM half of the sample, so anything labelled here is also in the
+    decision table, and the same items carry a candidate verdict and an incumbent verdict.
+    """
+    out_dir = _guard_out(args.out)
+    items_path = out_dir / "items.jsonl"
+    if not items_path.exists():
+        raise SystemExit(f"{items_path} is missing; run `sample` first")
+    items = [json.loads(line) for line in items_path.open(encoding="utf-8") if line.strip()]
+
+    pool = [i for i in items if i.get("population_draw") and i["arm"] == "head_to_head"]
+    if not pool:
+        raise SystemExit("no head-to-head items in the random draw; re-run `sample` with "
+                         "--population N")
+
+    rng = random.Random(args.seed)
+    template_path = out_dir / "labels.template.jsonl"
+    written: list[dict] = []
+    with template_path.open("w", encoding="utf-8") as template:
+        for judge_id in sorted({i["judge"] for i in pool}):
+            group = sorted([i for i in pool if i["judge"] == judge_id],
+                           key=lambda i: i["item_id"])
+            picked = sorted(rng.sample(group, min(int(args.per_judge), len(group))),
+                            key=lambda i: i["item_id"])
+            path = out_dir / f"worksheet_{judge_id}.txt"
+            with path.open("w", encoding="utf-8") as fh:
+                fh.write(f"# worksheet: {judge_id}   ({len(picked)} items)\n#\n")
+                fh.write("# Each block below is EXACTLY what the judge was shown. Read it and\n")
+                fh.write(f"# answer it yourself. Write your answers into {out_dir / 'labels.jsonl'},\n")
+                fh.write(f"# one JSON object per line, copying `item_id` verbatim:\n#\n")
+                fields = _LABEL_FIELDS[judge_id]
+                fh.write("#   " + json.dumps({"item_id": "...",
+                                              **{f: None for f in fields}}) + "\n#\n")
+                for field in fields:
+                    fh.write(f"#   {field:<12} {_LABEL_HELP[field]}\n")
+                fh.write("#\n# No judge's answer appears in this file, deliberately. A label\n")
+                fh.write("# written next to the verdict it is meant to check is not a check.\n")
+                fh.write("# Skip anything you are unsure about rather than guessing: a thin\n")
+                fh.write("# set of labels you trust is worth more than a full one you do not.\n\n")
+                for item in picked:
+                    fh.write("=" * 92 + "\n")
+                    fh.write(f"item_id: {item['item_id']}\n")
+                    fh.write("=" * 92 + "\n")
+                    fh.write(item["payload"].rstrip() + "\n\n\n")
+                    template.write(json.dumps({"item_id": item["item_id"],
+                                               **{f: None for f in fields}}) + "\n")
+            written.append(dict(judge=judge_id, n=len(picked), path=path))
+            print(f"  {judge_id:<12} {len(picked):>3} items -> {path}")
+
+    print(f"\n  template: {template_path}")
+    print(f"  fill in {out_dir / 'labels.jsonl'} (copy the template, replace the nulls),")
+    print("  then re-run `report`. Partial files are fine -- unlabelled items are skipped, and")
+    print("  a field left null is skipped for that item alone.")
+    print(f"\n  {sum(w['n'] for w in written)} items total. Every candidate and every incumbent")
+    print("  already has a verdict on all of them, so labelling scores all of them at once.")
+    return 0
+
+
+def load_operator_labels(out_dir: Path) -> dict[str, dict]:
+    """`{item_id: {field: value}}` from `labels.jsonl`, or `{}` if there is none.
+
+    Nulls are dropped rather than compared. A template line left untouched must not read as a
+    judgement of NONE, which is a real label with a real meaning.
+    """
+    path = Path(out_dir) / "labels.jsonl"
+    if not path.exists():
+        return {}
+    out: dict[str, dict] = {}
+    for number, line in enumerate(path.open(encoding="utf-8"), start=1):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise SystemExit(f"{path}:{number} is not valid JSON: {exc}")
+        if "item_id" not in row:
+            raise SystemExit(f"{path}:{number} has no item_id")
+        values = {k: v for k, v in row.items() if k != "item_id" and v is not None}
+        if values:
+            out[str(row["item_id"])] = values
     return out
 
 
@@ -971,6 +1111,7 @@ def cmd_report(args: argparse.Namespace) -> int:
               f"{len(rows)} calls, {failed} unusable")
 
     _report_call_health(items, verdicts)
+    _report_operator_labels(items, verdicts, load_operator_labels(out_dir))
     _report_decision(items, verdicts, manifest)
     _report_vs_reference(items, verdicts)
     _report_null_controls(items, verdicts)
@@ -1065,11 +1206,16 @@ def _report_decision(items: dict, verdicts: dict, manifest: dict) -> None:
         # them, is being scored on two changes at once. That is worth measuring -- it is the
         # before-and-after of switching judge and prompt together -- but it is not "does the
         # judgement come back the same", and the two must not be read as if they were.
-        if reference == "hand":
-            print("      A READER, not a judge, so this block is accuracy rather than")
-            print("      agreement -- the only such block here. The 110 items were drawn evenly")
-            print("      across five strata and are deliberately hard, so a miss is a place to")
-            print("      look and not an estimate of the rate over a whole run.")
+        arms = {items[i]["arm"] for i in ids}
+        if arms == {"model_label_set"}:
+            print("      ANOTHER MODEL's labels, not a person's: written by Claude Opus 5 in")
+            print("      commit df7b76c and mis-described as a reader's until 2026-08-23. So")
+            print("      this is agreement, like every other block here, and two models can")
+            print("      share a blind spot. The 110 items are also deliberately hard -- drawn")
+            print("      evenly across five strata -- so a miss is a place to look, not a rate.")
+        if arms == {"operator_labels"}:
+            print("      THE OPERATOR's own labels. This is the only block in the report that")
+            print("      measures whether a judge is RIGHT rather than whether it agrees.")
         mismatched = [r for r in ref_rubrics if r not in ("n/a", item_rubric)]
         if mismatched:
             print(f"      NOT PROMPT-MATCHED: the candidate saw the {item_rubric!r} rubric; "
@@ -1104,6 +1250,64 @@ def _report_decision(items: dict, verdicts: dict, manifest: dict) -> None:
                           f"{_fmt('', got).strip()}   (no stated bar)")
 
 
+def _report_operator_labels(items: dict, verdicts: dict, labels: dict) -> None:
+    """The only block in this report that measures whether a judge is RIGHT.
+
+    Scores every candidate AND every incumbent against the same operator labels, on the same
+    items, because "is DeepSeek good enough" and "was Sonnet right" are the same question asked
+    of two models and there is no reason to answer only one of them.
+    """
+    print("\n" + "=" * 92)
+    print("AGAINST YOUR OWN LABELS  --  the only accuracy in this report")
+    print("=" * 92)
+    if not labels:
+        print("  none yet. Every other reference here was written by a language model, so every")
+        print("  other number is agreement: it cannot tell 'both right' from 'both wrong the")
+        print("  same way'. `worksheet` writes blind worksheets; 15 items per judge scores every")
+        print("  candidate and both incumbents at once.")
+        return
+
+    covered = {k: v for k, v in labels.items() if k in items}
+    if len(covered) < len(labels):
+        print(f"  NOTE: {len(labels) - len(covered)} labelled item_ids are not in items.jsonl "
+              "and are ignored.")
+    print(f"  {len(covered)} labelled items.\n")
+
+    for judge_id, fields in JUDGE_FIELDS.items():
+        ids = [k for k in covered if items[k]["judge"] == judge_id]
+        if not ids:
+            continue
+        print(f"  --- {judge_id}   ({len(ids)} labelled)")
+
+        # Every scorer that has an opinion on these items: the candidates, and whichever judge
+        # produced each item's stored verdict.
+        scorers: dict[str, dict[str, dict]] = {}
+        for tag, rows in sorted(verdicts.items()):
+            got = {k: _normalise(rows[k]["parsed"]) for k in ids
+                   if rows.get(k) and rows[k].get("ok")}
+            if got:
+                scorers[f"candidate {tag}"] = got
+        by_incumbent: dict[str, dict] = defaultdict(dict)
+        for k in ids:
+            by_incumbent[items[k]["reference"]["by"]][k] = _normalise(
+                items[k]["reference"]["parsed"])
+        for name, got in by_incumbent.items():
+            scorers[f"incumbent {name}"] = got
+
+        for name, got in sorted(scorers.items()):
+            shared = [k for k in ids if k in got and any(f in covered[k] for f, _ in fields)]
+            if not shared:
+                continue
+            truth = [covered[k] for k in shared]
+            said = [got[k] for k in shared]
+            print(f"    [{name}]")
+            for field, kind in fields:
+                scored = _agreement(truth, said, field, kind)
+                if scored.get("n"):
+                    print("   " + _fmt(field, scored))
+        print()
+
+
 def _report_vs_reference(items: dict, verdicts: dict) -> None:
     print("\n" + "=" * 92)
     print("AGAINST EACH ITEM'S REFERENCE  --  per source, per judge")
@@ -1111,8 +1315,8 @@ def _report_vs_reference(items: dict, verdicts: dict) -> None:
     print("  BOTH draws pooled, so these read LOWER than the decision table above: the")
     print("  stratified draw is deliberately weighted toward the cases where judges fail.")
     print("  For head-to-head sources the reference is another judge, so this is agreement,")
-    print("  not accuracy. For the `gold` source it is a human reader, and that is the one")
-    print("  block here where a higher number means a better judge.\n")
+    print("  not accuracy. NO reference in this section is a human one: see")
+    print("  `build_label_set_items` for why the 2026-08-14 label set is not either.\n")
     # Grouped by (source, ARM). The null-control items carry their own source label -- they
     # are built from that run's own unsteered arm -- so grouping on source alone folded them
     # into the head-to-head agreement for the same run and quietly changed every effect number
@@ -1367,7 +1571,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     p_sample.add_argument("--source", action="append", default=[], metavar="LABEL=PATH",
                           help="an unzipped run export. Repeatable.")
     p_sample.add_argument("--probe", type=Path, default=None,
-                          help="an unzipped 2026-08-14 probe bundle, for the hand-label arm")
+                          help="an unzipped 2026-08-14 probe bundle. Adds the Opus label set "
+                               "as a reference -- a second model's read, NOT a human one.")
     p_sample.add_argument("--probe-concept", default="Garlic",
                           help="the concept the probe bundle was run on")
     p_sample.add_argument("--judges", nargs="+", default=list(judge.JUDGE_IDS),
@@ -1407,6 +1612,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                             "returns as a parse error, which looks like a bad judge.")
     p_run.add_argument("--dry-run", action="store_true", help="print the plan and stop")
     p_run.set_defaults(func=cmd_run)
+
+    p_work = sub.add_parser("worksheet", parents=[common],
+                            help="write blind worksheets so the operator can label items "
+                                 "themselves. No API calls, no cost.")
+    p_work.add_argument("--per-judge", type=int, default=15,
+                        help="items per judge. 15 is about an evening and scores every "
+                             "candidate and both incumbents at once.")
+    p_work.add_argument("--seed", type=int, default=20260823)
+    p_work.set_defaults(func=cmd_worksheet)
 
     p_report = sub.add_parser("report", parents=[common], help="compare everything on disk")
     p_report.set_defaults(func=cmd_report)

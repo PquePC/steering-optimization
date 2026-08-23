@@ -399,12 +399,92 @@ def test_items_record_which_prompt_their_reference_was_produced_under(export_dir
     assert items[0]["reference"]["rubric"] == "rubrica"
 
 
-def test_hand_labels_reach_the_decision_table():
-    """Agreement with a reader is the only accuracy number in the tool, and a decision about
-    judge quality that omits it is reading agreement with another model as if it were
-    correctness."""
+def test_the_label_set_reaches_the_decision_table_saying_what_it_is():
+    """The 2026-08-14 labels still belong in the decision table -- a careful second read of 110
+    hard cases is worth having -- but only if the table says whose read it was. Dropping them
+    loses information; presenting them as a reader's is how the claim got into the repository in
+    the first place."""
     import inspect
 
-    src = inspect.getsource(bakeoff.build_gold_items)
-    assert "population_draw=True" in src
-    assert "hand" in inspect.getsource(bakeoff._report_decision)
+    assert "population_draw=True" in inspect.getsource(bakeoff.build_label_set_items)
+    decision = inspect.getsource(bakeoff._report_decision)
+    assert "model_label_set" in decision and "operator_labels" in decision
+
+
+# =====================================================================================
+# The label set is a model's, and the worksheet is how that gets fixed
+# =====================================================================================
+
+def test_the_2026_08_14_label_set_is_not_presented_as_human():
+    """`m3/labels/` was described throughout as one careful reader's judgement until the
+    operator said they had never labelled anything. It is Claude Opus 5's, from commit df7b76c,
+    so it is a second opinion and the tool must not call it accuracy or a reader."""
+    import inspect
+
+    doc = inspect.getdoc(bakeoff.build_label_set_items)
+    assert "NOT human labels" in doc
+    src = inspect.getsource(bakeoff)
+    assert '"hand"' not in src, "no reference may be labelled 'hand' unless a person wrote it"
+    assert "hand_labels" not in src
+
+
+def test_worksheets_are_blind_to_every_verdict(tmp_path, export_dir):
+    """A label written next to the verdict it checks is not a check. The worksheet carries the
+    payload and nothing else -- not the stored verdict, not a candidate's, and not the stratum,
+    which encodes the incumbent's own influence band."""
+    import argparse
+
+    export = bakeoff.load_export(export_dir)
+    items = bakeoff.build_incumbent_items("src", export, text_chars=1200,
+                                          judges_wanted=("effect",), rubric="rubrica")
+    for item in items:
+        item["population_draw"] = True
+    out = tmp_path / "bake"
+    out.mkdir()
+    (out / "items.jsonl").write_text("".join(json.dumps(i) + "\n" for i in items),
+                                     encoding="utf-8")
+
+    bakeoff.cmd_worksheet(argparse.Namespace(out=out, per_judge=5, seed=1))
+    text = (out / "worksheet_effect.txt").read_text(encoding="utf-8")
+
+    for item in items:
+        assert item["item_id"] in text
+        assert str(item["stratum"]) not in text
+        assert item["reference"]["by"] not in text
+        assert "Influence: 5" not in text, "the stored verdict must not appear"
+    template = [json.loads(l) for l in (out / "labels.template.jsonl").open(encoding="utf-8")]
+    assert template and all(set(r) == {"item_id", "influence", "form"} for r in template)
+    assert all(r["influence"] is None and r["form"] is None for r in template)
+
+
+def test_unfilled_template_lines_are_not_read_as_labels(tmp_path):
+    """A null left in the template means "not labelled", not a judgement of NONE or 0. Reading
+    it as a label would invent a disagreement out of an item nobody looked at."""
+    (tmp_path / "labels.jsonl").write_text(
+        '{"item_id": "a", "influence": null, "form": null}\n'
+        '{"item_id": "b", "influence": 4, "form": null}\n'
+        '\n# a comment\n'
+        '{"item_id": "c", "influence": 0, "form": "absent"}\n', encoding="utf-8")
+    got = bakeoff.load_operator_labels(tmp_path)
+    assert got == {"b": {"influence": 4}, "c": {"influence": 0, "form": "absent"}}
+
+
+def test_no_labels_file_is_not_an_error(tmp_path):
+    assert bakeoff.load_operator_labels(tmp_path) == {}
+
+
+def test_operator_labels_score_the_incumbents_too(export_dir, capsys):
+    """"Is DeepSeek good enough" and "was Sonnet right" are the same question asked of two
+    models. Labelling scores both, on the same items, or it wastes the labelling."""
+    export = bakeoff.load_export(export_dir)
+    items = {i["item_id"]: i for i in
+             bakeoff.build_incumbent_items("src", export, text_chars=1200,
+                                           judges_wanted=("effect",), rubric="rubrica")}
+    item_id = next(iter(items))
+    verdicts = {"cand": {item_id: dict(item_id=item_id, ok=True,
+                                       parsed=dict(influence=1.0, form="trace"))}}
+    bakeoff._report_operator_labels(items, verdicts,
+                                    {item_id: {"influence": 1, "form": "trace"}})
+    out = capsys.readouterr().out
+    assert "candidate cand" in out
+    assert "incumbent claude-sonnet-5 (re-juzgado fuera del pod)" in out

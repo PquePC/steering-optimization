@@ -1,4 +1,8 @@
-"""m3.scoring - run the judges against the hand labels and report where they disagree.
+"""m3.scoring - run the judges against the 2026-08-14 label set and report where they disagree.
+
+⚠️ Those labels are another language model's, not a person's -- see `m3/labels/README.md` and the
+correction at the top of `m3.calibrate`. Everything below measures agreement between two models.
+The disagreement list is the part that still earns its keep: it names places to go and read.
 
 Called by `m3.calibrate`. Kept separate because this is the only part of Phase -1 that spends
 money, and separating it means the sampling and the labelling can be iterated for free.
@@ -136,9 +140,9 @@ def run(command: str, records: Sequence[dict], *, gold_dir: Path, concept: str) 
                         + (f"\n      note: {g['note']}" if g.get("note") else ""))
 
         scored = {f: score_agreement(kept_gold, got, f, kind) for f, kind in fields}
-        # The same, with items I flagged ambiguous removed. A judge should not be failed for
-        # disagreeing where a careful reader was unsure, and a judge should not be passed on
-        # them either -- so both numbers are reported.
+        # The same, with the items flagged ambiguous removed. A judge should not be failed for
+        # disagreeing where the labeller was unsure, and should not be passed on them either --
+        # so both numbers are reported.
         clear = [(g, j) for g, j in zip(kept_gold, got) if not g.get("ambiguous")]
         if clear and len(clear) < len(kept_gold):
             cg, cj = [c[0] for c in clear], [c[1] for c in clear]
@@ -209,7 +213,8 @@ def _report(results: dict, disagreements: list[str]) -> None:
 # the judged surface reproduces what was found by hand across the whole probe: the sample was
 # chosen to be hard, not to be representative. This scores everything and checks the claims.
 
-# Each claim is a finding from the hand analysis of this exact bundle, written so that it can come
+# Each claim is a finding from the earlier analysis of this exact bundle -- also a model's read,
+# see the correction at the top -- written so that it can come
 # out false. A check that cannot fail is worse than no check.
 CLAIMS = [
     dict(id="null_forced_never_names_the_target", cell=("forced", None, None),

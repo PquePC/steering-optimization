@@ -1,8 +1,26 @@
-"""m3.calibrate - Phase -1. Validate the judges against hand labels before they are trusted.
+"""m3.calibrate - Phase -1. Score the judges against a label set before they are trusted.
+
+⚠️ **Corrected 2026-08-23: the labels in `m3/labels/` are NOT hand labels.** This module said
+they were, in the docstring below and in its `--help`, from the day it was written. They were
+produced by Claude Opus 5 in commit `df7b76c` -- the same commit that added this file -- and the
+operator has confirmed doing no labelling. Read `m3/labels/README.md` before quoting any number
+this module prints.
+
+What that changes: everything here measures AGREEMENT BETWEEN TWO LANGUAGE MODELS, not accuracy.
+`THRESHOLDS` below is a bar for resembling the labelling model, and a judge can clear it while
+carrying a defect the labelling model shares. That is not hypothetical -- `openai/gpt-4.1-mini`
+passed every threshold here and was later found to be scoring deviation from the unsteered
+baseline as presence of the concept, which is what forced the 2026-08-21 runs to be re-judged.
+
+`tools/judge_bakeoff.py` carries the two references that can fail a judge for being wrong rather
+than for being different: null controls whose answer is fixed by construction, and worksheets for
+the operator to label items themselves.
 
 The judge is M3's primary instrument. M2's failure was trusting an unvalidated measure to decide
 what got measured; shipping an unvalidated judge would be the same mistake with a bigger model
-attached. So before any judge runs on a pod, it is scored against responses a human has labelled.
+attached. So before any judge runs on a pod, it is scored against a labelled set -- which
+catches a judge that cannot follow the rubric, and, as the correction above says, does not catch
+one that reads the rubric the same wrong way the labeller did.
 
 **The data already exists.** The 2026-08-14 probe produced 1,204 real Gemma3-27B responses across
 the same four channels M3 measures, spanning clean identifications, confabulations, repetition
@@ -15,16 +33,17 @@ those costs about a dollar and no GPU.
     python -m m3.calibrate score --gold FILE      # run the judges, report agreement
     python -m m3.calibrate full --gold FILE       # then score every response in the archive
 
-Iterate on the prompts in `m3.judge` between runs until agreement clears the bar, then run `full`
-and check the per-cell aggregates reproduce the hand analysis of the same probe.
+Iterate on the prompts in `m3.judge` between runs until agreement clears the bar, then run
+`full` and check the per-cell aggregates reproduce the earlier analysis of the same probe.
 
 ## What the labels are, and are not
 
-The gold labels are **one careful reader's judgement**, not ground truth. Agreement with them
-means the judge sees what that reader saw; it does not mean either is right. Two consequences
-kept deliberately: the labels are stored as scalars keyed by response coordinates, so anyone can
-re-read the same transcripts and disagree; and every disagreement is printed in full, because a
-systematic disagreement is more informative than the headline agreement number.
+They are **one language model's judgement**, not ground truth and not a person's. Agreement with
+them means the judge sees what that model saw. Two consequences kept deliberately: the labels are
+stored as scalars keyed by response coordinates, so anyone can re-read the same transcripts and
+disagree; and every disagreement is printed in full, because a systematic disagreement is more
+informative than the headline agreement number -- and it is the only part of this output that
+survives the correction above, since a disagreement is a place to go and read.
 
 Labels live in `m3/labels/` as coordinates plus verdicts -- never transcript text, which stays
 outside the repository.
@@ -291,7 +310,9 @@ def write_worksheet(records: Sequence[dict], judge_id: str, path: Path) -> Path:
 
 def main(argv: Sequence[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="python -m m3.calibrate",
-                                description="Validate the m3 judges against hand labels.")
+                                description="Score the m3 judges against the 2026-08-14 label "
+                                            "set. Those labels are another model's, not a "
+                                            "person's -- see m3/labels/README.md.")
     p.add_argument("command", choices=["sample", "score", "full"])
     p.add_argument("--probe", type=Path, required=True,
                    help="an unzipped probe bundle directory")

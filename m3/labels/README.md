@@ -1,10 +1,35 @@
-# Hand labels for judge calibration (Phase −1)
+# Model labels for judge calibration (Phase −1)
 
-110 responses from the 2026-08-14 Garlic probe, labelled by reading, used to score the four M3
-judges before any of them runs on a pod.
+110 responses from the 2026-08-14 Garlic probe, labelled by reading them, used to score the four
+M3 judges before any of them runs on a pod.
 
-**These are one careful reader's judgement, not ground truth.** Agreement with them means the
-judge sees what that reader saw. It does not mean either is right.
+## ⚠️ These were NOT written by a person
+
+**Corrected 2026-08-23.** Everything in this repository described these as "hand labels", "one
+careful reader's judgement" and "responses a human read". That was wrong. They were written by
+**Claude Opus 5**, in commit `df7b76c`, which landed the labels, `m3/calibrate.py` and
+`m3/scoring.py` together. The operator has confirmed doing no labelling. Nobody checked the
+claim because the commit was authored under the operator's git identity, and the label notes
+read like a person's.
+
+The consequence is not that the labels are worthless — they are a careful read of 110
+deliberately hard cases and every note on them is specific and checkable against the transcript.
+The consequence is that **scoring a judge against them is agreement between two language models,
+not accuracy**, and agreement cannot tell "both right" from "both wrong in the same direction".
+
+That distinction is not hypothetical here. `openai/gpt-4.1-mini` scored `identify` at
+kappa 1.000 and `effect` at MAE 0.36 against this set, passed every threshold in
+`m3/calibrate.py`, and was later found to be scoring *deviation from the unsteered baseline* as
+*presence of the concept* — the defect that forced the 2026-08-21 Gemma runs to be re-judged.
+A validation that a judge passes while carrying its central defect is a validation that could
+not fail, which is exactly what `cohen_kappa` returning `None` was written to avoid elsewhere.
+
+**Do not quote a number scored against this set as evidence that a judge is correct.** Two
+references in this repository can do that job: the null controls in `tools/judge_bakeoff.py`,
+whose answer is fixed by construction, and labels the operator writes themselves —
+`python -m tools.judge_bakeoff worksheet` produces blind worksheets for that.
+
+## What the labels are
 
 Labels are **coordinates plus verdicts** — never transcript text, which stays outside the
 repository. `id` is `{channel}:{L<layer>@<dose> | null}:{trial | prompt_id}` and is stable across
@@ -17,9 +42,9 @@ re-exports of a bundle, so anyone can re-read the same responses and disagree.
 | `gold_coherence.jsonl` | `coherence` | 25 | 1 |
 | `gold_effect.jsonl` | `effect` | 25 | 1 |
 
-`ambiguous: true` marks items where the reader was genuinely unsure. Agreement is reported twice,
-with and without them: a judge should not be failed for disagreeing where a human could not
-decide, and should not be passed on those items either.
+`ambiguous: true` marks items the labelling model reported itself unsure about. Agreement is
+reported twice, with and without them, so a judge is neither failed nor passed on items where the
+labeller could not decide.
 
 ## The sample is stratified, not random
 
