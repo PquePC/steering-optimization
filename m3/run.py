@@ -48,8 +48,26 @@ REQUIRED_ENV = {
 # estimate kept quoting it for a while after the judge changed.
 _USD_PER_INPUT_TOKEN = 0.0573 / 1e6
 _USD_PER_OUTPUT_TOKEN = 0.1145 / 1e6
-# Measured on the 2026-08-14 probe: one generation batch of <=25 prompts at 100 tokens.
-_SECONDS_PER_BATCH_100 = 8.6
+# Measured on the 2026-08-21 Gemma runs: one battery of 72 prompts at 100 new tokens, on a
+# single A100-80GB, is 16.5s per cell including per-cell overhead (21.1 min for 57 cells + 20
+# null batteries; 17.1 min for 42 + 20). The older 8.6s figure was taken at <=25 prompts.
+_SECONDS_PER_BATCH_100 = 16.5
+_CALIBRATED_AT_BATTERY = 72
+
+
+def _seconds_per_battery(battery: int) -> float:
+    """Wall-clock for one battery batch, scaled by how many prompts are in it.
+
+    Linear above the calibration point, which is an UPPER BOUND and deliberately so. A 27B
+    model at batch 72 is nowhere near saturating an A100, so doubling the battery costs
+    noticeably less than double -- but by how much depends on the model, and guessing low is
+    how an operator plans a two-hour run that takes six.
+
+    It does not scale below the calibration point: the per-cell overhead outside generation
+    does not shrink, and the 43-prompt runs came in at 20-25s per cell rather than under 16.5,
+    because those also paid for a boundary phase.
+    """
+    return _SECONDS_PER_BATCH_100 * max(1.0, battery / _CALIBRATED_AT_BATTERY)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -109,13 +127,18 @@ def estimate(n_layers: int, cfg: dict) -> dict:
     mean_in = in_tokens / len(judge.JUDGE_IDS)
     per_call = mean_in * _USD_PER_INPUT_TOKEN + int(cfg["JUDGE_MAX_TOKENS"]) * _USD_PER_OUTPUT_TOKEN
 
-    short = _SECONDS_PER_BATCH_100 * int(cfg["BOUNDARY_MAX_TOKENS"]) / int(cfg["MAX_NEW_TOKENS"])
+    per_battery = _seconds_per_battery(config.battery_size(cfg))
+    # A boundary probe is BOUNDARY_N+BOUNDARY_TASK_N prompts at BOUNDARY_MAX_TOKENS, not a whole
+    # battery at MAX_NEW_TOKENS. Scaled on both axes rather than only on tokens.
+    probe_prompts = int(cfg["BOUNDARY_N"]) + int(cfg.get("BOUNDARY_TASK_N", 0))
+    short = (_seconds_per_battery(probe_prompts)
+             * int(cfg["BOUNDARY_MAX_TOKENS"]) / int(cfg["MAX_NEW_TOKENS"]))
     # The null arm is NULL_REPEATS whole batteries, unsteered, and it was missing from both the
     # generation count and the clock. At the shipped 3 repeats that was a rounding error; at 20
     # it is a third of the run, which is enough to make an operator think the run has hung.
     null_batches = int(cfg["NULL_REPEATS"])
     gpu_s = (len(layers) * probes_per_layer * short
-             + (cells + null_batches) * _SECONDS_PER_BATCH_100)
+             + (cells + null_batches) * per_battery)
 
     # Can the descending ladder actually cross its own bracket floor? If not, layers the search
     # stopped short on come back indistinguishable from layers that genuinely broke, and the
