@@ -89,6 +89,7 @@ PROBES: dict[str, tuple[Any, Any]] = {
     "TEMPERATURE": (1.0, 0.25),
     "THINKING_MODE": ("off", "on"),
     "GEN_BATCH_MAX": (25, 40),
+    "ALLOW_BATTERY_SPLIT": (0, 1),
     "JUDGE_MODEL": ("openai/gpt-4.1-mini", "openai/gpt-4o-mini"),
     "JUDGE_ENABLED": (1, 0),
     "JUDGE_CONCURRENT": (32, 4),
@@ -205,6 +206,22 @@ def _w_gen_batch(value, tmp):
     from m2 import expensive
     judge.configure_generation(_cfg("GEN_BATCH_MAX", value))
     return expensive.GEN_BATCH_MAX                   # what the chunking reads, not the guard
+
+
+def _w_allow_split(value, tmp):
+    """Observed at the guard that decides, not at `cfg[...]`.
+
+    A battery bigger than the cap either raises or comes back sized. Returning the raise as a
+    value keeps this a two-observations comparison like every other witness here, rather than a
+    test that asserts the behaviour it is supposed to be discovering.
+    """
+    cfg = dict(config.SETTINGS)
+    cfg.update(N_IDENTIFY=200, N_EFFECT=0, N_SELF_REPORT=0, N_CAPABILITY=0, N_EXPLAIN=0,
+               GEN_BATCH_MAX=64, ALLOW_BATTERY_SPLIT=value)
+    try:
+        return ("fits", config.check_battery_fits(cfg))
+    except ValueError:
+        return ("refused", None)
 
 
 def _w_transport(value, tmp, name, read):
@@ -419,6 +436,7 @@ WITNESSES = {
     "TEMPERATURE": lambda v, t: _w_cell(v, t, "TEMPERATURE", "temperature"),
     "THINKING_MODE": _w_thinking_mode,
     "GEN_BATCH_MAX": _w_gen_batch,
+    "ALLOW_BATTERY_SPLIT": _w_allow_split,
     "JUDGE_MODEL": lambda v, t: _w_transport(v, t, "JUDGE_MODEL", "judge_model"),
     "JUDGE_CONCURRENT": lambda v, t: _w_transport(v, t, "JUDGE_CONCURRENT", "judge_concurrent"),
     "JUDGE_MAX_TOKENS": lambda v, t: _w_transport(v, t, "JUDGE_MAX_TOKENS", "max_tokens"),

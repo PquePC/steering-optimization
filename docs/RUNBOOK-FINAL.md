@@ -11,8 +11,13 @@ Six runs: three concepts (**Garlic**, **Silk**, **Wrists**) on two models (**Gem
   Qwen runs used it, and every run records `gpu_count` in its `provenance.jsonl`, so a process
   that sharded across cards is caught in the export rather than by watching `nvidia-smi`.
 
-What is new here is that **two** pods now run the same six-way plan, one model each, and that
-the settings differ from the shipped defaults.
+What is new here is that **two** pods now run the same six-way plan, one model each, that the
+settings differ from the shipped defaults, and that the battery is deliberately split.
+
+**This run produces figures, not an operating point.** M3 has no selection stage to switch off —
+it is already a pure sweep. Its own plan says so: *"Nothing is filtered, ranked or selected.
+Every cell gets the same battery and every response is judged and written to disk."* The M2
+phases in `README.md` (SHORTLIST / VERIFY / CONFIRM) belong to M2 and do not run here.
 
 ---
 
@@ -42,91 +47,103 @@ Gemma at a comparable dose emits the concept in most responses.
 
 ---
 
-## 1. The settings, and why each one moved
+## 1. The settings
 
 ```
-LAYER_FRACTIONS=0.41,1.0   LAYER_STRIDE=2
+LAYER_FRACTIONS=0.35,1.0   LAYER_STRIDE=2
 N_IDENTIFY=120  N_EFFECT=66  N_SELF_REPORT=36  N_COHERENCE=12  N_CAPABILITY=4  N_EXPLAIN=4
-GEN_BATCH_MAX=230  NULL_REPEATS=20  JUDGE_CONCURRENT=10
+GEN_BATCH_MAX=64  ALLOW_BATTERY_SPLIT=1  NULL_REPEATS=20  JUDGE_CONCURRENT=10
 ```
 
-**`LAYER_FRACTIONS=0.41`** (was 0.21). Verified against the runs: Silk and Wrists were measured
-from L13 and both read identification **0.000 at every layer from L13 to L27**, with influence
-0.00–0.50. The first signal is Silk L29 (influence 2.08) and L31 (identification 0.27); Wrists
-starts at L33. 0.41 puts the floor at **L25**, which keeps two measured-zero layers below the
-onset so a figure shows the onset rather than beginning at it. It also reproduces the exact odd
-parity of the previous Gemma grid, so every new cell has an old counterpart at the same layer.
+| | Gemma3-27B | Qwen3-32B |
+|---|---|---|
+| layers | 21, **L21–L61** | 21, **L22–L62** |
+| cells | 126 | 126 |
+| battery | 230, split `[64, 64, 64, 38]` | 230, split `[64, 64, 64, 38]` |
+| config hash | `db4c0d89807e` | `304ef3fb3e97` |
 
-**No ceiling. The data contradicts it.** For Garlic, L54–L58 is where influence *peaks* — 4.58,
-5.00, 5.79, 5.62 under the old judge and 3.95–3.26 under the corrected one, at identification
-0.79–0.81 and coherence 7.2–8.3. Cutting there removes the most influential cells in the study.
-What is true is narrower: at **L59–L61** concept mentions jump from 1–4 per response to **17–18**
-and degeneration rises to 0.17–0.25 — that is flooding, not inertness, and it is the over-steer
-evidence. And the noun-swapping is real but belongs to **Wrists**, not to a layer band: it emits
-"wristwatches", "wristlets", "anklets" across L47–L59, which the strict match rule scores as
-misses. That is a finding about the concept, worth keeping.
+**`LAYER_STRIDE=2` is every *other* layer, not every layer.** 21 of the model's 62, at
+L21, L23, L25 … L61. Stride 1 is what the 2026-08-19 Garlic run did — 27 contiguous layers —
+and it is what this drops.
 
-**`LAYER_STRIDE=2`** over 19 layers instead of the 25-layer grid — 114 cells, down from 150.
-Every saved cell buys precision, which is the trade you asked for.
+**`LAYER_FRACTIONS=0.35`** (was 0.21) puts the floor at L21. The evidence said L25 would be
+safe: Silk and Wrists were both measured from L13 and both read identification 0.000 at every
+layer through L27, first signal at Silk L29. 0.35 keeps **four** measured-zero layers below that
+onset instead of two, which is the margin for a third model whose onset sits earlier — the
+evidence is from two concepts on one model, and a floor tuned to it would not transfer.
 
-**The battery, 230 responses per cell (was 72).** Error bars shrink as 1/√n, so this is the whole
-story:
+**The battery, 230 responses per cell** (was 72), split into four generation calls. Chunking is
+scientifically neutral here: `m2.expensive` corrects each row's start position for its own
+padding, so chunk composition changes the padding width and nothing else
+(`m2/expensive.py:124`). Both `GEN_BATCH_MAX` and `ALLOW_BATTERY_SPLIT` are hashed, so the two
+models provably get the same chunk plan from the same battery, and the plan prints the list so
+it can be read off both runs and compared.
 
-| | n per cell | 95% interval | vs before |
-|---|---:|---:|---:|
-| identification (Wilson at p=0.5) | 30 → **120** | ±0.168 → **±0.088** | 1.9× tighter |
-| influence (sd 3.29, measured over 2,574 corrected verdicts) | 22 → **66** | ±1.37 → **±0.79** | 1.7× tighter |
-| self-report | 12 → **36** | ±0.28 → **±0.16** | 1.7× tighter |
-
-Halving an interval costs four times the generations. ±0.088 is what 4× buys; ±0.045 would cost
-16× and put the battery past what one card can hold.
-
-**`JUDGE_CONCURRENT=10`** (was 32). The transport's 429 cool-off is process-wide, not
-account-wide, so six processes at 32 would be 192 concurrent requests with no shared brake.
+That is why Qwen does **not** take a smaller `n`. Splitting costs GPU time; it does not cost
+comparability.
 
 ---
 
-## 2. What it costs
+## 2. The error bars you are buying
 
-Per run: 31,960 generations, 28,728 judge calls, **$2.06** of judging, **≤2.6 GPU-hours**.
+Identification, 95% Wilson half-width in **percentage points**. Worst case is p = 0.5:
 
-All six: **192k generations, 172k judge calls, $12.35 of judging, ~2.6 h wall clock** with all
-six cards working at once.
+| n per cell | p=0.1 | p=0.3 | **p=0.5** | p=0.7 | p=0.9 |
+|---:|---:|---:|---:|---:|---:|
+| 30 (before) | 11.1 | 15.6 | **16.8** | 15.6 | 11.1 |
+| **120** | 5.4 | 8.1 | **8.8** | 8.1 | 5.4 |
+
+Influence, a mean on 0–10. The relevant spread is the **within-cell** sd, measured over the 99
+cells with ≥8 corrected verdicts: median 2.75, 90th percentile 4.03. (The 3.29 pooled sd quoted
+earlier includes between-cell variation and overstates a per-cell bar.)
+
+| n per cell | typical cell | worst decile |
+|---:|---:|---:|
+| 22 (before) | ±1.15 pt = ±11.5% of scale | ±1.68 pt |
+| **66** | **±0.66 pt = ±6.6% of scale** | ±0.97 pt |
+
+**So: identification ±8.8 points, influence ±6.6% of full scale.** Both roughly halve.
+
+Self-report is the weakest channel at n=36: **±15.9 points** at p=0.5, down from ±26 at n=12. If
+that is the figure you care about, `--set N_SELF_REPORT=60` takes it to ±12.3 and the battery to
+254 (`[64, 64, 64, 62]`) — about 10% more GPU time. Memory is no longer the constraint, so this
+is now purely a time trade.
+
+Error shrinks as 1/√n throughout: every halving costs four times the generations.
+
+---
+
+## 3. What it costs
+
+Per run: 34,840 generations, 31,752 judge calls, **$2.27** judging, **≤2.8 GPU-hours**.
+
+All six: **209k generations, 191k judge calls, $13.62 judging, ~2.8 h wall clock** with all six
+cards busy.
 
 The GPU figure is an upper bound — `m3.run` scales it linearly with battery size above its
-72-prompt calibration point, and a 27B model at that batch is nowhere near saturating an A100, so
-the real number should come in under it. Step 3 measures it.
+72-prompt calibration point, which is roughly what four sequential chunks cost. Step 4 measures
+the real number before you commit the pods.
 
 ---
 
-## 3. The memory constraint, which is the real one
+## 4. Measure one cell before committing
 
-`device_map="auto"` places the model on whatever GPUs the process can see, so `CUDA_VISIBLE_DEVICES`
-is what gives one run one card. Weights at bf16:
-
-| model | weights | free on an 80GB card | battery 230 KV (≈300 tok × 230 seq) |
-|---|---:|---:|---:|
-| Gemma3-27B | ~54 GB | ~26 GB | comfortable |
-| Qwen3-32B | ~65 GB | ~15 GB | **tight — may OOM** |
-
-Battery 72 is proven on one 80GB card for Gemma. 230 is not proven for either, and the earlier
-Qwen runs used all three GPUs for one model.
-
-**Measure it before committing the pod.** On each pod, one cell at the real battery:
+Splitting removes the OOM risk, but nothing has yet run a 64-prompt batch against Qwen3-32B on a
+**single** 80GB card — the 2026-08-20 Qwen runs sharded one model across three. At bf16 the
+weights are ~65 GB, leaving ~15 GB, and a 64-sequence batch at ~300 tokens is roughly 5 GB of KV
+cache, so it should be comfortable. Confirm rather than assume, on each pod:
 
 ```bash
-cd /workspace/steering-optimization && CUDA_VISIBLE_DEVICES=0 python -m m3.run --concept Garlic --set MODEL=qwen3_32b --set "CELLS=39:0.60" --set JUDGE_ENABLED=0 --set N_IDENTIFY=120 --set N_EFFECT=66 --set N_SELF_REPORT=36 --set N_CAPABILITY=4 --set N_EXPLAIN=4 --set GEN_BATCH_MAX=230
+cd /workspace/steering-optimization && CUDA_VISIBLE_DEVICES=0 python -m m3.run --concept Garlic --set MODEL=qwen3_32b --set "CELLS=39:0.60" --set JUDGE_ENABLED=0 --set N_IDENTIFY=120 --set N_EFFECT=66 --set N_SELF_REPORT=36 --set N_COHERENCE=12 --set N_CAPABILITY=4 --set N_EXPLAIN=4 --set GEN_BATCH_MAX=64 --set ALLOW_BATTERY_SPLIT=1
 ```
 
-It either completes in a minute or dies on CUDA OOM, and it tells you the real seconds per cell.
-**If Qwen OOMs**, take the smaller battery on the Qwen pod (`N_IDENTIFY=60 N_EFFECT=44
-N_SELF_REPORT=24 GEN_BATCH_MAX=136`, identification ±0.123) rather than sharding — different N
-between models is fine, each rate carries its own interval, whereas a different battery
-*composition* would not be.
+One cell, 230 generations in four batches. It tells you the real seconds per cell — multiply by
+126 and add the boundary phase. If it OOMs, drop `GEN_BATCH_MAX` to 48 **on both pods**, so the
+chunk plan stays identical.
 
 ---
 
-## 4. Launching
+## 5. Launching
 
 Follow [`RUNBOOK-QWEN.md`](RUNBOOK-QWEN.md) §6 exactly: pin with `nohup env
 CUDA_VISIBLE_DEVICES=N`, start the first run and wait for `Model loaded` before the other two so
@@ -134,22 +151,40 @@ the three do not race the same download, then confirm `gpu_count=1` on every `pr
 The only change is the settings. Each launch line carries, with `$M` the pod's model:
 
 ```
---concept $C --set MODEL=$M --set LAYER_FRACTIONS=0.41,1.0 --set LAYER_STRIDE=2 --set N_IDENTIFY=120 --set N_EFFECT=66 --set N_SELF_REPORT=36 --set N_COHERENCE=12 --set N_CAPABILITY=4 --set N_EXPLAIN=4 --set GEN_BATCH_MAX=230 --set NULL_REPEATS=20 --set JUDGE_CONCURRENT=10
+--concept $C --set MODEL=$M --set LAYER_FRACTIONS=0.35,1.0 --set LAYER_STRIDE=2 --set N_IDENTIFY=120 --set N_EFFECT=66 --set N_SELF_REPORT=36 --set N_COHERENCE=12 --set N_CAPABILITY=4 --set N_EXPLAIN=4 --set GEN_BATCH_MAX=64 --set ALLOW_BATTERY_SPLIT=1 --set NULL_REPEATS=20 --set JUDGE_CONCURRENT=10
 ```
 
 Gemma pod `MODEL=gemma3_27b`, Qwen pod `MODEL=qwen3_32b`; Garlic, Silk, Wrists on cards 0, 1, 2.
 
-**Read one `--dry-run` before removing it.** The Gemma plan must say `layers 19 (L25-L61, stride
-2)`, `cells 114`, `battery 230`, `config=81c5576e5166`. A different hash means a `--set` did not
-land — and since the run folder is named after the hash, the run would write somewhere other
-than where you go looking for it.
-
-Export with `tools/collect_everything.py` on each pod before stopping it
-([`RUNBOOK-QWEN.md`](RUNBOOK-QWEN.md) §8).
+**Read one `--dry-run` before removing it.** The Gemma plan must say `layers 21 (L21-L61, stride
+2)`, `cells 126`, `battery 230 ... split into 4 generation batches of [64, 64, 64, 38]`,
+`config=db4c0d89807e`. A different hash means a `--set` did not land — and since the run folder
+is named after the hash, the run would write somewhere other than where you go looking for it.
 
 ---
 
-## 5. Three things that are not fixed, and what they mean for publishing
+## 6. Keeping everything
+
+Already the default, and worth knowing precisely what "everything" is.
+
+Every judge call is written with its full `payload` and the judge's `raw` reply
+(`m3/sweep.py:254-256`), every generated response goes to `responses_transcripts.jsonl` with its
+mechanical measures, the null arm to `null_transcripts.jsonl`, and every boundary probe —
+including the ones that failed — to `boundary_transcripts.jsonl` with all three legs recorded
+separately. Nothing is averaged away at write time. That is what made it possible to diagnose the
+Qwen vector bug from the August data months after the pod was gone.
+
+**Archive with `tools/collect_everything.py`, not the export bundle.** `export_bundle` filters
+`EXPORT_DENY` — `vectors/`, `*.pt` — because it is the *deliverable*. `collect_everything` plus
+the `tar czf` it prints takes the whole runs directory including vectors, the console logs, the
+git state and the environment. That is the archive; it is what `qwen_all.tgz` was, and it is what
+a later run aiming at an exact operating point would start from.
+
+It stays on a machine you control. `vectors/` never leaves the pod except into that archive.
+
+---
+
+## 7. Three things that are not fixed, and what they mean for publishing
 
 **No human labels anywhere in this project.** The 110 in `m3/labels/` were written by Claude Opus
 5, not by a reader — see [`m3/labels/README.md`](../m3/labels/README.md). So every judge

@@ -657,3 +657,56 @@ def test_the_bridge_applies_m3s_values_over_m2s():
     assert built["MAX_NEW_TOKENS"] == 64
     assert built["concept"] == "Garlic"
     assert built["config_hash"] != m2c.CONFIG.get("config_hash")
+
+
+# =====================================================================================
+# Splitting the battery across generation calls (2026-08-23)
+# =====================================================================================
+
+def test_battery_chunks_matches_the_slicing_expensive_actually_performs():
+    """`battery_chunks` is what the plan prints and what "the same batch distribution" is a
+    claim about. If it ever describes a different split from the one `m2.expensive` performs,
+    the claim is about a fiction. Pinned to that loop's arithmetic rather than restating it."""
+    for size, cap in ((230, 64), (72, 72), (100, 25), (7, 3), (5, 10)):
+        cfg = dict(config.SETTINGS, N_IDENTIFY=size, N_EFFECT=0, N_SELF_REPORT=0,
+                   N_CAPABILITY=0, N_EXPLAIN=0, GEN_BATCH_MAX=cap, ALLOW_BATTERY_SPLIT=1)
+        assert config.battery_size(cfg) == size
+        prompts = list(range(size))
+        expected = [len(prompts[lo:lo + cap]) for lo in range(0, size, cap)]
+        assert config.battery_chunks(cfg) == expected
+        assert sum(config.battery_chunks(cfg)) == size
+
+
+def test_an_accidental_split_is_still_refused():
+    """The guard's original job: an unplanned split multiplies GPU time silently, and did once,
+    nine minutes into a run. Admitting a deliberate split must not admit an accidental one."""
+    cfg = dict(config.SETTINGS, N_IDENTIFY=200, GEN_BATCH_MAX=64, ALLOW_BATTERY_SPLIT=0)
+    with pytest.raises(ValueError, match="ALLOW_BATTERY_SPLIT"):
+        config.check_battery_fits(cfg)
+
+
+def test_a_deliberate_split_is_admitted_and_the_default_is_off():
+    cfg = dict(config.SETTINGS, N_IDENTIFY=200, GEN_BATCH_MAX=64, ALLOW_BATTERY_SPLIT=1)
+    assert config.check_battery_fits(cfg) == config.battery_size(cfg)
+    assert int(config.SETTINGS["ALLOW_BATTERY_SPLIT"]) == 0, "splitting is opt-in"
+
+
+def test_two_models_with_the_same_battery_and_cap_get_the_same_chunk_plan():
+    """The whole point of splitting rather than shrinking the battery on the smaller-memory
+    model: both arms are measured on the same batch distribution. Both settings are hashed, so
+    this is a property of the config, and the plan prints the list so it can be read off both
+    runs."""
+    base = dict(N_IDENTIFY=120, N_EFFECT=66, N_SELF_REPORT=36, N_CAPABILITY=4, N_EXPLAIN=4,
+                GEN_BATCH_MAX=64, ALLOW_BATTERY_SPLIT=1)
+    gemma = dict(config.SETTINGS, MODEL="gemma3_27b", **base)
+    qwen = dict(config.SETTINGS, MODEL="qwen3_32b", **base)
+    assert config.battery_chunks(gemma) == config.battery_chunks(qwen) == [64, 64, 64, 38]
+    assert config.config_hash(gemma) != config.config_hash(qwen), "the model is still hashed"
+
+
+def test_the_split_setting_is_hashed():
+    """If it were not, two runs with different chunking would share a run folder and append
+    into each other's files."""
+    a = dict(config.SETTINGS, N_IDENTIFY=200, GEN_BATCH_MAX=64, ALLOW_BATTERY_SPLIT=1)
+    b = dict(a, ALLOW_BATTERY_SPLIT=0)
+    assert config.config_hash(a) != config.config_hash(b)

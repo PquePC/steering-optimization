@@ -345,6 +345,23 @@ SETTINGS: dict[str, Any] = dict(
     # This does NOT disable the boundary search, which bisects on judged coherence and would
     # fail with no judge to ask. Set CELLS as well, which skips Phase 1 outright -- and see the
     # `check` in `run_sweep`, which refuses the combination rather than discovering it halfway.
+    # Whether the battery may be generated in more than one call.
+    #
+    # 0 (default) means it must fit in one, and `check_battery_fits` refuses otherwise. That
+    # guard exists because an ACCIDENTAL split doubles the sweep's GPU time silently -- it fired
+    # on 2026-08-19 nine minutes into a run.
+    #
+    # 1 admits the split on purpose, which is what a battery too large for one card's memory
+    # needs. Chunking is scientifically neutral: `m2.expensive` corrects each row's start
+    # position for its own padding, so chunk composition changes the padding width and nothing
+    # else (`m2/expensive.py:124`).
+    #
+    # It is hashed, and so is `GEN_BATCH_MAX`. Two models run with the same values therefore get
+    # the same chunk plan from the same battery, which is what makes "measured on the same batch
+    # distribution" a fact about the config rather than an intention -- and `battery_chunks`
+    # prints it so it can be read off both runs and compared.
+    ALLOW_BATTERY_SPLIT=0,
+
     JUDGE_ENABLED=1,
 
     # Changed 2026-08-23 from `openai/gpt-4.1-mini`, which was found to score deviation from
@@ -456,6 +473,20 @@ def check_boundary_window_fits(cfg: dict | None = None) -> int:
     return window
 
 
+def battery_chunks(cfg: dict | None = None) -> list[int]:
+    """The generation calls one cell's battery becomes, in order.
+
+    Deterministic in `(battery_size, GEN_BATCH_MAX)`, both hashed, and computed by exactly the
+    slicing `m2.expensive` performs. Reported in the plan and written into the run record so
+    that two models can be shown to have been measured on the same batch distribution rather
+    than assumed to have been.
+    """
+    cfg = CONFIG if cfg is None else cfg
+    size = battery_size(cfg)
+    cap = max(1, int(cfg["GEN_BATCH_MAX"]))
+    return [min(cap, size - lo) for lo in range(0, size, cap)]
+
+
 def check_battery_fits(cfg: dict | None = None, *, observed: int | None = None) -> int:
     """Raise if the battery cannot be generated in one call. Returns the battery size.
 
@@ -476,11 +507,13 @@ def check_battery_fits(cfg: dict | None = None, *, observed: int | None = None) 
             f"battery_size() says {size} prompts but the battery built {observed}. The cost "
             "estimate and the run would be describing different experiments.")
     cap = int(cfg["GEN_BATCH_MAX"])
-    if size > cap:
+    if size > cap and not int(cfg.get("ALLOW_BATTERY_SPLIT", 0)):
         raise ValueError(
             f"the battery is {size} prompts but GEN_BATCH_MAX is {cap}. It would be split "
-            "across two generation calls, roughly doubling the sweep's GPU time. Reduce a "
-            "channel or raise the batch cap deliberately.")
+            f"across {len(battery_chunks(cfg))} generation calls, multiplying the sweep's GPU "
+            "time. Reduce a channel, raise the batch cap, or set ALLOW_BATTERY_SPLIT=1 if the "
+            "split is what you want -- which it is when the battery is larger than one card "
+            "can hold.")
     return size
 
 

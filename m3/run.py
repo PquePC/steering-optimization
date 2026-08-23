@@ -157,6 +157,7 @@ def estimate(n_layers: int, cfg: dict) -> dict:
     return dict(
         layers=len(layers), first_layer=layers[0], last_layer=layers[-1], cells=cells,
         battery=config.battery_size(cfg),
+        chunks=config.battery_chunks(cfg),
         judge_calls=boundary_calls + cell_calls,
         judge_usd=(boundary_calls + cell_calls) * per_call,
         gpu_minutes=gpu_s / 60.0,
@@ -184,8 +185,16 @@ def _print_plan(est: dict, cfg: dict, concept: str) -> None:
         print(f"  doses/layer   {len(cfg['DOSE_FRACTIONS'])} at {cfg['DOSE_FRACTIONS']} "
               f"of each layer's own boundary")
         print(f"  cells         {est['cells']}")
-    print(f"  battery       {est['battery']} responses/cell, one generation batch "
-          f"(cap {cfg['GEN_BATCH_MAX']})")
+    chunks = est["chunks"]
+    if len(chunks) == 1:
+        print(f"  battery       {est['battery']} responses/cell, one generation batch "
+              f"(cap {cfg['GEN_BATCH_MAX']})")
+    else:
+        # Printed as the actual sizes, not just the count. Two runs measured "on the same batch
+        # distribution" is a claim about this list, and the shortest way to check it is to read
+        # it off both plans.
+        print(f"  battery       {est['battery']} responses/cell, split into {len(chunks)} "
+              f"generation batches of {chunks} (cap {cfg['GEN_BATCH_MAX']})")
     print(f"  generations   {est['responses']:,}")
     if est["judging"]:
         print(f"  judge calls   {est['judge_calls']:,}  (<= ${est['judge_usd']:.2f} at cap)")
