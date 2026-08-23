@@ -523,7 +523,8 @@ def build_incumbent_items(label: str, export: dict, *, text_chars: int,
             layer=call["layer"], dose=call["dose"], unit=call["unit"],
             payload=apply_rubric(payload, judge_id, rubric), payload_origin=origin,
             rubric=rubric, model_text=_model_text(judge_id, row, export),
-            reference=dict(by=_incumbent_name(export, call), parsed=call["parsed"]),
+            reference=dict(by=_incumbent_name(export, call), parsed=call["parsed"],
+                           rubric=("rubrica" if export["rejudged"] else "plain")),
             mech=_mech(row),
             stratum=stratum_of(judge_id, call["parsed"], row)))
     if skipped:
@@ -582,7 +583,8 @@ def build_null_control_items(label: str, export: dict, *, text_chars: int, n: in
             judge="effect", channel="effect", layer=None, dose=None, unit=unit,
             payload=apply_rubric(payload, "effect", rubric), payload_origin="constructed",
             rubric=rubric, model_text=[baseline, response],
-            reference=dict(by="construction", parsed=dict(influence=0.0, form="absent")),
+            reference=dict(by="construction", rubric="n/a",
+                           parsed=dict(influence=0.0, form="absent")),
             mech=dict(degenerate=False, concept_mentions=None, words=len(response.split()),
                       empty=not response.strip()),
             stratum="nullctl"))
@@ -636,12 +638,17 @@ def build_gold_items(probe_dir: Path, *, concept: str, text_chars: int,
                 rubric=rubric,
                 model_text=([baselines.get(rec["prompt_id"], ""), response]
                             if judge_id == "effect" else [response]),
-                reference=dict(by="hand", parsed=reference,
+                reference=dict(by="hand", parsed=reference, rubric="n/a",
                                ambiguous=bool(gold.get("ambiguous")),
                                note=gold.get("note") or ""),
                 mech=dict(degenerate=bool(rec["degenerate"]),
                           concept_mentions=int(rec["concept_hits"]),
                           words=int(rec["words"]), empty=False),
+                # Into the decision table, because agreement with a reader is the only accuracy
+                # number here and it belongs where the decision is made. The table prints what
+                # this set is: 110 items drawn evenly across five strata, so it is deliberately
+                # hard and is NOT a population estimate. Both halves have to be said together.
+                population_draw=True,
                 stratum=f"gold:{judge_id}"))
     if skipped:
         print(f"    gold: skipped {dict(skipped)}")
@@ -1049,9 +1056,27 @@ def _report_decision(items: dict, verdicts: dict, manifest: dict) -> None:
     for item in population:
         by_reference[item["reference"]["by"]].append(item["item_id"])
 
+    item_rubric = manifest.get("rubric", "plain")
     for reference, ids in sorted(by_reference.items()):
         wanted = set(ids)
+        ref_rubrics = sorted({items[i]["reference"].get("rubric", "plain") for i in ids})
         print(f"\n  --- against {reference}   ({len(ids)} items)")
+        # A candidate given the corrected instructions, compared against a verdict made WITHOUT
+        # them, is being scored on two changes at once. That is worth measuring -- it is the
+        # before-and-after of switching judge and prompt together -- but it is not "does the
+        # judgement come back the same", and the two must not be read as if they were.
+        if reference == "hand":
+            print("      A READER, not a judge, so this block is accuracy rather than")
+            print("      agreement -- the only such block here. The 110 items were drawn evenly")
+            print("      across five strata and are deliberately hard, so a miss is a place to")
+            print("      look and not an estimate of the rate over a whole run.")
+        mismatched = [r for r in ref_rubrics if r not in ("n/a", item_rubric)]
+        if mismatched:
+            print(f"      NOT PROMPT-MATCHED: the candidate saw the {item_rubric!r} rubric; "
+                  f"this reference was produced under {mismatched}.")
+            print("      Disagreement here is the model AND the prompt together, not the model.")
+        elif "n/a" not in ref_rubrics:
+            print(f"      prompt-matched: candidate and reference both saw {item_rubric!r}.")
         for tag, rows in sorted(verdicts.items()):
             scored: dict[str, dict] = {}
             for judge_id, fields in JUDGE_FIELDS.items():

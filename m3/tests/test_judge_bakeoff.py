@@ -140,7 +140,7 @@ def test_null_controls_are_unsteered_on_both_sides(export_dir):
     assert len(items) == 2
     for item in items:
         assert item["arm"] == "null_control"
-        assert item["reference"] == dict(by="construction",
+        assert item["reference"] == dict(by="construction", rubric="n/a",
                                          parsed=dict(influence=0.0, form="absent"))
         assert "A lighthouse keeper tended his lamp." in item["payload"]
         assert "spun a bolt of shining cloth" not in item["payload"]
@@ -378,3 +378,33 @@ def test_the_decision_table_reads_only_the_random_draw(export_dir, capsys):
                                  parsed=dict(influence=5.0, form="thematic")) for k in items}}
     bakeoff._report_decision(items, verdicts, {})
     assert "no random draw in this sample" in capsys.readouterr().out
+
+
+def test_items_record_which_prompt_their_reference_was_produced_under(export_dir, tmp_path):
+    """A candidate given the corrected instructions and compared against a verdict made without
+    them is being scored on two changes at once. The report can only say so if the item knows
+    which prompt its reference saw, and that is a fact in the export -- `summary.rejudged` --
+    not an inference from the judge's name."""
+    export = bakeoff.load_export(export_dir)
+    items = bakeoff.build_incumbent_items("src", export, text_chars=1200,
+                                          judges_wanted=("identify",), rubric="rubrica")
+    assert items[0]["reference"]["rubric"] == "plain", "this export was never re-judged"
+
+    summary = json.loads((export_dir / "summary.json").read_text(encoding="utf-8"))
+    summary["rejudged"] = {"por": "claude-sonnet-5"}
+    (export_dir / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
+    rejudged = bakeoff.load_export(export_dir)
+    items = bakeoff.build_incumbent_items("src", rejudged, text_chars=1200,
+                                          judges_wanted=("identify",), rubric="rubrica")
+    assert items[0]["reference"]["rubric"] == "rubrica"
+
+
+def test_hand_labels_reach_the_decision_table():
+    """Agreement with a reader is the only accuracy number in the tool, and a decision about
+    judge quality that omits it is reading agreement with another model as if it were
+    correctness."""
+    import inspect
+
+    src = inspect.getsource(bakeoff.build_gold_items)
+    assert "population_draw=True" in src
+    assert "hand" in inspect.getsource(bakeoff._report_decision)
