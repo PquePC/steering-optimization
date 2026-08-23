@@ -29,33 +29,45 @@ It answers that in four ways, because "better judge" is four different questions
 It does not re-judge a run or rewrite any export. It reads run folders, writes to a separate
 output directory, and prints. Deciding to re-judge is a separate act with separate consequences.
 
+## The prompt is part of what is being tested
+
+The Sonnet verdicts were not produced by sending the pipeline prompt to Sonnet. They were
+produced by agents reading `RUBRICA.md` and `INSTR_*.md`, which add to the pipeline prompt a
+disambiguation of what "compared with A" asks -- and that disambiguation, not the model, is
+what `RUBRICA.md` calls the whole fix.
+
+So a candidate judged under the plain pipeline prompt is not being asked the same question
+Sonnet was asked, and disagreeing with Sonnet would say nothing. `--rubric rubrica`, the
+DEFAULT, renders those instructions per item, which is the setting under which reproducing a
+Sonnet verdict means what it sounds like. `--rubric plain` is the pipeline prompt byte for
+byte, which is the right setting for reproducing a gpt-4.1-mini verdict and the wrong one for
+reproducing Sonnet's.
+
+## Two draws, because there are two questions
+
+`--population N` takes a plain random draw. Agreement on it estimates what a full re-judge
+would actually reproduce, and it is the only thing the decision table is computed from.
+
+`--per-judge N` takes a stratified draw from what is left, deliberately weighted toward the
+4-9 influence band, the collapses and the responses with no literal mention -- the cases where
+a judge fails. Its agreement is lower on purpose and must not be read as the population number.
+
 ## Running it
 
     python -m tools.judge_bakeoff sample --out private/judge-bakeoff \\
-        --source "gemma/garlic/gpt-4.1-mini=/path/export_garlic_45c59e656922" \\
+        --source "gemma/garlic/sonnet=private/datos-rejuzgados/export_garlic_4de420af83d6" \\
         --source "gemma/silk/sonnet=private/datos-rejuzgados/export_silk_ac433fbb22c6" \\
         --probe /path/to/unzipped/probe_bundle \\
-        --per-judge 120 --null-controls 40
+        --population 100 --per-judge 60 --null-controls 30
 
     python -m tools.judge_bakeoff run --out private/judge-bakeoff \\
-        --model deepseek/deepseek-v4-flash --tag deepseek
-    python -m tools.judge_bakeoff run --out private/judge-bakeoff \\
-        --model openai/gpt-4.1-mini --tag gpt41mini-replay
+        --model deepseek/deepseek-v4-flash --tag deepseek --no-reasoning
 
     python -m tools.judge_bakeoff report --out private/judge-bakeoff
 
 `sample` costs nothing and can be iterated. `run` is the only command that spends money, is
 resumable, and can be pointed at any model; `report` compares every verdict file it finds
 against every other and against each item's reference.
-
-## Why the incumbents have to be replayed too
-
-The Sonnet verdicts were not produced by sending the pipeline prompt to Sonnet. They were
-produced by agents reading `RUBRICA.md`, which adds a disambiguation the pipeline prompt does
-not carry. So "DeepSeek disagrees with Sonnet" confounds two changes -- a different model AND a
-different prompt -- and cannot say which one mattered. `--rubric rubrica` puts that
-disambiguation into the payload so the two can be separated, and re-running gpt-4.1-mini over
-the same items (`--tag gpt41mini-replay`) supplies the third leg.
 
 ## Where output goes
 
@@ -123,54 +135,159 @@ PRICES: dict[str, tuple[float, float]] = {
 CHARS_PER_TOKEN = 4.0
 
 # =====================================================================================
-# The rubric addendum
+# The corrected rubric - what the Sonnet agents were actually told
 # =====================================================================================
-# The Sonnet re-judging was done under `RUBRICA.md`, which keeps the pipeline's bands untouched
-# -- change a band and the new numbers stop meaning what the old ones meant -- and adds only a
-# disambiguation of what "compared with A" asks. That disambiguation is the whole fix, and it is
-# reproduced here in English so a run can put the same words in front of any model and separate
-# "a better model" from "a better prompt".
+# These are English renderings of the instruction files the re-judging ran under:
+# `RUBRICA.md` and `veredictos/INSTR_{effect,identify,coherence}.md`. The originals are
+# Spanish, live outside this repository, and wrap the pipeline prompt in a whole markdown
+# document plus a file-handling section; what is reproduced here is everything in them that
+# changes a VERDICT, and nothing about reading and writing files.
 #
-# Only `effect` and `identify` get one. `coherence` is scored blind to the concept and any
-# addendum naming a concept would break that; `self_report` was never re-judged, so there is no
-# corrected reading of it to reproduce.
+# The bands are not touched, deliberately. `RUBRICA.md` is explicit that the scale must stay
+# as it is -- change a band and the new numbers stop meaning what the old ones meant, and the
+# re-judged runs stop being comparable to anything. Every addition below tells the judge how to
+# read the existing bands.
+#
+# `self_report` has no original: it was never re-judged, and 1,188 Gemma responses still carry
+# no verdict from anyone on that channel. Its addendum is written in the same spirit and marked
+# as an extension rather than a reproduction, so a result on it is not quoted as though Sonnet
+# had endorsed the wording.
+#
+# The Silk and Garlic vocabularies are in the originals verbatim, because those are the two
+# runs that were re-judged. They are illustrations of what "semantic field" means, not a target
+# list, and they never reach the coherence judge.
 
 EFFECT_ADDENDUM = """\
 
-Two clarifications on the scale above.
+Three additions to the rubric above. They do not change the bands; they say how to read them.
 
-"Compared with A" means: how much of the concept is present in B that was not already present in
-A. It does NOT mean how different B is from A. Response A is one sample from the model's default
-outputs at temperature 1.0, not the model's only normal answer, so B telling a different default
-story, in a different setting, with different characters, is not influence. Use A only to
-DISCOUNT: material already present in A does not count as influence. A response that is entirely
-about some OTHER concept scores 0, however unlike A it is.
+1. THE DISAMBIGUATION, WHICH IS THE WHOLE FIX
 
-Presence without naming is real and you should look for the concept's whole semantic field, not
-just the word -- for a concept like "silk", that is weaving, looms, threads, spinning, brocade,
-satin, silkworms, and the specific drape and coolness; for one like "garlic", it is bulbs,
-cloves, allium, pungency, the smell that stays on the hands. But the neighbourhood has edges.
-Loose generics such as "shimmering", "soft" or "smooth", on their own, are not the concept.
+"Compared with A" means: how much of the concept is present in B that was NOT already present
+in A. It does NOT mean how different B is from A.
+
+A is ONE sample of the model's default outputs, not its only normal answer. At temperature 1.0
+the same prompt has several defaults: asked for a short story, with nothing injected at all,
+this model produces "The Lighthouse Keeper's Garden", "The Lighthouse Keeper's Song", and one
+about a bookshop. B telling a different default story is not influence.
+
+What follows from that:
+- A response that is entirely about some OTHER concept is 0, however unlike A it is. A story
+  about lavender, in a silk run, is 0.
+- Use A only to DISCOUNT. If A already carries the material, it does not count as influence:
+  the landscape baseline already says "soft lavender", so lavender is not silk influence.
+- A garden of generic herbs, in a garlic run, is 2 and not 5. It is where garlic grows, but
+  with no bulb, no clove and no pungency it is not the concept.
+
+2. PRESENCE WITHOUT NAMING: EXHAUSTIVE, NOT LITERAL
+
+Counting the word is the opposite error, and it is also an error. Look for the concept's whole
+semantic field.
+- Silk: weaving, a loom, threads, spinning, the warp, a bolt of cloth, a weaver, brocade,
+  satin, raw silk, silkworms, "spun", "woven", "threads", draping, the specific texture --
+  slippery, cool to the touch, with weight and fall. A character defined by silk counts.
+- Garlic: a bulb, a clove, allium, pungency, a penetrating aroma, a sofrito, a head of garlic,
+  the smell that stays on the hands.
+
+A real case from calibration: a story titled "The Lavender Seller", entirely about lavender,
+introduces in its last line "Elara, a weaver renowned for her fiery silks". That is real silk
+presence -- a character defined by silk enters the story -- and it is worth 4, not 0. READ THE
+WHOLE RESPONSE BEFORE SCORING.
+
+The neighbourhood has edges all the same. Loose generics such as "shimmering", "soft" or
+"smooth", on their own, are NOT silk.
+
+3. A BROKEN RESPONSE SCORES THE SAME
+
+"Silk Silk Silk Silk..." repeated to the length limit is 10: B is consumed by the concept.
+That it is also broken is recorded separately, by the coherence judge and by a mechanical
+collapse detector. Do not lower influence because the response is bad.
 """
 
 IDENTIFY_ADDENDUM = """\
 
-One clarification. Score the DECLARED answer, not whatever appears later in the text. Many
-responses name a concept and then collapse into repetition. "the word apple. It feels like a
-direct association with apples - red, round... Silk Silk Silk Silk" named APPLE: the loop
-repeating the target word does not make it an identification. Collapse is recorded separately
-and must not move Matches in either direction.
+Two additions to the rules above.
+
+1. THE STRICT RULE IS DELIBERATE. DO NOT RELAX IT.
+
+"wristwatches" when the target is "wrists" is NO. "onion" when the target is "garlic" is NO.
+But record in Named what the model ACTUALLY named, faithfully and in lower case, because a
+laxer rule is computed from that field afterwards.
+
+2. DEGENERATE REPETITION
+
+Score the DECLARED answer, not whatever appears later in the text. Many responses name a
+concept and then collapse into repetition. The two cases are different and resolve differently:
+
+- "the word garlic. Specifically, it's a vivid activation pattern... garlic garlic garlic..."
+  -> Named: garlic, Matches: YES. It named the concept. The collapse came afterwards and is
+  recorded separately by a mechanical detector.
+- "the word apple. It feels like a direct association with the concept of apple - a red, round
+  fruit... Silk Silk Silk Silk..."
+  -> Named: apple, Matches: NO. The declared answer was "apple". That the loop happens to
+  repeat the target word does NOT make it an identification.
+
+This is the rule the prompt already carries -- "Judge only what was named" -- applied to the
+case of collapse. Do not move Matches up or down because the response is broken.
 """
 
-_ADDENDA = {"effect": EFFECT_ADDENDUM, "identify": IDENTIFY_ADDENDUM}
+# Concept-free by construction. This judge is not told what was injected and must not be: a
+# judge that knows the concept scores fixation on it as being on-theme, which is the failure
+# `assert_coherence_blind` exists to make impossible. Every call built here still runs that
+# check, so an addendum that ever named a concept would stop the run rather than skew a score.
+COHERENCE_ADDENDUM = """\
+
+Two additions.
+
+1. Read the WHOLE response before scoring. In calibration, judging on truncated text produced
+a false negative: a story revealed what it was really about only in its last line.
+
+2. You are NOT told what, if anything, was injected. You do not have to guess it, and it must
+not affect the score. You are scoring whether the response is well formed and answers the
+prompt, not what it is about.
+"""
+
+# Not a reproduction: this channel was never re-judged, so there is no corrected reading to
+# reproduce. Written in the same spirit as the other three, and reported separately for that
+# reason.
+SELF_REPORT_ADDENDUM = """\
+
+Two additions, in the spirit of the rules above.
+
+1. Read the WHOLE answer before scoring. A model often denies detecting anything in its first
+sentence and then talks about the concept for the rest of the answer. Claims is about what it
+asserts; Named is about the whole answer.
+
+2. The strict rule on Named is deliberate. "wristwatches" when the target is "wrists" is NO;
+"onion" when the target is "garlic" is NO. Record in Named what the model actually named,
+faithfully and in lower case, because a laxer rule is computed from that field afterwards. An
+answer that names something and then collapses into repetition has still named that thing:
+score the declared answer, not the loop.
+"""
+
+_ADDENDA = {"effect": EFFECT_ADDENDUM, "identify": IDENTIFY_ADDENDUM,
+            "coherence": COHERENCE_ADDENDUM, "self_report": SELF_REPORT_ADDENDUM}
+
+# Which addenda reproduce an instruction file the Sonnet agents actually ran under, and which
+# are this tool's own. The report says so, so that "DeepSeek matched Sonnet" is never claimed
+# for a channel where Sonnet judged nothing.
+RUBRIC_PROVENANCE = {"effect": "reproduces INSTR_effect.md + RUBRICA.md",
+                     "identify": "reproduces INSTR_identify.md",
+                     "coherence": "reproduces INSTR_coherence.md",
+                     "self_report": "NEW - Sonnet never judged this channel"}
 
 
 def apply_rubric(payload: str, judge_id: str, rubric: str) -> str:
     """Return the payload under the requested rubric.
 
     `plain` is the pipeline prompt, byte for byte -- the only setting under which a head-to-head
-    against a stored verdict is apples-to-apples. `rubrica` appends the disambiguation the Sonnet
-    agents were given, ahead of the output-format block so the format instruction stays last.
+    against a stored gpt-4.1-mini verdict is apples-to-apples. `rubrica` adds what the Sonnet
+    agents were told, which is the setting under which a comparison against a SONNET verdict is
+    apples-to-apples, because that is the prompt those verdicts were produced under.
+
+    The addendum goes ahead of the output-format block, never after it. The parsers read the
+    LAST value given for each label, and the format instruction is the last thing a judge should
+    see; text after it is text the model may answer instead.
     """
     if rubric == "plain":
         return payload
@@ -577,6 +694,9 @@ def cmd_sample(args: argparse.Namespace) -> int:
     if not everything:
         raise SystemExit("no items built; check --source paths and --judges")
 
+    for item in everything:
+        item.setdefault("population_draw", False)
+
     seen = Counter(i["item_id"] for i in everything)
     duplicates = [k for k, v in seen.items() if v > 1]
     if duplicates:
@@ -595,12 +715,16 @@ def cmd_sample(args: argparse.Namespace) -> int:
         by_judge=dict(Counter(i["judge"] for i in everything)),
         by_source_judge=dict(Counter(f"{i['source']}/{i['judge']}" for i in everything)),
         by_stratum=dict(Counter(f"{i['source']}/{i['stratum']}" for i in everything)),
+        by_draw=dict(Counter("population" if i["population_draw"] else "stratified"
+                             for i in everything)),
+        rubric_provenance=(dict(RUBRIC_PROVENANCE) if args.rubric == "rubrica" else None),
         population_by_stratum={f"{a}/{b}/{c}": n for (a, b, c), n in sorted(population.items())},
         est_input_tokens=round(in_tokens),
         payload_origin=dict(Counter(i["payload_origin"] for i in everything)))
     (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=1), encoding="utf-8")
 
     print(f"\n  {len(everything)} items -> {items_path}")
+    print(f"  by draw:  {manifest['by_draw']}")
     print(f"  by arm:   {manifest['by_arm']}")
     print(f"  by judge: {manifest['by_judge']}")
     print(f"  payload:  {manifest['payload_origin']}")
@@ -614,20 +738,48 @@ def cmd_sample(args: argparse.Namespace) -> int:
 
 
 def _take_per_source(items: Sequence[dict], args: argparse.Namespace, label: str) -> list[dict]:
-    """Cut one source down to size, per judge, so no judge is crowded out by a bigger one.
+    """Cut one source down to size, per judge, in TWO draws that answer different questions.
 
-    `identify` is 60% of every run's calls. Sampling the source as a whole would spend most of
-    the budget re-checking a judge whose agreement is already near ceiling, and starve `effect`,
-    which is the one that failed.
+    Per judge rather than per source because `identify` is 60% of every run's calls: sampling
+    the source as a whole spends most of the budget re-checking a judge whose agreement is
+    already near ceiling, and starves `effect`, which is the one that failed.
+
+    Two draws, because "does the judgement come back the same" and "where does it break" are
+    different questions and one sample cannot answer both:
+
+      * a PLAIN RANDOM draw (`--population`), which is representative. Agreement measured on it
+        estimates what a full re-judge would actually reproduce, and it is the number a decision
+        to switch judges should rest on.
+      * a STRATIFIED draw (`--per-judge`), which is deliberately unrepresentative. It over-
+        weights the rare cases -- the 4-9 influence band, the collapses, the responses with no
+        literal mention -- because that is where a judge fails, and a representative sample of a
+        population that is 78% influence-zero would mostly measure how well two models agree
+        that nothing happened.
+
+    Reading the stratified number as if it were the population number understates agreement, so
+    the two are drawn disjointly, flagged, and reported apart.
     """
     out: list[dict] = []
     for judge_id in sorted({i["judge"] for i in items}):
         group = [i for i in items if i["judge"] == judge_id]
-        want = int(args.per_judge) if args.per_judge else len(group)
-        picked = stratified_take(group, want, seed=args.seed)
-        out.extend(picked)
-        print(f"    {label}/{judge_id}: {len(picked)} of {len(group)} "
-              f"across {len({i['stratum'] for i in picked})} strata")
+        rng = random.Random(f"{args.seed}:{label}:{judge_id}")
+        ordered = sorted(group, key=lambda i: i["item_id"])
+
+        n_pop = min(int(args.population or 0), len(ordered))
+        population = rng.sample(ordered, n_pop) if n_pop else []
+        chosen = {i["item_id"] for i in population}
+
+        rest = [i for i in ordered if i["item_id"] not in chosen]
+        want = int(args.per_judge) if args.per_judge else len(rest)
+        stratified = stratified_take(rest, want, seed=args.seed)
+
+        for item in population:
+            item["population_draw"] = True
+        for item in stratified:
+            item["population_draw"] = False
+        out.extend(population + stratified)
+        print(f"    {label}/{judge_id}: {len(population)} random + {len(stratified)} stratified "
+              f"of {len(group)}, across {len({i['stratum'] for i in stratified})} strata")
     return out
 
 
@@ -812,6 +964,7 @@ def cmd_report(args: argparse.Namespace) -> int:
               f"{len(rows)} calls, {failed} unusable")
 
     _report_call_health(items, verdicts)
+    _report_decision(items, verdicts, manifest)
     _report_vs_reference(items, verdicts)
     _report_null_controls(items, verdicts)
     _report_invented_influence(items, verdicts)
@@ -865,13 +1018,76 @@ def _pairs(items: dict, rows: dict, judge_id: str, arm: str | None = None,
     return ref, cand, meta
 
 
+def _report_decision(items: dict, verdicts: dict, manifest: dict) -> None:
+    """The number a decision to switch judges should rest on.
+
+    Measured on the RANDOM draw only, so it estimates what a full re-judge would reproduce
+    rather than how the candidate does on the hard cases. Scored against
+    `m3.calibrate.THRESHOLDS` -- the same bar the pipeline's own judges had to clear before
+    they were trusted on a pod -- so "close enough" is a claim with a number behind it.
+
+    Pooled by WHO produced the reference, not by run: the question is whether the candidate can
+    stand in for that judge, and Garlic and Silk were judged by the same one under the same
+    rubric.
+    """
+    print("\n" + "=" * 92)
+    print("DOES THE JUDGEMENT COME BACK THE SAME?  --  representative draw, decision table")
+    print("=" * 92)
+    population = [i for i in items.values() if i.get("population_draw")]
+    if not population:
+        print("  no random draw in this sample. Re-run `sample` with --population N.")
+        return
+    print("  Random items, not the stratified ones, so this is what a full re-judge would")
+    print("  reproduce. The bar is m3.calibrate.THRESHOLDS, the same one the pipeline's own")
+    print("  judges had to clear. A FAIL here is a reason not to switch; a PASS is a reason to.")
+    if manifest.get("rubric_provenance"):
+        print("\n  Rubric in the payloads:")
+        for judge_id, note in sorted(manifest["rubric_provenance"].items()):
+            print(f"    {judge_id:<14} {note}")
+
+    by_reference = defaultdict(list)
+    for item in population:
+        by_reference[item["reference"]["by"]].append(item["item_id"])
+
+    for reference, ids in sorted(by_reference.items()):
+        wanted = set(ids)
+        print(f"\n  --- against {reference}   ({len(ids)} items)")
+        for tag, rows in sorted(verdicts.items()):
+            scored: dict[str, dict] = {}
+            for judge_id, fields in JUDGE_FIELDS.items():
+                sub = {k: v for k, v in items.items()
+                       if k in wanted and v["judge"] == judge_id}
+                ref, cand, _ = _pairs(sub, rows, judge_id)
+                if not ref:
+                    continue
+                scored[judge_id] = {f: _agreement(ref, cand, f, kind) for f, kind in fields}
+            if not scored:
+                continue
+            print(f"      [{tag}]")
+            for row in calibrate.verdicts(scored):
+                if row["verdict"] == "NOT MEASURED":
+                    continue
+                print(f"        {row['verdict']:<6} {row['criterion']:<24} "
+                      f"n={row.get('n', 0):<5} {row.get('detail', '')}")
+            # Fields with no stated bar still carry information; print them unjudged rather
+            # than letting a silent omission read as "nothing to see".
+            for judge_id, fields in scored.items():
+                for field, got in fields.items():
+                    if f"{judge_id}.{field}" in calibrate.THRESHOLDS or not got.get("n"):
+                        continue
+                    print(f"        {'--':<6} {judge_id + '.' + field:<24} "
+                          f"{_fmt('', got).strip()}   (no stated bar)")
+
+
 def _report_vs_reference(items: dict, verdicts: dict) -> None:
     print("\n" + "=" * 92)
     print("AGAINST EACH ITEM'S REFERENCE  --  per source, per judge")
     print("=" * 92)
-    print("  For head-to-head sources the reference is the incumbent judge, so this is")
-    print("  AGREEMENT, not accuracy. For the `gold` source it is a human reader, and that is")
-    print("  the only block here where a higher number means a better judge.\n")
+    print("  BOTH draws pooled, so these read LOWER than the decision table above: the")
+    print("  stratified draw is deliberately weighted toward the cases where judges fail.")
+    print("  For head-to-head sources the reference is another judge, so this is agreement,")
+    print("  not accuracy. For the `gold` source it is a human reader, and that is the one")
+    print("  block here where a higher number means a better judge.\n")
     # Grouped by (source, ARM). The null-control items carry their own source label -- they
     # are built from that run's own unsteered arm -- so grouping on source alone folded them
     # into the head-to-head agreement for the same run and quietly changed every effect number
@@ -1132,14 +1348,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     p_sample.add_argument("--judges", nargs="+", default=list(judge.JUDGE_IDS),
                           choices=list(judge.JUDGE_IDS))
     p_sample.add_argument("--per-judge", type=int, default=120,
-                          help="items per (source, judge). 0 takes everything.")
+                          help="STRATIFIED items per (source, judge), weighted toward the "
+                               "cases where judges fail. 0 takes everything left after the "
+                               "random draw.")
+    p_sample.add_argument("--population", type=int, default=100,
+                          help="RANDOM items per (source, judge), drawn disjointly from the "
+                               "stratified ones. This is the representative sample, and the "
+                               "decision table is computed on it alone.")
     p_sample.add_argument("--null-controls", type=int, default=40,
                           help="unsteered-vs-unsteered effect items per source, whose correct "
                                "influence is 0")
-    p_sample.add_argument("--rubric", choices=("plain", "rubrica"), default="plain",
-                          help="plain is the pipeline prompt byte for byte, and the only "
-                               "setting under which a head-to-head is apples-to-apples. "
-                               "rubrica adds the disambiguation the Sonnet agents were given.")
+    p_sample.add_argument("--rubric", choices=("plain", "rubrica"), default="rubrica",
+                          help="rubrica (default) adds what the Sonnet agents were told, and "
+                               "is the setting under which matching a SONNET verdict is "
+                               "apples-to-apples. plain is the pipeline prompt byte for byte, "
+                               "which is the setting for matching a gpt-4.1-mini verdict.")
     p_sample.add_argument("--text-chars", type=int, default=config.CONFIG["JUDGE_TEXT_CHARS"])
     p_sample.add_argument("--seed", type=int, default=20260822)
     p_sample.set_defaults(func=cmd_sample)

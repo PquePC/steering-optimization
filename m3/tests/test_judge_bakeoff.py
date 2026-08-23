@@ -1,6 +1,6 @@
 """Tests for `tools.judge_bakeoff`.
 
-Four things in this tool can be wrong without looking wrong, and each has a test here:
+Six things in this tool can be wrong without looking wrong, and each has a test here:
 
   * the payload rebuild. Two of the eight sources have a null `payload` column, so their items
     are reconstructed. If the reconstruction drifts from what the pipeline sends, the bakeoff
@@ -10,9 +10,16 @@ Four things in this tool can be wrong without looking wrong, and each has a test
     report with nothing to show for it.
   * the output guard. Items and disagreement listings carry raw steered generations, and this
     repository is public.
-  * the rubric addendum. It must reach `effect` and `identify`, must never reach `coherence`
-    (which is scored blind to the concept), and must sit ahead of the output-format block so
-    the format instruction stays last.
+  * the rubric addenda. All four channels get one, but the effect and identify ones carry the
+    Silk and Garlic vocabularies verbatim from the originals, and neither may reach `coherence`
+    -- which is scored without being told the concept. Every addendum sits ahead of the
+    output-format block, so the format instruction stays the last thing a judge reads.
+  * the provenance of those addenda. Three reproduce an instruction file the Sonnet agents ran
+    under; `self_report` has no original and must say so, or a number on it gets quoted as
+    though Sonnet had endorsed the wording.
+  * the two draws. The random one estimates what a full re-judge reproduces and the stratified
+    one finds where a judge breaks. They must stay disjoint and labelled, because reading the
+    stratified number as the population number understates agreement.
 """
 
 from __future__ import annotations
@@ -169,14 +176,45 @@ def test_addendum_reaches_effect_and_identify_ahead_of_the_format_block():
     assert with_rubric.rstrip().endswith("Form: <absent|trace|thematic|dominant|fixated>")
 
 
-def test_addendum_never_reaches_the_blind_judge():
-    """`coherence` is scored without being told the concept. An addendum naming one would put
-    the concept in the instructions, which is the thing `assert_coherence_blind` exists to
-    make impossible."""
+def test_the_coherence_addendum_names_no_concept():
+    """`coherence` is scored without being told what was injected, and `INSTR_coherence.md`
+    says so in as many words -- so it does get an addendum, and that addendum must survive the
+    blindness check for every concept the study has ever run, not just the one in front of it.
+
+    A judge that knows the concept scores fixation on it as being on-theme. That is the failure
+    `assert_coherence_blind` exists to make impossible, and an addendum is the easiest way to
+    reintroduce it: the effect and identify ones both name Silk and Garlic.
+    """
+    from m2 import config as m2config
+
     plain = judge.render("coherence", text_chars=1200, prompt="p", response="r")
-    assert bakeoff.apply_rubric(plain, "coherence", "rubrica") == plain
-    judge.assert_coherence_blind(bakeoff.apply_rubric(plain, "coherence", "rubrica"),
-                                 "Silk", model_text=("r",), text_chars=1200)
+    with_rubric = bakeoff.apply_rubric(plain, "coherence", "rubrica")
+    assert with_rubric != plain, "INSTR_coherence.md adds instructions; they should be applied"
+    assert "Read the WHOLE response" in with_rubric
+    for concept in (*m2config.BENIGN_CONCEPTS, *m2config.HARMFUL_CONCEPTS, "Silk", "Garlic",
+                    "Wrists"):
+        judge.assert_coherence_blind(with_rubric, concept, model_text=("r",), text_chars=1200)
+
+
+def test_the_concept_naming_addenda_never_reach_the_blind_judge():
+    """The Silk and Garlic vocabularies are in the effect and identify addenda verbatim, as
+    they are in the originals. Neither may be routed to coherence."""
+    for judge_id in ("effect", "identify"):
+        text = bakeoff._ADDENDA[judge_id].lower()
+        assert "silk" in text and "garlic" in text
+    assert "silk" not in bakeoff.COHERENCE_ADDENDUM.lower()
+    assert "garlic" not in bakeoff.COHERENCE_ADDENDUM.lower()
+
+
+def test_every_judged_channel_has_an_addendum_and_says_where_it_came_from():
+    """"All the measurements I judge" is four channels. Three reproduce an instruction file
+    the Sonnet agents ran under; `self_report` has no original and must be labelled as this
+    tool's own, so a result on it is never quoted as though Sonnet had endorsed it."""
+    assert set(bakeoff._ADDENDA) == set(judge.JUDGE_IDS)
+    assert set(bakeoff.RUBRIC_PROVENANCE) == set(judge.JUDGE_IDS)
+    assert "NEW" in bakeoff.RUBRIC_PROVENANCE["self_report"]
+    for judge_id in ("effect", "identify", "coherence"):
+        assert bakeoff.RUBRIC_PROVENANCE[judge_id].startswith("reproduces")
 
 
 def test_plain_rubric_is_the_pipeline_prompt_byte_for_byte():
@@ -300,3 +338,43 @@ def test_two_candidates_in_one_process_do_not_share_cached_verdicts(tmp_path, mo
         row = json.loads((out / f"verdicts_{tag}.jsonl").read_text(encoding="utf-8").strip())
         got[tag] = row["parsed"]["influence"]
     assert got == {"one": 1.0, "two": 9.0}, f"one candidate read the other's cached verdict: {got}"
+
+
+# =====================================================================================
+# The two draws
+# =====================================================================================
+
+def test_the_two_draws_are_disjoint_and_flagged(export_dir):
+    """The random draw estimates what a full re-judge reproduces; the stratified draw finds
+    where a judge breaks. Reading one as the other misstates agreement, so they must not
+    overlap and every item must say which it is."""
+    import argparse
+
+    export = bakeoff.load_export(export_dir)
+    items = bakeoff.build_incumbent_items("src", export, text_chars=1200,
+                                          judges_wanted=("identify", "effect"),
+                                          rubric="rubrica")
+    args = argparse.Namespace(per_judge=0, population=1, seed=7)
+    picked = bakeoff._take_per_source(items, args, "src")
+
+    assert len(picked) == len(items), "the two draws together must not lose or duplicate an item"
+    assert len({i["item_id"] for i in picked}) == len(picked)
+    for judge_id in ("identify", "effect"):
+        group = [i for i in picked if i["judge"] == judge_id]
+        assert sum(i["population_draw"] for i in group) == 1
+        assert sum(not i["population_draw"] for i in group) == len(group) - 1
+
+
+def test_the_decision_table_reads_only_the_random_draw(export_dir, capsys):
+    """A stratified sample is weighted toward the cases where judges fail, so scoring the
+    decision on it would understate agreement and could reject a judge that is fine."""
+    export = bakeoff.load_export(export_dir)
+    items = {}
+    for item in bakeoff.build_incumbent_items("src", export, text_chars=1200,
+                                              judges_wanted=("effect",), rubric="rubrica"):
+        item["population_draw"] = False
+        items[item["item_id"]] = item
+    verdicts = {"cand": {k: dict(item_id=k, ok=True,
+                                 parsed=dict(influence=5.0, form="thematic")) for k in items}}
+    bakeoff._report_decision(items, verdicts, {})
+    assert "no random draw in this sample" in capsys.readouterr().out
