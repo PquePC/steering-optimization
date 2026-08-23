@@ -37,6 +37,7 @@ same question, that is a defect — say so.
 | How would detection be measured without asking the model? | [`docs/M4-PROPOSAL.md`](docs/M4-PROPOSAL.md) |
 | Why the instrument is not trusted yet, and what would fix it | [`docs/M5-PROPOSAL.md`](docs/M5-PROPOSAL.md) |
 | Is a different judge model better than the one that scored these runs? | [`tools/judge_bakeoff.py`](tools/judge_bakeoff.py) |
+| How do I run the final six-way sweep? | [`docs/RUNBOOK-FINAL.md`](docs/RUNBOOK-FINAL.md) |
 | What am I, an agent, allowed to do here? | [`CLAUDE.md`](CLAUDE.md) / [`AGENTS.md`](AGENTS.md) |
 | I am the coding agent — what is my current task? | [`docs/handoff/`](docs/handoff/) |
 
