@@ -275,7 +275,12 @@ def check_volume_writable(root, probe_mb: int = PROBE_MB) -> dict:
     # allocating blocks, so a probe of zeros can report success on a volume with no
     # room left. Real bytes are what test for real space.
     payload = b"m3probe." * (probe_mb * 1024 * 1024 // 8)
-    probe = root / ".write_probe"
+    # Named for THIS process. Three runs launch per pod, one per GPU, and they share
+    # /workspace/m3_runs -- a fixed filename means the second launch truncates the first one's
+    # probe while it is being written, and both report "the volume is full" on a volume with
+    # 200 GB free. The probe runs before the model load, so the runbook's "wait for Model
+    # loaded" stagger does not separate them.
+    probe = root / f".write_probe.{_os.getpid()}"
     try:
         with open(probe, "wb") as handle:
             handle.write(payload)

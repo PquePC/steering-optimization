@@ -490,7 +490,18 @@ def concept_mentions(text: str, concept: str) -> int:
     word = str(concept).strip()
     if not word:
         raise ValueError("concept_mentions needs a non-empty concept")
-    return len(re.findall(r"\b" + re.escape(word), str(text), flags=re.IGNORECASE))
+    # Delegated to `m2.unjudged.concept_hits`, which is the same rule plus the plural one: a
+    # concept ending in "s" also matches its singular. `\bWrists` does not match "wrist",
+    # "wristwatch" or "wristband", because the letters after "wrist" are not "s".
+    #
+    # This function had the unfixed version. Commit 7b10b81 fixed the defect in `m2/unjudged.py`
+    # and did not touch the module the sweep actually calls, so the 2026-08-20 finding it was
+    # written for -- 624 Wrists effect responses recorded as concept_mentions=0, one of them
+    # reading "My wristwatch," -- would have reproduced on two of this run's six arms. Two
+    # implementations of one rule is how that happened; there is now one.
+    from m2.unjudged import concept_hits
+
+    return concept_hits(str(text), word)
 
 
 # =====================================================================================

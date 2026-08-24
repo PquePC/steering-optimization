@@ -1046,7 +1046,7 @@ def test_the_volume_probe_refuses_a_short_write(tmp_path, monkeypatch):
 
     def short_open(*args, **kwargs):
         handle = real_open(*args, **kwargs)
-        if str(args[0]).endswith(".write_probe"):
+        if ".write_probe" in str(args[0]):      # the probe is named per process id
             handle.write = lambda data: len(data)      # claims success, writes nothing
         return handle
 

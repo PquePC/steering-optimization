@@ -985,8 +985,20 @@ def _summarise_cell(rows: Sequence[dict], *, layer: int, dose: float, alpha: flo
         # garlic-flavoured story is still a story, so `on_task` stays True through heavy
         # influence by design. It fires when the response stops answering at all. The channel
         # that tests answering a question with a RIGHT answer is `capability`.
+        #
+        # The `.strip()` clause is not decoration: it makes the numerator the SAME row set as
+        # the denominator. `coh_scores` comes from `judged()`, which drops rows whose response
+        # is empty; the numerator counted every effect row. An empty response is still sent to
+        # the coherence judge, and this judge scores an empty string `coherence 10, on_task
+        # true` -- so one empty row in a cell where everything else is on task gave 66 successes
+        # over 65 trials, and `battery.rate` raises "N successes out of M trials is not a rate".
+        # Phase 2 catches only `Unreachable`, so that raise ends the run, and the archive and
+        # export sit outside the try -- nothing would have left the pod. Qwen emits empty
+        # generations at high dose, and this run gives it ~50,000 chances where the August run
+        # had 1,872.
         on_task=(battery.rate(sum(1 for r in by("effect")
-                                  if ((r.get("judged") or {}).get("coherence") or {}).get("on_task")),
+                                  if ((r.get("judged") or {}).get("coherence") or {}).get("on_task")
+                                  and (r.get("response") or "").strip()),
                               len(coh_scores), z) if coh_scores else None),
         capability=(battery.rate(sum(1 for r in caps if r.get("capability_correct")),
                                  len(caps), z) if caps else None),
