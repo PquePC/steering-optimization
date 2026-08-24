@@ -1236,3 +1236,52 @@ def test_a_failing_read_this_bundle_does_not_cost_the_export():
     assert "except Exception" in after[:400], "and the except must be right there"
     assert "write_json(SUMMARY_FILE" in before, (
         "summary.json must already be written before the digest is attempted")
+
+
+def test_repair_finds_a_buried_bad_line_and_leaves_the_good_rows(tmp_path):
+    """The 2026-08-24 shape: one unreadable line, then nine cells nobody can read."""
+    from tools import repair_jsonl
+
+    path = tmp_path / "cells.jsonl"
+    path.write_bytes(bytes([0, 0, 0]) + b"\n" + b"\n".join(
+        ('{"layer": %d}' % L).encode() for L in range(52, 61)) + b"\n")
+
+    bad = repair_jsonl.bad_lines(path)
+    assert [n for n, _ in bad] == [1]
+    assert bad[0][1] == bytes([0, 0, 0]), "the raw bytes, so an operator can see what happened"
+
+    assert repair_jsonl.repair(path, apply=False) == (1, 9)
+    assert path.read_bytes().startswith(bytes([0, 0, 0])), "a report must change nothing"
+
+    assert repair_jsonl.repair(path, apply=True) == (1, 9)
+    from m2 import runio
+    lines = [l for l in path.read_bytes().split(b"\n") if l.strip()]
+    assert len(lines) == 9
+    assert bytes([0]) not in path.read_bytes()
+    quarantine = tmp_path / "cells.jsonl.quarantine"
+    assert bytes([0, 0, 0]) in quarantine.read_bytes(), "removed bytes are kept, never deleted"
+
+
+def test_repair_does_not_call_a_unicode_separator_corruption(tmp_path):
+    """U+2028 inside a generation is content, not a record separator.
+
+    `splitlines()` breaks on it; `write_row`'s only separator is "\n". A repair tool that used
+    splitlines() would report a perfectly good row as corruption and invite an operator to
+    delete real data.
+    """
+    from tools import repair_jsonl
+
+    path = tmp_path / "responses_transcripts.jsonl"
+    path.write_text('{"response": "a story\u2028with a separator"}\n'
+                    '{"response": "ordinary"}\n', encoding="utf-8")
+    assert repair_jsonl.bad_lines(path) == []
+    assert repair_jsonl.repair(path, apply=False) == (0, 2)
+
+
+def test_repair_refuses_a_target_that_does_not_exist(tmp_path):
+    from tools import repair_jsonl
+
+    with pytest.raises(SystemExit):
+        repair_jsonl.main([str(tmp_path / "nope")])
+    with pytest.raises(SystemExit, match="no .jsonl"):
+        repair_jsonl.main([str(tmp_path)])
