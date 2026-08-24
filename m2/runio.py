@@ -324,6 +324,71 @@ def write_row(name: str, row: dict) -> None:
         handle.write(json.dumps(_stamp(row), ensure_ascii=False, default=str) + "\n")
 
 
+
+def heal_torn_tail(name: str) -> int:
+    """Move an unreadable final row out of an artefact so a resumed run can append to it.
+
+    Call once per artefact at run start, before anything appends. Returns bytes quarantined.
+
+    **The trap this closes.** `read_rows` tolerates an unparseable LAST line and raises on one
+    anywhere else -- correct rules, fatal in combination. A process killed mid-append leaves a
+    torn final row; the next read tolerates it and leaves the bytes in the file; the resumed run
+    appends after it; and from then on every read raises, because the torn row is no longer last.
+    A completed nine-cell sweep died exactly that way on 2026-08-24, having measured and written
+    every one of its cells. `responses_transcripts.jsonl` takes about 49,000 rows on a full run,
+    so this is the likeliest way a long run destroys its own record.
+
+    **Quarantined, never deleted.** The removed bytes go to `<name>.quarantine`. They are usually
+    a half-written row that will be re-measured anyway, but "usually" is not a licence to delete
+    an operator's data, and if the tail turns out to be something else entirely -- the 2026-08-24
+    file began with bytes that could not have come from `write_row` -- the evidence is still on
+    disk. The quarantine file is appended to, so healing twice keeps both.
+
+    Two shapes are healed, and the distinction is worth keeping in mind:
+
+      * **No trailing newline.** Unambiguous: `write_row` always ends its write with one, so a
+        file that does not end with a newline was interrupted mid-write.
+      * **A terminated final line that will not parse.** Ambiguous, and healed anyway, because
+        this is the shape that kills the resume. It is logged at WARN with the byte count so it
+        cannot pass unnoticed.
+
+    A file whose LAST line is fine is left completely alone, including a file with bad lines in
+    the middle -- those are the corruption `read_rows` refuses to resume from, and quietly
+    editing them away is exactly what that refusal exists to prevent.
+    """
+    path = artefact_path(name)
+    if not path.exists():
+        return 0
+    data = path.read_bytes()
+    if not data:
+        return 0
+
+    terminated = data.endswith(b"\n")
+    body = data[:-1] if terminated else data
+    cut = body.rfind(b"\n")
+    tail = body[cut + 1:]
+    keep = cut + 1                       # everything up to and including the previous newline
+
+    if not tail.strip():
+        return 0                         # a blank final line is not a torn row
+    try:
+        if isinstance(json.loads(tail.decode("utf-8")), dict):
+            return 0                     # the last row is fine; touch nothing
+    except (ValueError, UnicodeDecodeError):
+        pass
+
+    quarantine = path.with_suffix(path.suffix + ".quarantine")
+    with open(quarantine, "ab") as handle:
+        handle.write(f"# from {path.name} at {_now()}, {len(tail)} bytes\n".encode("utf-8"))
+        handle.write(tail if tail.endswith(b"\n") else tail + b"\n")
+    with open(path, "r+b") as handle:
+        handle.truncate(keep)
+
+    shape = "terminated but unparseable" if terminated else "torn mid-write"
+    log(f"{path.name}: final row was {shape} ({len(tail)} bytes) - moved to "
+        f"{quarantine.name} so this run can append. It will be re-measured.", "WARN")
+    return len(tail)
+
 def read_rows(name: str) -> list[dict]:
     """Every row recorded for one artefact so far. `[]` when the file does not exist.
 

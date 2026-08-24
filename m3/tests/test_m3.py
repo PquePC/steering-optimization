@@ -1053,3 +1053,104 @@ def test_the_volume_probe_refuses_a_short_write(tmp_path, monkeypatch):
     monkeypatch.setattr("builtins.open", short_open)
     with pytest.raises(RuntimeError, match="volume is full"):
         run_module.check_volume_writable(tmp_path, probe_mb=1)
+
+
+def test_a_resume_over_a_torn_row_does_not_poison_the_file(tmp_path, monkeypatch):
+    """The sequence that destroys a long run, start to finish.
+
+    Crash mid-append leaves a torn final row. The next read tolerates it and leaves the bytes.
+    The resumed run appends after it. From then on the torn row is not last, so every reader
+    raises -- on a file holding thousands of good rows. `heal_torn_tail` runs before the resumed
+    run appends, so the sequence terminates at the tolerate step instead of arming a trap.
+    """
+    from m2 import runio
+
+    runio = _fake_run_context(monkeypatch, tmp_path)
+    runio.write_row("responses_transcripts.jsonl", dict(layer=53, response="one"))
+    runio.write_row("responses_transcripts.jsonl", dict(layer=53, response="two"))
+    with open(tmp_path / "responses_transcripts.jsonl", "a", encoding="utf-8") as handle:
+        handle.write('{"layer": 53, "respo')                # killed here
+
+    # Without healing, this is the trap: tolerated now, fatal after one more append.
+    assert len(runio.read_rows("responses_transcripts.jsonl")) == 2
+
+    removed = runio.heal_torn_tail("responses_transcripts.jsonl")
+    assert removed == 20, "the torn row's bytes, and only those"
+
+    runio.write_row("responses_transcripts.jsonl", dict(layer=54, response="three"))
+    rows = runio.read_rows("responses_transcripts.jsonl")
+    assert [r["response"] for r in rows] == ["one", "two", "three"]
+
+    quarantine = tmp_path / "responses_transcripts.jsonl.quarantine"
+    assert '{"layer": 53, "respo' in quarantine.read_text(encoding="utf-8"), (
+        "the removed bytes are kept, not deleted")
+
+
+def test_healing_leaves_a_healthy_file_byte_identical(tmp_path, monkeypatch):
+    """It runs before every resume, so it must be a no-op on the overwhelmingly common case."""
+    from m2 import runio
+
+    runio = _fake_run_context(monkeypatch, tmp_path)
+    for layer in (53, 54, 55):
+        runio.write_row("cells.jsonl", dict(layer=layer))
+    before = (tmp_path / "cells.jsonl").read_bytes()
+
+    assert runio.heal_torn_tail("cells.jsonl") == 0
+    assert (tmp_path / "cells.jsonl").read_bytes() == before
+    assert not (tmp_path / "cells.jsonl.quarantine").exists()
+    assert runio.heal_torn_tail("nothing_here.jsonl") == 0, "a missing file is not an error"
+
+
+def test_healing_refuses_to_touch_corruption_in_the_middle(tmp_path, monkeypatch):
+    """A bad line that is NOT last is what `read_rows` refuses to resume from.
+
+    Healing it would quietly edit away the evidence for the one failure mode the strict read
+    exists to catch. The last row is good here, so heal must do nothing at all and the strict
+    read must still raise.
+    """
+    from m2 import runio
+
+    runio = _fake_run_context(monkeypatch, tmp_path)
+    path = tmp_path / "cells.jsonl"
+    path.write_text('not json at all\n{"layer": 54}\n', encoding="utf-8")
+
+    assert runio.heal_torn_tail("cells.jsonl") == 0
+    assert path.read_text(encoding="utf-8").startswith("not json at all")
+    with pytest.raises(RuntimeError, match="corruption rather than a torn append"):
+        runio.read_rows("cells.jsonl")
+
+
+def test_a_terminated_but_unreadable_final_row_is_healed_too(tmp_path, monkeypatch):
+    """The 2026-08-24 shape: a final line that ends in a newline and still will not parse.
+
+    Ambiguous in origin -- it cannot have come from `write_row`, whose output always starts with
+    `{`. Healed anyway, because leaving it is what armed the trap that killed a completed run,
+    and logged loudly because something wrote bytes this pipeline cannot account for.
+    """
+    from m2 import runio
+
+    runio = _fake_run_context(monkeypatch, tmp_path)
+    path = tmp_path / "cells.jsonl"
+    path.write_bytes(bytes([0, 0, 0]) + b"\n")
+
+    assert runio.heal_torn_tail("cells.jsonl") == 3
+    runio.write_row("cells.jsonl", dict(layer=53))
+    assert [r["layer"] for r in runio.read_rows("cells.jsonl")] == [53]
+
+
+def test_every_appended_artefact_is_on_the_heal_list():
+    """A new artefact that nobody adds to the list is a new way to lose a resume."""
+    import re
+    from pathlib import Path as _Path
+
+    from m3 import sweep as sweep_module
+
+    source = _Path(sweep_module.__file__).read_text(encoding="utf-8")
+    written = set(re.findall(r'write_row\(\s*"([^"]+\.jsonl)"', source))
+    written |= {v for k, v in vars(sweep_module).items()
+                if k.endswith("_FILE") and isinstance(v, str) and v.endswith(".jsonl")}
+    constants = {getattr(sweep_module, k) for k in dir(sweep_module)
+                 if k.endswith("_FILE") and isinstance(getattr(sweep_module, k), str)}
+    written |= {c for c in constants if c.endswith(".jsonl")}
+    missing = sorted(written - set(sweep_module.APPEND_ONLY_ARTEFACTS))
+    assert not missing, f"appended but not healed on resume: {missing}"

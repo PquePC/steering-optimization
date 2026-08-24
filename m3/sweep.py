@@ -40,6 +40,16 @@ __all__ = [
 ]
 
 CELLS_FILE = "cells.jsonl"
+
+# Every artefact a run APPENDS to, and therefore every artefact a crash can leave a torn row in.
+# `open_run` heals each one before the run writes anything. Kept next to the filenames rather
+# than inside `open_run` so that adding an artefact and forgetting to protect it means editing
+# this line and noticing.
+APPEND_ONLY_ARTEFACTS = (
+    "cells.jsonl", "norms.jsonl", "boundaries.jsonl", "boundary_transcripts.jsonl",
+    "responses_transcripts.jsonl", "null_transcripts.jsonl", "judge_calls.jsonl",
+    "unjudged_transcripts.jsonl", "provenance.jsonl",
+)
 BOUNDARY_FILE = "boundaries.jsonl"
 # Phase 1's raw evidence: one row per boundary probe response, carrying the generation, the
 # judge's verbatim reply and every leg of the sanity verdict computed from it.
@@ -1266,6 +1276,16 @@ def open_run(concept: str, cfg: dict | None = None) -> Path:
     m2config.RUN.reset_concept(concept, run_dir, m2cfg)
     judge.configure_transport(cfg)
     judge.configure_generation(cfg)
+
+    # Before anything appends. A resumed run that appends after a torn final row turns a
+    # survivable crash into a file no reader will touch again -- see runio.heal_torn_tail. Every
+    # artefact this pipeline appends to, so a resume cannot be poisoned by whichever file the
+    # process happened to be writing when it died.
+    healed = {name: runio.heal_torn_tail(name) for name in APPEND_ONLY_ARTEFACTS}
+    if any(healed.values()):
+        runio.log("resumed over a torn tail: "
+                  + ", ".join(f"{k} -{v}B" for k, v in healed.items() if v), "WARN")
+
     runio.log(f"m3 sweep | concept {concept} | config {config.config_hash(cfg)} | {run_dir}")
     return run_dir
 
