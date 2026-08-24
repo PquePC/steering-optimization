@@ -93,7 +93,9 @@ PROBES: dict[str, tuple[Any, Any]] = {
     "JUDGE_MODEL": ("openai/gpt-4.1-mini", "openai/gpt-4o-mini"),
     "JUDGE_ENABLED": (1, 0),
     "JUDGE_CONCURRENT": (32, 4),
-    "JUDGE_MAX_TOKENS": (120, 48),
+    "JUDGE_MAX_TOKENS": (400, 48),
+    # Both directions, because the bug was that neither reached the request body.
+    "JUDGE_REASONING": (0, 1),
     "JUDGE_TEXT_CHARS": (1200, 80),
     "RATE_CI_Z": (1.96, 2.576),
     "READ_BUNDLE_N": (40, 1),
@@ -229,7 +231,11 @@ def _w_transport(value, tmp, name, read):
     judge.configure_transport(_cfg(name, value))
     return {"judge_model": lambda: m2config.CONFIG["judge_model"],
             "judge_concurrent": lambda: m2config.CONFIG["judge_concurrent"],
-            "max_tokens": lambda: transport.JUDGE_MAX_TOKENS}[read]()
+            "max_tokens": lambda: transport.JUDGE_MAX_TOKENS,
+            # The request body, not the setting: JUDGE_REASONING is only real if it changes
+            # what is sent. It was a config value that reached nothing at all until a pod run
+            # returned 29 judge errors in 260 calls.
+            "extra_body": lambda: repr(sorted(transport.JUDGE_EXTRA_BODY.items()))}[read]()
 
 
 def _w_channel(value, tmp, name, channel):
@@ -440,6 +446,7 @@ WITNESSES = {
     "JUDGE_MODEL": lambda v, t: _w_transport(v, t, "JUDGE_MODEL", "judge_model"),
     "JUDGE_CONCURRENT": lambda v, t: _w_transport(v, t, "JUDGE_CONCURRENT", "judge_concurrent"),
     "JUDGE_MAX_TOKENS": lambda v, t: _w_transport(v, t, "JUDGE_MAX_TOKENS", "max_tokens"),
+    "JUDGE_REASONING": lambda v, t: _w_transport(v, t, "JUDGE_REASONING", "extra_body"),
     "JUDGE_TEXT_CHARS": lambda v, t: _w_cell(v, t, "JUDGE_TEXT_CHARS", "payload_len"),
     "RATE_CI_Z": lambda v, t: _w_cell(v, t, "RATE_CI_Z", "ci_bounds"),
     "READ_BUNDLE_N": _w_read_bundle,

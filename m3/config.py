@@ -384,11 +384,31 @@ SETTINGS: dict[str, Any] = dict(
     # provider returns 429, because that is an account limit and not a per-request one.
     JUDGE_CONCURRENT=32,
 
+    # Whether the judge is allowed to reason before answering. 0 sends
+    # `{"reasoning": {"enabled": False}}` with every request.
+    #
+    # This is not a quality knob, it is the difference between the judge working and not. The
+    # 3,098-item bakeoff that qualified deepseek/deepseek-v4-flash ran with reasoning OFF and
+    # parsed 3,098 of 3,098. The first pipeline run with it ON returned 29 errors in 260 calls
+    # -- 19 "no usable content" and 10 unparseable -- with a longest reply of 29 characters,
+    # because the reasoning tokens consumed the reply budget before any answer was emitted.
+    # `m2/judges.py:1163` describes that failure in advance; the bakeoff set the flag and the
+    # pipeline never did.
+    #
+    # Hashed, because it changes what the judge does and two runs that differ on it are not
+    # comparable. Turning it on means re-qualifying the judge, not just changing a setting.
+    JUDGE_REASONING=0,
+
     # --- token budget, both directions --------------------------------------------------
     # Output tokens cost 4x input on this model, so the reply cap is where the money is. Every
-    # M3 judge asks for two or three short labelled lines; 120 is slack for that and a hard
-    # stop on a judge that decides to write an essay. M2 allowed 400.
-    JUDGE_MAX_TOKENS=120,
+    # M3 judge asks for two or three short labelled lines, and with JUDGE_REASONING=0 the
+    # longest reply actually observed is 29 characters.
+    #
+    # 400 anyway, matching what the bakeoff qualified the judge at. max_tokens is a ceiling and
+    # not a spend -- a 29-character reply bills 29 characters at either setting -- so the only
+    # thing a tight cap buys is the chance of truncating a judge that has a bad day, which is
+    # what 120 bought. M2 allowed 400 for the same reason.
+    JUDGE_MAX_TOKENS=400,
 
     # Hard character cap on any MODEL-GENERATED text embedded in a judge payload, per span.
     # Truncation is marked in the payload so the judge is never silently shown a fragment it

@@ -276,9 +276,16 @@ def test_render_without_a_cap_leaves_text_alone():
     assert "x" * 5000 in payload
 
 
-def test_the_judge_reply_cap_is_tighter_than_m2s_and_is_pushed_into_the_transport():
-    """Output tokens cost 4x input, so the reply cap is where the money is."""
-    assert config.CONFIG["JUDGE_MAX_TOKENS"] < 400
+def test_the_judge_reply_cap_is_pushed_into_the_transport():
+    """The cap was 120 and is now 400, which is M2's.
+
+    It was tightened on the argument that output tokens cost 4x input, and that argument was
+    wrong about which number to tighten: max_tokens is a CEILING, not a spend. A judge that
+    replies in 29 characters bills 29 characters at either setting. What the tight cap actually
+    bought was truncation -- 10 unparseable replies in 260 on the first pod run -- so it is back
+    at the value the judge was qualified at. The reply cap is not where the money is; the
+    payload size is, and `JUDGE_TEXT_CHARS` guards that.
+    """
     from m2 import judges as transport
     before = transport.JUDGE_MAX_TOKENS
     try:
@@ -287,6 +294,36 @@ def test_the_judge_reply_cap_is_tighter_than_m2s_and_is_pushed_into_the_transpor
         assert info["judge_temperature"] == 0.0, "judging must stay deterministic"
     finally:
         transport.JUDGE_MAX_TOKENS = before
+
+
+def test_the_pipeline_judge_does_not_reason_by_default():
+    """The qualification has to transfer to the thing that runs.
+
+    deepseek/deepseek-v4-flash was qualified by a 3,098-item bakeoff that parsed 3,098 of
+    3,098 -- with `--no-reasoning`, which `tools/judge_bakeoff.py` sets on the transport
+    directly. `m3.judge.configure_transport` set the model, the concurrency and the token
+    budget and never set that, so the first pipeline run returned 29 errors in 260 calls while
+    the bakeoff's own numbers said the judge was fine. A judge validated under one request body
+    and run under another has not been validated.
+    """
+    from m2 import judges as transport
+    before = dict(transport.JUDGE_EXTRA_BODY)
+    try:
+        judge.configure_transport(dict(config.SETTINGS))
+        assert transport.JUDGE_EXTRA_BODY == {"reasoning": {"enabled": False}}, (
+            "the default must match what the bakeoff qualified")
+
+        cfg = dict(config.SETTINGS)
+        cfg["JUDGE_REASONING"] = 1
+        judge.configure_transport(cfg)
+        assert transport.JUDGE_EXTRA_BODY == {}, "the setting must be able to turn it back on"
+
+        # And back off again in the same process. Assigning only in the disable branch would
+        # leave a second run in a batch inheriting the first one's body.
+        judge.configure_transport(dict(config.SETTINGS))
+        assert transport.JUDGE_EXTRA_BODY == {"reasoning": {"enabled": False}}
+    finally:
+        transport.JUDGE_EXTRA_BODY = before
 
 
 def test_worst_case_payload_stays_small_enough_to_price():

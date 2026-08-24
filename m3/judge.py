@@ -499,6 +499,14 @@ def configure_transport(cfg: dict) -> dict:
     m2config.CONFIG["judge_model"] = str(cfg["JUDGE_MODEL"])
     m2config.CONFIG["judge_concurrent"] = int(cfg["JUDGE_CONCURRENT"])
 
+    # A reasoning judge spends the reply budget on its chain of thought and returns nothing, or
+    # a fragment. The bakeoff that qualified the current judge set this and the pipeline did
+    # not, so the qualification did not transfer -- see JUDGE_REASONING in m3/config.py. Assign
+    # unconditionally, never `if not reasoning`: leaving the previous value in place is how a
+    # second run in the same process inherits the first one's transport.
+    transport.JUDGE_EXTRA_BODY = ({} if int(cfg["JUDGE_REASONING"])
+                                  else {"reasoning": {"enabled": False}})
+
     # Register M3's judges with the transport. Without this NOTHING runs: `call_judge` and
     # `judge_many` both validate `judge_id` against M2's hardcoded ("E5", "S1", "D2") and raise
     # on anything else, and `call_judge` then parses through a `PARSERS` dict keyed the same
