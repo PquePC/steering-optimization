@@ -263,7 +263,38 @@ def _stamp(row: dict) -> dict:
     out["concept"] = run.concept
     out["config_hash"] = run.config["config_hash"]
     out["ts"] = _now()
+    out["attempt"] = RUN_ATTEMPT
     return out
+
+
+RUN_ATTEMPT: str = "unset"
+
+
+def begin_attempt() -> str:
+    """Name this process's pass over the run, and stamp every row it writes with that name.
+
+    **What it is for: telling a resumed cell's rows apart from the crashed one's.**
+
+    `measure_cell` writes a cell's ~194 response rows, then its judge calls, and its
+    `cells.jsonl` row LAST. That order is right -- a cell must not be marked done before its data
+    is on disk -- but it leaves a window. A crash after the responses and before the cells row
+    means the resume re-measures that cell and appends a second full set of 194 rows.
+    `cells.jsonl` is unaffected (it aggregates the in-memory rows and holds at most one row per
+    layer/dose), so the headline numbers are safe. The transcripts are deduped by nothing, and
+    before this the only thing separating the two copies was `ts` at one-second resolution.
+
+    This project keeps every transcript precisely so operating points can be chosen offline
+    later. An analysis that reads a cell's rate straight from the transcripts would count one
+    cell's battery twice, with nothing marking it. With an attempt stamp the rule is one line:
+    for each (layer, dose, channel, unit), keep the row with the highest `attempt`.
+    `tools.rescore` does that and says how many rows it dropped.
+
+    Second resolution is enough because the id names a PROCESS, not a row -- two attempts on one
+    run directory are a crash and a restart, minutes apart at the very least.
+    """
+    global RUN_ATTEMPT
+    RUN_ATTEMPT = _now()
+    return RUN_ATTEMPT
 
 
 # =====================================================================================

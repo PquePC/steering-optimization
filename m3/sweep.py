@@ -1246,7 +1246,20 @@ def run_sweep(concept: str, cfg: dict | None = None) -> dict:
         config_hash=config.config_hash(cfg),
     )
     runio.write_json(SUMMARY_FILE, summary)
-    _read_bundle(concept, cfg)
+    # Never fatal. The read-this bundle is a convenience -- a markdown digest of judge-versus-
+    # mechanical disagreements -- and it is the LAST thing a 3.4-hour run does. It strict-reads
+    # the two largest files in the run (~49,000 responses and ~66,000 judge calls) and hard-
+    # indexes a dozen fields, and in m3/run.py `archive_concept` and `export_bundle` sit OUTSIDE
+    # the try that wraps this call. So an exception here does not cost a markdown file: it costs
+    # the archive and the export, and nothing leaves the pod. Every measured row is already on
+    # disk and summary.json is already written by the line above; there is no version of "the
+    # digest failed" that should also mean "you get no zip".
+    try:
+        _read_bundle(concept, cfg)
+    except Exception as exc:                     # noqa: BLE001 - a digest must not end a run
+        runio.log(f"read-this bundle failed ({type(exc).__name__}: {exc}). Every measured row is "
+                  "on disk and summary.json is written; the archive and export still run.",
+                  "WARN")
     _log(f"DONE  {n_on_disk} cells on disk, {measured} this attempt, "
          f"{summary['elapsed_s'] / 60:.1f} min")
     return summary
@@ -1281,6 +1294,7 @@ def open_run(concept: str, cfg: dict | None = None) -> Path:
     # survivable crash into a file no reader will touch again -- see runio.heal_torn_tail. Every
     # artefact this pipeline appends to, so a resume cannot be poisoned by whichever file the
     # process happened to be writing when it died.
+    runio.begin_attempt()
     healed = {name: runio.heal_torn_tail(name) for name in APPEND_ONLY_ARTEFACTS}
     if any(healed.values()):
         runio.log("resumed over a torn tail: "

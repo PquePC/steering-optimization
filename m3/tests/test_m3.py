@@ -1145,7 +1145,17 @@ def test_every_appended_artefact_is_on_the_heal_list():
 
     from m3 import sweep as sweep_module
 
-    source = _Path(sweep_module.__file__).read_text(encoding="utf-8")
+    # Every module that appends, not just sweep.py. The first version of this test read
+    # sweep.py alone, so m3/run.py's provenance.jsonl write was invisible to it -- the file
+    # happened to be on the list, so the test passed while checking nothing about it. That is
+    # the "check that cannot fail" shape AGENTS.md names.
+    # By PATH, not by import: m2/expensive.py and m2/vectors.py import torch, which is not
+    # installed in the offline test environment. A guard that can only run where the GPU stack
+    # is present is a guard that never runs.
+    repo = _Path(sweep_module.__file__).resolve().parents[1]
+    scanned = [repo / "m3" / "sweep.py", repo / "m3" / "run.py", repo / "m3" / "freerun.py",
+               repo / "m2" / "expensive.py", repo / "m2" / "vectors.py"]
+    source = "\n".join(f.read_text(encoding="utf-8") for f in scanned if f.exists())
     written = set(re.findall(r'write_row\(\s*"([^"]+\.jsonl)"', source))
     written |= {v for k, v in vars(sweep_module).items()
                 if k.endswith("_FILE") and isinstance(v, str) and v.endswith(".jsonl")}
@@ -1154,3 +1164,75 @@ def test_every_appended_artefact_is_on_the_heal_list():
     written |= {c for c in constants if c.endswith(".jsonl")}
     missing = sorted(written - set(sweep_module.APPEND_ONLY_ARTEFACTS))
     assert not missing, f"appended but not healed on resume: {missing}"
+
+
+def test_every_row_names_the_attempt_that_wrote_it(tmp_path, monkeypatch):
+    """Two passes over one run directory must be distinguishable in the transcripts.
+
+    A crash between a cell's response rows and its cells.jsonl row makes the resume re-measure
+    that cell and append a second full battery. cells.jsonl is unaffected, so the run's summary
+    is right -- but this project keeps every transcript so operating points can be chosen offline
+    later, and that analysis would count the cell twice with nothing marking it.
+    """
+    from m2 import runio
+
+    runio = _fake_run_context(monkeypatch, tmp_path)
+    first = runio.begin_attempt()
+    runio.write_row("responses_transcripts.jsonl",
+                    dict(layer=53, dose=0.2, channel="effect", unit="task_x", response="a"))
+
+    monkeypatch.setattr(runio, "_now", lambda: "2026-08-24T12:00:00+00:00")
+    second = runio.begin_attempt()
+    runio.write_row("responses_transcripts.jsonl",
+                    dict(layer=53, dose=0.2, channel="effect", unit="task_x", response="b"))
+
+    rows = runio.read_rows("responses_transcripts.jsonl")
+    assert len(rows) == 2, "both attempts are on disk; nothing is overwritten"
+    assert {r["attempt"] for r in rows} == {first, second}
+    assert second != first
+
+
+def test_rescore_keeps_only_the_latest_attempt():
+    """The dedupe rule offline analysis needs, and the count it must report."""
+    from tools import rescore
+
+    rows = [
+        dict(layer=53, dose=0.2, channel="effect", unit="task_a", response="crashed",
+             attempt="2026-08-24T10:00:00+00:00"),
+        dict(layer=53, dose=0.2, channel="effect", unit="task_a", response="resumed",
+             attempt="2026-08-24T11:00:00+00:00"),
+        dict(layer=53, dose=0.2, channel="effect", unit="task_b", response="only once",
+             attempt="2026-08-24T10:00:00+00:00"),
+    ]
+    kept, dropped = rescore.dedupe_attempts(rows)
+    assert dropped == 1
+    by_unit = {r["unit"]: r["response"] for r in kept}
+    assert by_unit == {"task_a": "resumed", "task_b": "only once"}
+
+    # An export written before `attempt` existed must survive unchanged rather than collapsing.
+    old = [dict(layer=53, dose=0.2, channel="effect", unit=f"task_{i}") for i in range(3)]
+    kept, dropped = rescore.dedupe_attempts(old)
+    assert dropped == 0 and len(kept) == 3
+
+
+def test_a_failing_read_this_bundle_does_not_cost_the_export():
+    """The digest is the last thing a 3.4-hour run does, and archive/export sit outside the try.
+
+    So an exception in `_read_bundle` never cost a markdown file -- it cost the archive and the
+    zip, and nothing left the pod. summary.json is already written by then and every measured row
+    is already on disk; there is no version of "the digest failed" that should also mean "you get
+    no export".
+    """
+    import inspect
+
+    from m3 import sweep as sweep_module
+
+    source = inspect.getsource(sweep_module.run_sweep)
+    call = source.index("_read_bundle(concept, cfg)")
+    before = source[:call]
+    assert before.rstrip().endswith("try:"), (
+        "_read_bundle must be inside a try; an exception there forfeits the export")
+    after = source[call:]
+    assert "except Exception" in after[:400], "and the except must be right there"
+    assert "write_json(SUMMARY_FILE" in before, (
+        "summary.json must already be written before the digest is attempted")

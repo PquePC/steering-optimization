@@ -41,11 +41,39 @@ if str(REPO) not in sys.path:
 from m3 import battery                                          # noqa: E402
 
 
+def dedupe_attempts(rows: Sequence[dict]) -> tuple[list[dict], int]:
+    """Keep one row per (layer, dose, channel, unit): the one from the latest attempt.
+
+    A crash between a cell's response rows and its `cells.jsonl` row makes the resumed run
+    re-measure that cell and append a second full battery. `cells.jsonl` is unaffected, so the
+    run's own summary is right -- but an offline re-analysis reading the transcripts directly
+    would count that cell twice. Rows carry `attempt` from `runio.begin_attempt` for exactly
+    this.
+
+    Rows written before `attempt` existed carry no such field. Those are treated as one single
+    oldest attempt, which is correct for any run that never resumed and is the best available
+    guess for one that did -- an older export cannot be repaired here, only reported.
+    """
+    latest: dict[tuple, dict] = {}
+    for row in rows:
+        key = (row.get("layer"), row.get("dose"), row.get("channel"), row.get("unit"))
+        seen = latest.get(key)
+        if seen is None or str(row.get("attempt", "")) > str(seen.get("attempt", "")):
+            latest[key] = row
+    return list(latest.values()), len(rows) - len(latest)
+
+
 def load(export_dir: Path) -> list[dict]:
     path = Path(export_dir) / "responses_transcripts.jsonl"
     if not path.exists():
         raise SystemExit(f"{path} is missing; point at an unzipped export directory")
-    return [json.loads(line) for line in path.open(encoding="utf-8") if line.strip()]
+    rows = [json.loads(line) for line in path.open(encoding="utf-8") if line.strip()]
+    rows, dropped = dedupe_attempts(rows)
+    if dropped:
+        print(f"  NOTE  {dropped} rows superseded by a later attempt and dropped. That run "
+              f"crashed and resumed;\n        the re-measured cells had two batteries on disk. "
+              f"cells.jsonl was never affected.")
+    return rows
 
 
 def cells(rows: Sequence[dict], channels: Sequence[str] = ("effect",)) -> list[dict]:
