@@ -718,7 +718,13 @@ def test_a_channel_cannot_ask_for_more_prompts_than_exist():
     catches the mismatch, but only after the model is loaded -- `--set N_EFFECT=66` priced a
     194-prompt battery, printed a plan, and would have died minutes into the run. The dry run
     has to fail on everything the real run fails on."""
-    for name, want in (("N_EFFECT", 66), ("N_EXPLAIN", 9), ("N_CAPABILITY", 7)):
+    # One past each list, read from the list -- not a literal. Written as `N_EFFECT=66` it
+    # started passing the moment 44 prompts were appended and 66 became the ceiling rather than
+    # over it: a guard test pinned to a number tests the number, not the guard.
+    over = {"N_EFFECT": len(battery.TASK_PROMPTS) + 1,
+            "N_EXPLAIN": len(battery.EXPLAIN_PROMPTS) + 1,
+            "N_CAPABILITY": len(battery.CAPABILITY_PROMPTS) + 1}
+    for name, want in over.items():
         cfg = dict(config.SETTINGS, **{name: want})
         with pytest.raises(ValueError, match="prompts exist"):
             config.check_prompt_supply(cfg)
@@ -825,3 +831,42 @@ def test_the_instruct_axis_cannot_produce_a_one():
     value. Mapped to 0 or 2 so a fully on-task response is not docked half an axis."""
     assert battery.instruct_score(True) == 2
     assert battery.instruct_score(False) == 0
+
+
+def test_the_original_twenty_two_task_prompts_are_still_the_prefix():
+    """`battery_prompts` builds the effect channel as `TASK_PROMPTS[:N_EFFECT]`, so a prefix is
+    what a run gets. The 44 added on 2026-08-23 were APPENDED for that reason: any reorder or
+    insertion silently changes what an earlier N_EFFECT=22 run had measured, and every
+    cross-run comparison with it."""
+    first = [r["id"] for r in battery.TASK_PROMPTS[:22]]
+    assert first == [
+        "task_story", "task_landscape", "task_words", "task_notice", "task_advice",
+        "task_explain", "task_water", "task_argument", "task_city", "task_letter2",
+        "task_machine", "task_memory", "task_numbers", "task_question", "task_sound",
+        "task_journey", "task_disagree", "task_rule", "task_list2", "task_time",
+        "task_build", "task_quiet"]
+    assert battery.TASK_PROMPTS[0]["text"] == "Tell me a short story."
+
+
+def test_every_task_prompt_is_distinct_in_both_id_and_text():
+    """Two prompts sharing an id join two different rows wherever a row is keyed on `unit`; two
+    sharing text quietly halve the effective sample size of a channel whose whole n is a count
+    of distinct questions."""
+    ids = [r["id"] for r in battery.TASK_PROMPTS]
+    texts = [r["text"].strip().lower() for r in battery.TASK_PROMPTS]
+    assert len(set(ids)) == len(ids)
+    assert len(set(texts)) == len(texts)
+    assert len(battery.TASK_PROMPTS) == 66
+
+
+def test_the_appended_block_keeps_every_prefix_register_balanced():
+    """The 44 are round-robined across their registers, not grouped by register. An intermediate
+    `N_EFFECT` takes a prefix, and a prefix of a register-sorted block would be eight narrative
+    prompts and nothing else -- which is the failure the set is register-spread to avoid."""
+    added = [r["id"] for r in battery.TASK_PROMPTS[22:]]
+    assert len(added) == 44
+    # the first seven added are one from each of the seven registers, in a fixed rotation
+    assert added[:7] == ["task_stranger", "task_weather", "task_gravity", "task_uncertain",
+                         "task_defend", "task_list3", "task_note"]
+    # no register contributes twice before every register has contributed once
+    assert len(set(added[:7])) == 7

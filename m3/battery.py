@@ -98,6 +98,70 @@ TASK_PROMPTS: list[dict] = [
     dict(id="task_time",      text="Describe how an hour can feel long or short."),
     dict(id="task_build",     text="Describe how you would build something from scratch."),
     dict(id="task_quiet",     text="Describe a place where very little happens."),
+
+    # ---- added 2026-08-23, for the influence channel's sample size ----------------
+    # `N_EFFECT` is a count of DISTINCT prompts, so the width of this list is the only
+    # thing that shrinks the influence interval: 22 gives +/-1.15 on the 0-10 mean and
+    # +/-14.7pp on the clear-and-intact rate at p=0.15; 66 gives +/-0.66 and +/-8.6pp.
+    #
+    # APPENDED, never interleaved. The channel is built as `TASK_PROMPTS[:N_EFFECT]`, so
+    # a prefix is what a run gets -- appending leaves every earlier run's 22 prompts
+    # byte-identical and comparable, and reordering would silently change what an old
+    # N_EFFECT=22 run had measured.
+    #
+    # Round-robined across the seven registers rather than grouped by register, for the
+    # same reason one level down: an intermediate N_EFFECT takes a prefix, and a prefix
+    # of a register-sorted block is eight narrative prompts and nothing else.
+    #
+    # Two lean toward a concept in the current set and are kept deliberately, because the
+    # judge is shown the model's own unsteered answer and told to discount it, so
+    # adjacency cannot inflate a score. It can make a prompt near-dead for ONE concept at
+    # every dose -- `task_market` for Garlic, `task_workshop` for Wrists -- which is
+    # visible per prompt in the transcripts if it ever matters.
+    dict(id="task_stranger",  text="Tell me about a stranger who changed someone's day."),  # narrative
+    dict(id="task_weather",   text="Describe a change in the weather."),  # descriptive
+    dict(id="task_gravity",   text="Explain why things fall."),  # expository
+    dict(id="task_uncertain", text="Describe what being uncertain feels like from the inside."),  # introspective
+    dict(id="task_defend",    text="Defend an unpopular opinion you do not have to believe."),  # argumentative
+    dict(id="task_list3",     text="List five things that are harder than they look."),  # list
+    dict(id="task_note",      text="Write a short note thanking someone for their patience."),  # practical
+    dict(id="task_return",    text="Describe someone returning to a place after many years."),  # narrative
+    dict(id="task_room",      text="Describe a room nobody has entered for a long time."),  # descriptive
+    dict(id="task_language",  text="Explain how a language changes over time."),  # expository
+    dict(id="task_attention", text="Describe what you notice when you pay attention to one thing."),  # introspective
+    dict(id="task_tradeoff",  text="Describe a trade-off where neither side is obviously right."),  # argumentative
+    dict(id="task_list4",     text="List five questions that have no good answer."),  # list
+    dict(id="task_howto",     text="Write instructions for something you do without thinking."),  # practical
+    dict(id="task_promise",   text="Tell a story about a promise that was hard to keep."),  # narrative
+    dict(id="task_crowd",     text="Describe a crowd seen from a distance."),  # descriptive
+    dict(id="task_money",     text="Explain what money actually is."),  # expository
+    dict(id="task_forget",    text="Describe what it is like to almost remember something."),  # introspective
+    dict(id="task_quick",     text="Give advice to someone who has to make a decision quickly."),  # argumentative
+    dict(id="task_list5",     text="List five things people commonly get wrong."),  # list
+    dict(id="task_decline",   text="Write a short message declining an invitation."),  # practical
+    dict(id="task_mistake",   text="Describe someone realising they were wrong."),  # narrative
+    dict(id="task_river",     text="Describe a river where it meets the sea."),  # descriptive
+    dict(id="task_maps",      text="Explain what a map has to leave out, and why."),  # expository
+    dict(id="task_habit",     text="Describe how a habit forms."),  # introspective
+    dict(id="task_wrong",     text="Argue that being wrong in public is useful."),  # argumentative
+    dict(id="task_words2",    text="Say the first ten things that come to mind about beginnings."),  # list
+    dict(id="task_intro",     text="Write two sentences introducing yourself to a group."),  # practical
+    dict(id="task_waiting",   text="Tell a story in which most of the time is spent waiting."),  # narrative
+    dict(id="task_market",    text="Describe a market in the early morning."),  # descriptive
+    dict(id="task_seasons",   text="Explain why there are seasons."),  # expository
+    dict(id="task_boredom",   text="Describe what boredom is like."),  # introspective
+    dict(id="task_slow",      text="Make the case for doing something slowly."),  # argumentative
+    dict(id="task_list6",     text="List five small pleasures."),  # list
+    dict(id="task_gift",      text="Describe someone choosing a gift for a person they barely know."),  # narrative
+    dict(id="task_light",     text="Describe how the light changes over the course of a day."),  # descriptive
+    dict(id="task_contract",  text="Explain what a promise has in common with a contract."),  # expository
+    dict(id="task_surprise",  text="Describe what happens in the moment of being surprised."),  # introspective
+    dict(id="task_leaving",   text="Tell a story about leaving somewhere for the last time."),  # narrative
+    dict(id="task_ruin",      text="Describe a building that is slowly falling down."),  # descriptive
+    dict(id="task_measure",   text="Explain why measuring something can change it."),  # expository
+    dict(id="task_neighbour", text="Describe two neighbours who rarely speak to each other."),  # narrative
+    dict(id="task_workshop",  text="Describe a workshop where someone repairs things."),  # descriptive
+    dict(id="task_names",     text="Explain how things come to have the names they have."),  # expository
 ]
 
 # Held out from the sweep, for the confirmation phase. A cell selected as best on one prompt set

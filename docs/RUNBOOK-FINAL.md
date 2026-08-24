@@ -53,16 +53,16 @@ One row is what you want. If the provider gave you more, every command below alr
 ### 0.2 Test A — Qwen: the fix, the memory, and the clock
 
 ```bash
-cd /workspace/steering-optimization && CUDA_VISIBLE_DEVICES=0 python -m m3.run --concept Garlic --set MODEL=qwen3_32b --set ALPHA_CEIL=50 --set "CELLS=39:0.30,39:0.60,39:0.90,39:1.20" --set JUDGE_ENABLED=0 --set N_IDENTIFY=120 --set N_EFFECT=22 --set N_SELF_REPORT=0 --set N_COHERENCE=22 --set N_CAPABILITY=4 --set N_EXPLAIN=4 --set GEN_BATCH_MAX=64 --set ALLOW_BATTERY_SPLIT=1
+cd /workspace/steering-optimization && CUDA_VISIBLE_DEVICES=0 python -m m3.run --concept Garlic --set MODEL=qwen3_32b --set ALPHA_CEIL=50 --set "CELLS=39:0.30,39:0.60,39:0.90,39:1.20" --set JUDGE_ENABLED=0 --set N_IDENTIFY=120 --set N_EFFECT=66 --set N_SELF_REPORT=0 --set N_COHERENCE=66 --set N_CAPABILITY=4 --set N_EXPLAIN=4 --set GEN_BATCH_MAX=66 --set ALLOW_BATTERY_SPLIT=1
 ```
 
-Four doses at L39, the real battery, no judge calls. 1,050 generations, `config=a20c5fde6d94`.
+Four doses at L39, the real battery, no judge calls. 1,358 generations, `config=1fc9e55f858a`.
 `ALPHA_CEIL=50` because the default 16 is below what Qwen needs — the August runs found that.
 
 Then the question the whole run depends on:
 
 ```bash
-cd /workspace/m3_runs && python -c "import collections,json; rows=[json.loads(l) for l in open('garlic_a20c5fde6d94/responses_transcripts.jsonl',encoding='utf-8')]; by=collections.defaultdict(lambda:[0,0]); [(by[r['dose']].__setitem__(0,by[r['dose']][0]+1), by[r['dose']].__setitem__(1,by[r['dose']][1]+bool(r['concept_mentions']))) for r in rows]; [print(f'  dose {d:<7} {h}/{n} mention garlic  ({h/n:.0%})') for d,(n,h) in sorted(by.items())]"
+cd /workspace/m3_runs && python -c "import collections,json; rows=[json.loads(l) for l in open('garlic_1fc9e55f858a/responses_transcripts.jsonl',encoding='utf-8')]; by=collections.defaultdict(lambda:[0,0]); [(by[r['dose']].__setitem__(0,by[r['dose']][0]+1), by[r['dose']].__setitem__(1,by[r['dose']][1]+bool(r['concept_mentions']))) for r in rows]; [print(f'  dose {d:<7} {h}/{n} mention garlic  ({h/n:.0%})') for d,(n,h) in sorted(by.items())]"
 ```
 
 **Go / no-go.** The August data sat at 2% at every dose, including the dose that destroyed the
@@ -72,12 +72,12 @@ extraction method rather than the dose grid. A rate that climbs with dose is the
 ### 0.3 Test B — Gemma: the positive control, and its clock
 
 ```bash
-cd /workspace/steering-optimization && CUDA_VISIBLE_DEVICES=0 python -m m3.run --concept Garlic --set MODEL=gemma3_27b --set "CELLS=53:0.10,53:0.15,53:0.20,53:0.25" --set JUDGE_ENABLED=0 --set N_IDENTIFY=120 --set N_EFFECT=22 --set N_SELF_REPORT=0 --set N_COHERENCE=22 --set N_CAPABILITY=4 --set N_EXPLAIN=4 --set GEN_BATCH_MAX=64 --set ALLOW_BATTERY_SPLIT=1
+cd /workspace/steering-optimization && CUDA_VISIBLE_DEVICES=0 python -m m3.run --concept Garlic --set MODEL=gemma3_27b --set "CELLS=53:0.10,53:0.15,53:0.20,53:0.25" --set JUDGE_ENABLED=0 --set N_IDENTIFY=120 --set N_EFFECT=66 --set N_SELF_REPORT=0 --set N_COHERENCE=66 --set N_CAPABILITY=4 --set N_EXPLAIN=4 --set GEN_BATCH_MAX=66 --set ALLOW_BATTERY_SPLIT=1
 ```
 
 L53 is where Garlic peaked in the previous runs and its boundary there was ~0.29, so these four
-doses bracket it. `config=910752c76bac`. Re-run the counting command above against
-`garlic_910752c76bac`: Gemma should mention garlic in most responses at the upper doses. **If it
+doses bracket it. `config=c8511120262f`. Re-run the counting command above against
+`garlic_c8511120262f`: Gemma should mention garlic in most responses at the upper doses. **If it
 does not, the problem is not Qwen-specific and test A tells you nothing** — that is what this
 test is for.
 
@@ -88,15 +88,15 @@ replaces the ≤4-hour upper bound with a measurement.
 ### 0.4 Test C — the judge, end to end
 
 ```bash
-cd /workspace/steering-optimization && CUDA_VISIBLE_DEVICES=0 python -m m3.run --concept Garlic --set MODEL=gemma3_27b --set "CELLS=53:0.20" --set N_IDENTIFY=120 --set N_EFFECT=22 --set N_SELF_REPORT=0 --set N_COHERENCE=22 --set N_CAPABILITY=4 --set N_EXPLAIN=4 --set GEN_BATCH_MAX=64 --set ALLOW_BATTERY_SPLIT=1 --set JUDGE_CONCURRENT=10
+cd /workspace/steering-optimization && CUDA_VISIBLE_DEVICES=0 python -m m3.run --concept Garlic --set MODEL=gemma3_27b --set "CELLS=53:0.20" --set N_IDENTIFY=120 --set N_EFFECT=66 --set N_SELF_REPORT=0 --set N_COHERENCE=66 --set N_CAPABILITY=4 --set N_EXPLAIN=4 --set GEN_BATCH_MAX=66 --set ALLOW_BATTERY_SPLIT=1 --set JUDGE_CONCURRENT=10
 ```
 
-One cell with judging on: 172 judge calls, about a cent, `config=764d803a76be`. This is the
+One cell with judging on: 260 judge calls, about two cents, `config=29443a5b11fd`. This is the
 first time the corrected guidance is sent by the pipeline rather than by the bakeoff, and the
 pipeline allows 120 reply tokens where the bakeoff allowed 400.
 
 ```bash
-cd /workspace/m3_runs && python -c "import collections,json; rows=[json.loads(l) for l in open('garlic_764d803a76be/judge_calls.jsonl',encoding='utf-8')]; print('parsed:',dict(collections.Counter(r['judge'] for r in rows if r['ok']))); print('failed:',dict(collections.Counter(str(r['error'])[:60] for r in rows if not r['ok'])) or 'none'); print('longest reply, chars:',max(len(r['raw'] or '') for r in rows))"
+cd /workspace/m3_runs && python -c "import collections,json; rows=[json.loads(l) for l in open('garlic_29443a5b11fd/judge_calls.jsonl',encoding='utf-8')]; print('parsed:',dict(collections.Counter(r['judge'] for r in rows if r['ok']))); print('failed:',dict(collections.Counter(str(r['error'])[:60] for r in rows if not r['ok'])) or 'none'); print('longest reply, chars:',max(len(r['raw'] or '') for r in rows))"
 ```
 
 **`failed: none` is the pass.** Any `judge response did not parse` means adding
@@ -106,7 +106,7 @@ model is being truncated at the cap and the same fix applies.
 Then check the new metric computed, on real data:
 
 ```bash
-cd /workspace/steering-optimization && python -m tools.rescore /workspace/m3_runs/garlic_764d803a76be
+cd /workspace/steering-optimization && python -m tools.rescore /workspace/m3_runs/garlic_29443a5b11fd
 ```
 
 Coverage must read **100%**. Anything less means `N_COHERENCE` did not reach `N_EFFECT` and the
@@ -147,16 +147,16 @@ uses the same image the models do not download again.
 
 ```
 LAYER_FRACTIONS=0.35,1.0   LAYER_STRIDE=1
-N_IDENTIFY=120  N_EFFECT=22  N_SELF_REPORT=0  N_COHERENCE=22  N_CAPABILITY=4  N_EXPLAIN=4
-GEN_BATCH_MAX=64  ALLOW_BATTERY_SPLIT=1  NULL_REPEATS=20  JUDGE_CONCURRENT=10
+N_IDENTIFY=120  N_EFFECT=66  N_SELF_REPORT=0  N_COHERENCE=66  N_CAPABILITY=4  N_EXPLAIN=4
+GEN_BATCH_MAX=66  ALLOW_BATTERY_SPLIT=1  NULL_REPEATS=20  JUDGE_CONCURRENT=10
 ```
 
 | | Gemma3-27B | Qwen3-32B |
 |---|---|---|
 | layers | 41, **L21–L61**, every layer | 42, **L22–L63**, every layer |
 | cells | 246 | 252 |
-| battery | 150, split `[64, 64, 22]` | 150, split `[64, 64, 22]` |
-| config hash | `a53b896215da` | `7f4bd1b2f525` |
+| battery | 194, split `[66, 66, 62]` | 194, split `[66, 66, 62]` |
+| config hash | `00f0d93888d8` | `a79312cb4f2e` |
 
 **`LAYER_STRIDE=1` — every layer.** The argument is in the data: at **L39 all three concepts
 collapse at once**. Identification is Garlic 0.11 against neighbours 0.45 and 0.63, Silk 0.02
@@ -168,7 +168,7 @@ Stride 2 halves that grid, and halves it on **different parities for the two mod
 floor Gemma lands on odd layers and Qwen on even. A one-layer feature would be visible in one arm
 and invisible in the other by grid alignment rather than by anything about the models, which for
 a cross-model figure is disqualifying. Stride 2 stays available if budget matters more: 126 cells
-instead of 246, about $9.90 instead of $19.50 for all six, ~2.1 h instead of ~4.0 h.
+instead of 246, about $14.70 instead of $28.89 for all six, ~2.5 h instead of ~4.8 h.
 
 **`LAYER_FRACTIONS=0.35`** (was 0.21) puts the floor at L21. The evidence said L25 would be safe
 — Silk and Wrists were both measured from L13 and both read identification 0.000 at every layer
@@ -183,9 +183,9 @@ plainly present in its answer. `m3/judge.py` calls that "the covert regime and t
 study exists to find". It cannot be recovered from this archive afterwards, because the responses
 will not exist.
 
-**`N_COHERENCE=22`, matching `N_EFFECT`** — a requirement, not a preference. See §2.
+**`N_COHERENCE=66`, matching `N_EFFECT`** — a requirement, not a preference. See §2.
 
-**The battery, 150 responses per cell** (was 72), split into three generation calls. Chunking is
+**The battery, 194 responses per cell** (was 72), split into three generation calls. Chunking is
 scientifically neutral: `m2.expensive` corrects each row's start position for its own padding, so
 chunk composition changes the padding width and nothing else (`m2/expensive.py:124`). Both
 `GEN_BATCH_MAX` and `ALLOW_BATTERY_SPLIT` are hashed, so the two models provably get the same
@@ -247,11 +247,16 @@ defaulted axis. At `N_COHERENCE=12` the 2026-08-21 runs covered 570 of 1,482 row
 summary described a minority of its own battery. Matching them costs judge calls only, no
 generations: **+$0.18 per run**.
 
-**The old 0–10 mean does not improve, and cannot without new prompts.** Its `n` is a count of
-distinct task prompts — `TASK_PROMPTS[:N_EFFECT]`, and that list holds 22, which
-`check_prompt_supply` now enforces at dry-run time. Going to 66 prompts would take the mean's
-interval from ±1.15 to ±0.66 and the rate's from ±19.3 pp to ±11.7 pp at p=0.5. Forty-four
-candidates are drafted in `private/task-prompts-draft.py`.
+**Both intervals above assume 66 task prompts, which the battery now holds.** This channel's
+`n` is a count of DISTINCT prompts — `TASK_PROMPTS[:N_EFFECT]` — so the width of that list is
+the only thing that shrinks the interval, and `check_prompt_supply` refuses an `N_EFFECT` past
+it at dry-run time. Forty-four were appended on 2026-08-23, taking the 0–10 mean's interval from
+±1.15 to ±0.66 and the clear-and-intact rate's from ±14.7 pp to ±8.6 pp at p=0.15.
+
+They were **appended**, never interleaved, because the channel is built as a prefix: the original
+22 are still the first 22, so every earlier run remains comparable. Within the appended block
+they are round-robined across their seven registers, so an intermediate `N_EFFECT` still gets a
+register-balanced prefix rather than eight narrative prompts in a row.
 
 ---
 
@@ -259,8 +264,8 @@ candidates are drafted in `private/task-prompts-draft.py`.
 
 Per run: ~43,000 generations, ~45,000 judge calls, **$3.21–$3.29** judging, **≤4.0 GPU-hours**.
 
-All six: **257k generations, 272k judge calls, $19.50 judging, ~4.0 h wall clock** with all six
-cards busy. At stride 2 instead: 139k generations, ~$9.90, ~2.1 h.
+All six: **328k generations, 404k judge calls, $28.89 judging, ~4.8 h wall clock** with all six
+cards busy. At stride 2 instead: 178k generations, ~$14.70, ~2.5 h.
 
 The GPU figure is an upper bound — `m3.run` scales it linearly with battery size above its
 72-prompt calibration point, which is roughly what three sequential chunks cost. Preflight test B
@@ -276,14 +281,14 @@ the three do not race the same download, then confirm `gpu_count=1` on every `pr
 The only change is the settings. Each launch line carries, with `$M` the pod's model:
 
 ```
---concept $C --set MODEL=$M --set LAYER_FRACTIONS=0.35,1.0 --set LAYER_STRIDE=1 --set N_IDENTIFY=120 --set N_EFFECT=22 --set N_SELF_REPORT=0 --set N_COHERENCE=22 --set N_CAPABILITY=4 --set N_EXPLAIN=4 --set GEN_BATCH_MAX=64 --set ALLOW_BATTERY_SPLIT=1 --set NULL_REPEATS=20 --set JUDGE_CONCURRENT=10
+--concept $C --set MODEL=$M --set LAYER_FRACTIONS=0.35,1.0 --set LAYER_STRIDE=1 --set N_IDENTIFY=120 --set N_EFFECT=66 --set N_SELF_REPORT=0 --set N_COHERENCE=66 --set N_CAPABILITY=4 --set N_EXPLAIN=4 --set GEN_BATCH_MAX=66 --set ALLOW_BATTERY_SPLIT=1 --set NULL_REPEATS=20 --set JUDGE_CONCURRENT=10
 ```
 
 Gemma pod `MODEL=gemma3_27b`, Qwen pod `MODEL=qwen3_32b`; Garlic, Silk, Wrists on cards 0, 1, 2.
 
 **Read one `--dry-run` before removing it.** The Gemma plan must say `layers 41 (L21-L61, stride
-1)`, `cells 246`, `battery 150 ... split into 3 generation batches of [64, 64, 22]`,
-`config=a53b896215da`. A different hash means a `--set` did not land — and since the run folder
+1)`, `cells 246`, `battery 194 ... split into 3 generation batches of [66, 66, 62]`,
+`config=00f0d93888d8`. A different hash means a `--set` did not land — and since the run folder
 is named after the hash, the run would write somewhere other than where you go looking for it.
 
 Export with `tools/collect_everything.py` on each pod before stopping it
