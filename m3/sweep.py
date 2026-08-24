@@ -25,6 +25,7 @@ that earn it to cut judge spend. Assuming that agreement in advance is exactly w
 
 from __future__ import annotations
 
+import collections
 import math
 import time
 from pathlib import Path
@@ -1247,6 +1248,32 @@ def run_sweep(concept: str, cfg: dict | None = None) -> dict:
                 continue
             for frac in fractions:
                 plan.append((int(layer), round(float(row["dose_max"]) * frac, 6)))
+
+    # A sweep that measures NOTHING is a failure, not a success.
+    #
+    # Every layer's dose comes from Phase 1, and Phase 1 is judged. If the judge is unavailable
+    # for its duration -- an OpenRouter 402 when credit runs out, or an outage -- every probe
+    # comes back with no verdicts, every rung fails, every layer records `incoherent_at_floor`
+    # with `dose_max=None`, and this plan is empty. Without this guard the run then prints
+    # "0 cells to measure", writes a summary, zips an empty result and exits 0. The most
+    # expensive shape a bug can take here is the one that looks like it worked.
+    #
+    # The outcome counts are in the message because they name the cause: all
+    # `incoherent_at_floor` is a judge that was not answering, all `unreachable` is an
+    # ALPHA_CEIL that cannot reach the bracket, and a mixture is a real result about the model.
+    if not plan and not explicit:
+        counts = collections.Counter(str(s["reason"]) for s in skipped)
+        raise RuntimeError(
+            f"no cell has a dose: all {len(skipped)} layers came out of Phase 1 without a "
+            f"boundary, so there is nothing to measure. Outcomes: {dict(counts)}. "
+            "If that is all `incoherent_at_floor`, the judge was not answering -- check "
+            "OPENROUTER_API_KEY and the account's credit before re-running, because Phase 1 "
+            "bisects on judged coherence and records its verdict permanently.")
+    if skipped and len(skipped) * 2 > len(layers):
+        counts = collections.Counter(str(s["reason"]) for s in skipped)
+        _log(f"WARNING  {len(skipped)} of {len(layers)} layers have NO boundary and will be "
+             f"absent from every figure. Outcomes: {dict(counts)}. A layer with no dose is not "
+             "a layer that showed nothing.")
 
     have = _done(CELLS_FILE, ("layer", "dose"))
     todo = [(l, d) for l, d in plan
