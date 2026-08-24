@@ -601,6 +601,20 @@ def provenance() -> dict:
     return out
 
 
+def render_for_generation(tok: Any, cfg: dict, question: str) -> str:
+    """The one place a question becomes a prompt string. `chat` is this with RUN filled in.
+
+    Split out of `chat` so `assert_extraction_matches_generation` can compare the extractor's
+    rendering against *this function* rather than against its own reconstruction of what
+    generation probably does. A guard that rebuilds the thing it is checking only ever tests
+    that two copies of the same idea agree; this way there is one copy, and if the generation
+    prompt ever changes shape the guard follows it without being told.
+    """
+    return tok.apply_chat_template(
+        [{"role": "user", "content": question}], tokenize=False, add_generation_prompt=True,
+        **template_kwargs(tok, cfg))
+
+
 def chat(question: str) -> str:
     """Render a user question through the chat template.
 
@@ -608,9 +622,7 @@ def chat(question: str) -> str:
     passes add_special_tokens=False (bug 9).
     """
     run = _run()
-    return run.tok.apply_chat_template(
-        [{"role": "user", "content": question}], tokenize=False, add_generation_prompt=True,
-        **template_kwargs(run.tok, run.config))
+    return render_for_generation(run.tok, run.config, question)
 
 
 def template_kwargs(tok: Any, cfg: dict) -> dict:
@@ -701,27 +713,42 @@ class _TemplateAlignedModel:
         return getattr(self._mw, name)
 
 
-def assert_extraction_matches_generation(tok: Any, cfg: dict) -> str:
-    """Render one prompt both ways and raise if they differ. Returns the rendered tail.
+def assert_extraction_matches_generation(extractor_target: Any, cfg: dict) -> str:
+    """Raise unless `extractor_target` renders prompts the way generation renders them.
 
-    This is the property the bug above violated, checked rather than assumed, on the real
-    tokenizer, before any vector is extracted. It costs one template render and it is the only
-    thing standing between a future model with its own template switch and another silent arm.
+    **Pass the object the extractor will actually be given** - the `template_aligned` wrapper,
+    not `RUN.tok`. That is the whole content of the check. The extractor side is rendered with
+    NO template kwargs, because `vector_utils.py:149` passes none; the generation side goes
+    through `render_for_generation`, the same function `chat` calls. So handing this the bare
+    tokenizer on a model with a reasoning switch raises, and handing it the proxy passes.
+
+    The first version of this got that backwards: it was called with `RUN.tok` while the
+    extractor was separately handed a proxy built on the next line. It therefore checked an
+    object nobody used, and on Qwen3 it could only ever fail - which is exactly what it did,
+    two minutes into the run that was meant to confirm the fix. Binding one variable at the
+    call site and passing it to both is what makes this load-bearing rather than decorative.
+
+    What it still cannot catch: a future model whose template has a reasoning switch under some
+    other name. `template_kwargs` would return {} for it, both sides would render with the
+    tokenizer's defaults, and this would pass while extraction and generation quietly diverged
+    again. Prompt comparison cannot see that; only teaching `template_kwargs` the new name can.
     """
-    messages = [{"role": "user", "content": "Tell me about garlic"}]
-    aligned = _TemplateAlignedTokenizer(tok, cfg).apply_chat_template(
-        messages, tokenize=False, add_generation_prompt=True)
-    bare = tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-    if aligned == bare:
-        return str(aligned)[-80:]
+    tok = getattr(extractor_target, "tokenizer", extractor_target)
+    probe = "Tell me about garlic"
+    extraction = tok.apply_chat_template(
+        [{"role": "user", "content": probe}], tokenize=False, add_generation_prompt=True)
+    generation = render_for_generation(tok, cfg, probe)
+    if extraction == generation:
+        return str(extraction)[-80:]
     raise RuntimeError(
         "the extraction prompt and the generation prompt do not render the same way, which "
         "means the concept vector would be measured at a token position the injected forward "
         "pass never sees.\n"
-        f"  generation renders ...{str(aligned)[-60:]!r}\n"
-        f"  the bare template renders ...{str(bare)[-60:]!r}\n"
+        f"  generation renders    ...{str(generation)[-60:]!r}\n"
+        f"  the extractor renders ...{str(extraction)[-60:]!r}\n"
         "This is checked because it happened: see _TemplateAlignedTokenizer. If you are seeing "
-        "this, the proxy is not reaching the extractor.")
+        "this, the proxy is not reaching the extractor - check that the caller passes the "
+        "`template_aligned` wrapper here and not the raw tokenizer.")
 
 
 def template_aligned(mw: Any, cfg: dict) -> "_TemplateAlignedModel":

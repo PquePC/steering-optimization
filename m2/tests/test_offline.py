@@ -2163,6 +2163,13 @@ class _FakeGemmaTokenizer(_FakeQwenTokenizer):
     chat_template = "<start_of_turn>user"
 
 
+class _FakeQwenMw:
+    """Stands in for the model wrapper the extractor is handed, which carries `.tokenizer`."""
+
+    def __init__(self):
+        self.tokenizer = _FakeQwenTokenizer()
+
+
 def test_extraction_renders_the_same_prompt_as_generation_on_a_reasoning_model():
     """The bug: `vector_utils.extract_concept_vector_with_baseline` calls `apply_chat_template`
     itself and passes no `enable_thinking`, so on Qwen3 it rendered `...assistant\n` while every
@@ -2183,12 +2190,44 @@ def test_extraction_renders_the_same_prompt_as_generation_on_a_reasoning_model()
     assert aligned != bare
 
 
-def test_the_alignment_check_raises_on_the_divergence_it_exists_for():
+def test_the_alignment_check_raises_when_handed_the_bare_tokenizer():
+    """The bare tokenizer is what the extractor must NOT be given, so this is a failure."""
     from m2 import model as model_module
 
     with pytest.raises(RuntimeError, match="never sees"):
         model_module.assert_extraction_matches_generation(_FakeQwenTokenizer(),
                                                           {"thinking_mode": "off"})
+
+
+def test_the_alignment_check_passes_when_handed_what_the_extractor_actually_gets():
+    """The missing half, and the one that cost a pod.
+
+    The check above was the only one there was, so the guard shipped asserting that the proxy
+    is a no-op -- true on Gemma, impossible on Qwen. It was called with `RUN.tok` while the
+    extractor was handed a proxy, and it killed the first Qwen run two minutes in. A guard needs
+    a test for the case it is supposed to ALLOW, or it is only tested against passing when it
+    does nothing.
+    """
+    from m2 import model as model_module
+
+    cfg = {"thinking_mode": "off"}
+    for target in (model_module._TemplateAlignedTokenizer(_FakeQwenTokenizer(), cfg),
+                   model_module.template_aligned(_FakeQwenMw(), cfg)):
+        tail = model_module.assert_extraction_matches_generation(target, cfg)
+        assert tail.endswith("<think>\n\n</think>\n\n"), (
+            "the aligned render is the generation render, and the check returns its tail")
+
+
+def test_the_alignment_check_compares_against_the_real_generation_path():
+    """`render_for_generation` is the function `chat` calls; the guard must use it, not a
+    private reconstruction of it. Change how generation renders and the guard must move too."""
+    from m2 import model as model_module
+
+    tok, cfg = _FakeQwenTokenizer(), {"thinking_mode": "off"}
+    assert (model_module.render_for_generation(tok, cfg, "Tell me about garlic")
+            == model_module._TemplateAlignedTokenizer(tok, cfg).apply_chat_template(
+                [{"role": "user", "content": "Tell me about garlic"}],
+                tokenize=False, add_generation_prompt=True))
 
 
 def test_a_model_without_a_reasoning_switch_is_untouched_by_the_alignment():

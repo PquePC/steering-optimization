@@ -358,14 +358,17 @@ def extract_all_layers(concept: str, layers: list[int]) -> dict[int, "torch.Tens
 
     if missing:
         t0 = time.time()
-        tail = model.assert_extraction_matches_generation(run.tok, run.config)
+        # ONE object, checked and then used. The check is only worth anything if the thing it
+        # renders is the thing the extractor renders with; building the proxy twice let the
+        # guard pass judgement on a tokenizer nobody extracted with.
+        aligned = model.template_aligned(run.mw, run.config)
+        tail = model.assert_extraction_matches_generation(aligned, run.config)
         print(f"vectors    : extraction prompt ends ...{tail!r}")
         print(f"vectors    : extracting {concept!r} at {len(missing)} layers "
               f"(L{min(missing)}-L{max(missing)}), {len(words)} baseline words")
         for i, layer in enumerate(missing, start=1):
             vecs[layer] = extract_concept_vector_with_baseline(
-                model.template_aligned(run.mw, run.config), concept, words,
-                layer_idx=layer)
+                aligned, concept, words, layer_idx=layer)
             if i % 8 == 0 or i == len(missing):
                 print(f"             {i}/{len(missing)} layers, {time.time()-t0:.0f}s")
         # Save the union, so a later call for extra layers (phase 5 neighbourhoods) does not
