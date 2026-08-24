@@ -1206,11 +1206,28 @@ def run_sweep(concept: str, cfg: dict | None = None) -> dict:
         measured += 1
         _log(f"   [{i}/{len(todo)}] {_cell_line(cell)}")
 
-    cells = runio.read_rows(CELLS_FILE)
+    # `len(have) + measured`, NOT a re-read of cells.jsonl.
+    #
+    # This line used to be `cells = runio.read_rows(CELLS_FILE)`, and it destroyed a completed
+    # nine-cell run: every cell was measured and written, and then the run died here because the
+    # file's FIRST line would not parse. `read_rows` tolerates an unparseable LAST line and
+    # raises on one anywhere else, so a file holding a single bad line reads as zero rows and no
+    # error -- right up until this run's own appends put eight good rows after it. The strict
+    # read at the top of run_sweep had already passed for exactly that reason.
+    #
+    # Nothing is weakened. That strict read still runs BEFORE any cell is measured, which is
+    # where refusing to resume from an unreadable file belongs. What is removed is a re-read
+    # AFTER the expensive work, whose only outputs are this count and the DONE line -- both of
+    # which the loop above already knows. A file this run just wrote 252 rows into should not
+    # get a second chance to end the run.
+    #
+    # `have` is filtered on concept and config_hash and `read_rows` was not, so the two counts
+    # differ if the folder ever holds foreign rows. For a folder one config writes, they agree.
+    n_on_disk = len(have) + measured
     summary = dict(
         concept=concept, mode="sweep", version="m3",
         layers=layers, dose_fractions=fractions,
-        n_cells_planned=len(plan), n_cells_on_disk=len(cells), n_cells_this_attempt=measured,
+        n_cells_planned=len(plan), n_cells_on_disk=n_on_disk, n_cells_this_attempt=measured,
         skipped=skipped,
         boundaries=[boundaries[k] for k in sorted(boundaries)],
         liveness=cal["liveness"],
@@ -1220,7 +1237,7 @@ def run_sweep(concept: str, cfg: dict | None = None) -> dict:
     )
     runio.write_json(SUMMARY_FILE, summary)
     _read_bundle(concept, cfg)
-    _log(f"DONE  {len(cells)} cells on disk, {measured} this attempt, "
+    _log(f"DONE  {n_on_disk} cells on disk, {measured} this attempt, "
          f"{summary['elapsed_s'] / 60:.1f} min")
     return summary
 

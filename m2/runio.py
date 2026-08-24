@@ -338,7 +338,19 @@ def read_rows(name: str) -> list[dict]:
     path = artefact_path(name)
     if not path.exists():
         return []
-    lines = path.read_text(encoding="utf-8").splitlines()
+    # split("\n"), NOT splitlines(). `write_row` dumps with ensure_ascii=False, so a generation
+    # containing U+2028, U+2029 or U+0085 goes into the file raw -- and `splitlines()` breaks on
+    # all three, turning one good row into two unreadable ones. The writer's only record
+    # separator is "\n", so the reader must use the same one. Zero occurrences across ~90,000
+    # exported rows on Gemma3 and Qwen3, which is why this has never fired; the planned run is
+    # about seven times that corpus and the failure would be a raise partway through a file
+    # nothing else can read.
+    lines = path.read_text(encoding="utf-8").split("\n")
+    if lines and lines[-1] == "":
+        # The file's final newline, not a line. It has to go, or the torn-tail tolerance below
+        # would index this empty string as the last line and RAISE on the partial row above it
+        # -- turning a survivable crash shape into a fatal one. `splitlines()` did this for us.
+        lines.pop()
     rows: list[dict] = []
     for index, line in enumerate(lines):
         text = line.strip()

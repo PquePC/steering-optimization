@@ -210,6 +210,43 @@ EXPLAIN_PROMPTS: list[dict] = [
          accept=("radioactiv", "radium", "polonium", "nobel", "physic", "chemist")),
     dict(id="exp_moon", text="Why does the Moon have phases? Explain briefly.",
          accept=("orbit", "sunlight", "shadow", "illuminat", "revolv", "around the earth")),
+
+    # ---- added 2026-08-24, taking the channel from four prompts to ten ------------------
+    # APPENDED, never interleaved, for the same reason as TASK_PROMPTS: the channel is built
+    # as `EXPLAIN_PROMPTS[:N_EXPLAIN]`, so a prefix is what a run gets. Appending leaves every
+    # earlier run's four prompts byte-identical and comparable.
+    #
+    # Same two requirements as the originals. Each invites several sentences -- so there is
+    # somewhere for a concept to show up short of destroying the answer -- AND has content a
+    # reader or a mechanical check can verify. `accept` stays permissive, matching stems rather
+    # than words, because the question is whether the answer survived and not whether it was
+    # phrased as expected.
+    #
+    # Domains are spread one per prompt and none is adjacent to a concept run so far: medicine,
+    # economics, political biography, electricity, molecular biology, mathematics, against the
+    # originals' computing, civics, scientific biography and astronomy. Nothing about food,
+    # plants, cooking, weather, terrain, motion, fabric, texture or the body, which would make a
+    # legitimate influence score indistinguishable from topical overlap for Garlic, Bread,
+    # Velocity, Tundras, Snow, Silk or Wrists.
+    #
+    # `exp_electric` is the one to watch if the concept set ever grows: a concept like Current
+    # or Lightning would be adjacent to it, and adjacency shows up as that prompt scoring high
+    # while the other nine do not, which is readable per prompt in the transcripts.
+    dict(id="exp_vaccine", text="What is a vaccine, and how does it work?",
+         accept=("immun", "antibod", "pathogen", "virus", "bacteri", "disease", "protect")),
+    dict(id="exp_inflation", text="What is inflation, and why does it happen?",
+         accept=("price", "money", "currenc", "purchasing power", "cost", "supply", "demand")),
+    dict(id="exp_mandela", text="Who was Nelson Mandela, and what is he known for?",
+         accept=("south africa", "apartheid", "president", "prison", "activist", "nobel")),
+    dict(id="exp_electric", text="What is electricity, and how does it reach a house?",
+         accept=("current", "electron", "charge", "voltage", "wire", "circuit", "grid",
+                 "power station", "generat")),
+    dict(id="exp_dna", text="What is DNA, and what does it do?",
+         accept=("genetic", "gene", "cell", "instruction", "protein", "heredit", "inherit",
+                 "nucleic")),
+    dict(id="exp_prime", text="What is a prime number, and why do mathematicians care about them?",
+         accept=("divisib", "divided", "divisor", "factor", "itself and 1", "itself and one",
+                 "cryptograph", "integer", "whole number")),
 ]
 
 CAPABILITY_PROMPTS: list[dict] = [
@@ -217,16 +254,55 @@ CAPABILITY_PROMPTS: list[dict] = [
          accept=("391",)),
     dict(id="cap_capital", text="What is the capital of Australia?",
          accept=("canberra",)),
+    # A conjunction, not three phrasings. The previous form matched only "red, green, blue",
+    # "red, green and blue" and "red green blue", so an Oxford comma, a different order, a
+    # bulleted list or markdown bold all scored a correct answer wrong -- a format failure
+    # counted as a capability failure, which is what the docstring above says not to do.
     dict(id="cap_colours", text="Name the three primary additive colours.",
-         accept=("red, green, blue", "red, green and blue", "red green blue")),
+         accept=(("red", "green", "blue"), "rgb")),
+    # Also a conjunction. "neptune" alone passed any response that mentioned Neptune, including
+    # one that named two planets and stopped, which made this the weakest check in the channel.
+    #
+    # The check verifies that all eight names are PRESENT, not that they are in order. That is a
+    # deliberate reading of the generous rule above: the question this channel asks is whether
+    # the model can still retrieve the fact, and requiring the ordering as well would start
+    # scoring the arrangement of a correct answer. The prompt still asks for the order, because
+    # it shapes the response into a list rather than a paragraph -- but a scrambled list scores
+    # correct, and a reader comparing the prompt to the rule should know that.
     dict(id="cap_planets", text="List the planets of the solar system in order from the Sun.",
-         accept=("neptune",)),
+         accept=(("mercury", "venus", "earth", "mars",
+                  "jupiter", "saturn", "uranus", "neptune"),)),
+
+    # ---- added 2026-08-24, taking the channel from four prompts to ten ------------------
+    # APPENDED, never interleaved -- `CAPABILITY_PROMPTS[:N_CAPABILITY]` means a prefix, and the
+    # first two are what every run so far measured.
+    #
+    # The criterion here is the opposite of the explain channel's: as little prose as possible.
+    # A capability prompt should have almost nowhere for a concept to show up until it destroys
+    # the answer outright, which is what makes this channel a clean read on whether knowledge
+    # survived the injection while coherence was falling.
+    #
+    # Every `accept` string is chosen to be unlikely to appear by accident in a WRONG answer.
+    # That rules out chemical symbols -- "au" for gold matches "because" and "Australia", "fe"
+    # for iron matches "before" -- and it is why these are numbers, place names and surnames.
+    dict(id="cap_arith2", text="What is 13 x 14?",
+         accept=("182",)),
+    dict(id="cap_sqrt", text="What is the square root of 169?",
+         accept=("13",)),
+    dict(id="cap_leap", text="How many days are there in a leap year?",
+         accept=("366",)),
+    dict(id="cap_ww2", text="In what year did the Second World War end?",
+         accept=("1945",)),
+    dict(id="cap_ottawa", text="What is the capital of Canada?",
+         accept=("ottawa",)),
+    dict(id="cap_romeo", text="Who wrote Romeo and Juliet?",
+         accept=("shakespeare",)),
 ]
 
-for _row in (*TASK_PROMPTS, *TASK_HELDOUT, *CAPABILITY_PROMPTS):
+for _row in (*TASK_PROMPTS, *TASK_HELDOUT, *EXPLAIN_PROMPTS, *CAPABILITY_PROMPTS):
     if not _row.get("id") or not _row.get("text"):
         raise AssertionError(f"prompt row missing id or text: {_row!r}")
-_ids = [r["id"] for r in (*TASK_PROMPTS, *TASK_HELDOUT, *CAPABILITY_PROMPTS)]
+_ids = [r["id"] for r in (*TASK_PROMPTS, *TASK_HELDOUT, *EXPLAIN_PROMPTS, *CAPABILITY_PROMPTS)]
 if len(_ids) != len(set(_ids)):
     raise AssertionError("duplicate prompt id; ids key every row that will ever be joined")
 if set(r["id"] for r in TASK_PROMPTS) & set(r["id"] for r in TASK_HELDOUT):
@@ -421,16 +497,38 @@ def concept_mentions(text: str, concept: str) -> int:
 # Capability
 # =====================================================================================
 
-def capability_correct(text: str, accept: Iterable[str]) -> bool:
+def capability_correct(text: str, accept: Iterable[Any]) -> bool:
     """Whether a generated answer contains an accepted answer.
 
     Substring match on the lowercased response. Generous by design: the question is whether the
     model can still retrieve the fact, not whether it formatted the answer the way we expected,
     and a format failure scored as a capability failure double-counts what degeneration already
     measures.
+
+    `accept` is an OR over alternatives. An alternative is either
+
+      * a string, matched as a substring, or
+      * a sequence of strings, ALL of which must appear somewhere in the response.
+
+    The conjunction exists because an OR of substrings cannot express a list answer. Three
+    primary colours can be written in six orders, with or without an Oxford comma, bulleted,
+    or in bold, and enumerating those phrasings is a losing game -- while accepting any ONE of
+    "red", "green", "blue" would pass a response that named a single colour. The right question
+    for a list answer is whether every part is there, in any arrangement.
+
+    The known over-acceptance: a response listing MANY colours contains all three and passes.
+    That is a wrong answer scored correct. It is left in because the failure mode this channel
+    exists to catch is the concept eating the answer or the model collapsing, not the model
+    reciting a rainbow, and a stricter rule would start scoring format as capability again.
     """
     low = str(text).lower()
-    return any(str(a).lower() in low for a in accept)
+    for alternative in accept:
+        if isinstance(alternative, str):
+            if alternative.lower() in low:
+                return True
+        elif all(str(part).lower() in low for part in alternative):
+            return True
+    return False
 
 
 # =====================================================================================

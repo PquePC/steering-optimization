@@ -36,8 +36,16 @@ and quietly answering question 2 with the wrong experiment.
 
 ### 0.1 The pod
 
-One **A100-80GB** or **H100-80GB**. `/workspace` volume **200 GB** — the two models together are
-about 120 GB of weights and the cache needs headroom.
+One **A100-80GB** or **H100-80GB**. `/workspace` volume **300 GB**.
+
+Not 200 GB, and not 120 GB either. The weights are 54.9 (Gemma) + 65.5 (Qwen) = 120 GB,
+but the download log prints two totals — `Downloading bytes: 49.8GB` and
+`Reconstruction complete: 54.9GB` — because `hf_xet` keeps a chunk cache alongside the
+reconstructed safetensors. Both persist, so budget roughly double the weight size per
+model. On the 2026-08-24 session a 200 GB volume ran out after the second model landed:
+cached model loads went from 18s to 805s, one append to `norms.jsonl` was truncated
+mid-row, and the run died reporting `no norms were measured`. `df -h /workspace` and
+`du -sh /workspace/hf/*` before every launch.
 
 Then [`RUNBOOK-M3.md`](RUNBOOK-M3.md) §1–§4, with **one change**: everything here lives on
 branch **`m4`**, not `m3`. So `/workspace/env.sh` must say `export M2_BRANCH=m4`, and the clone
@@ -166,7 +174,7 @@ GEN_BATCH_MAX=66  ALLOW_BATTERY_SPLIT=1  NULL_REPEATS=20  JUDGE_CONCURRENT=10
 | layers | 41, **L21–L61**, every layer | 42, **L22–L63**, every layer |
 | cells | 246 | 252 |
 | battery | 194, split `[66, 66, 62]` | 194, split `[66, 66, 62]` |
-| config hash | `00f0d93888d8` | `a79312cb4f2e` |
+| config hash | `819c0f282fec` | `f8902a58b3d8` |
 
 **`LAYER_STRIDE=1` — every layer.** The argument is in the data: at **L39 all three concepts
 collapse at once**. Identification is Garlic 0.11 against neighbours 0.45 and 0.63, Silk 0.02
@@ -298,8 +306,25 @@ Gemma pod `MODEL=gemma3_27b`, Qwen pod `MODEL=qwen3_32b`; Garlic, Silk, Wrists o
 
 **Read one `--dry-run` before removing it.** The Gemma plan must say `layers 41 (L21-L61, stride
 1)`, `cells 246`, `battery 194 ... split into 3 generation batches of [66, 66, 62]`,
-`config=00f0d93888d8`. A different hash means a `--set` did not land — and since the run folder
+`config=819c0f282fec`. A different hash means a `--set` did not land — and since the run folder
 is named after the hash, the run would write somewhere other than where you go looking for it.
+
+> **Do not `git pull` between a crash and a restart.** The run folder is named after the config
+> hash, and the hash covers every setting — so a commit that touches any of them renames the
+> folder, and the restart finds an empty directory and re-measures cells that are already on
+> disk. On a 3.4-hour run that is the whole run, paid twice. Pin the commit before launching all
+> six, and if a pull is genuinely needed mid-flight, re-derive the hash first and expect to move
+> the folder by hand.
+>
+> The hashes in this document are computed from HEAD. Re-derive them for whatever commit you
+> actually deploy:
+>
+> ```bash
+> python -c "from m3 import config; c=dict(config.SETTINGS); config.apply_overrides(['MODEL=gemma3_27b','LAYER_FRACTIONS=0.35,1.0','LAYER_STRIDE=1','N_IDENTIFY=120','N_EFFECT=66','N_SELF_REPORT=0','N_COHERENCE=66','N_CAPABILITY=4','N_EXPLAIN=4','GEN_BATCH_MAX=66','ALLOW_BATTERY_SPLIT=1','NULL_REPEATS=20','JUDGE_CONCURRENT=10'], c); print(config.config_hash(c))"
+> ```
+>
+> Note `apply_overrides` returns the overrides, not the merged config — hash the dict you passed
+> in, as above, or you will hash a fragment and get a number that matches nothing.
 
 Export with `tools/collect_everything.py` on each pod before stopping it
 ([`RUNBOOK-QWEN.md`](RUNBOOK-QWEN.md) §8).

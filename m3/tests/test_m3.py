@@ -116,6 +116,48 @@ def test_capability_is_scored_on_generated_text_and_tolerates_phrasing():
     assert not battery.capability_correct("I think it is 400", row["accept"])
 
 
+def test_a_list_answer_is_accepted_in_any_arrangement():
+    """`accept` alternatives may be conjunctions, because an OR cannot express a list.
+
+    The colours prompt used to carry three literal phrasings, so an Oxford comma or a
+    different order scored a correct answer wrong -- format counted as capability.
+    """
+    row = next(r for r in battery.CAPABILITY_PROMPTS if r["id"] == "cap_colours")
+    for text in ("The three primary additive colours are red, green, and blue.",
+                 "Red, green and blue.",
+                 "- Red\n- Green\n- Blue",
+                 "**Blue**, **green**, **red**",
+                 "They are RGB."):
+        assert battery.capability_correct(text, row["accept"]), text
+    for text in ("The primary additive colours are red, yellow and blue.",
+                 "Blue.",
+                 "Cyan, magenta and yellow."):
+        assert not battery.capability_correct(text, row["accept"]), text
+
+
+def test_the_planet_list_needs_every_planet_not_just_the_last_one():
+    """`accept=("neptune",)` passed any response that merely mentioned Neptune.
+
+    Presence, not order: a scrambled list scores correct on purpose, because requiring the
+    arrangement of a correct answer is scoring format as capability.
+    """
+    row = next(r for r in battery.CAPABILITY_PROMPTS if r["id"] == "cap_planets")
+    assert battery.capability_correct(
+        "Mercury, Venus, Earth, Mars, Jupiter, Saturn, Uranus, Neptune.", row["accept"])
+    assert battery.capability_correct(
+        "Neptune, Uranus, Saturn, Jupiter, Mars, Earth, Venus, Mercury", row["accept"])
+    assert not battery.capability_correct("The furthest planet is Neptune.", row["accept"])
+    assert not battery.capability_correct(
+        "Mercury, Venus, Earth, Mars, Jupiter, Saturn, Uranus", row["accept"])
+
+
+def test_a_string_alternative_still_matches_as_a_substring():
+    """The conjunction must not change how the other nine prompts are scored."""
+    row = next(r for r in battery.CAPABILITY_PROMPTS if r["id"] == "cap_ottawa")
+    assert battery.capability_correct("The capital of Canada is Ottawa.", row["accept"])
+    assert not battery.capability_correct("Toronto, I think.", row["accept"])
+
+
 def test_concept_mentions_counts_inflections_but_not_substrings():
     assert battery.concept_mentions("Garlicky garlic bread, no GARLIC left", "Garlic") == 3
     assert battery.concept_mentions("vulgarlic is not a word", "Garlic") == 0
@@ -907,3 +949,107 @@ def test_the_appended_block_keeps_every_prefix_register_balanced():
                          "task_defend", "task_list3", "task_note"]
     # no register contributes twice before every register has contributed once
     assert len(set(added[:7])) == 7
+
+
+class _FakeRun:
+    """The two attributes runio needs to stamp and place a row."""
+
+    def __init__(self, run_dir):
+        self.run_dir = run_dir
+        self.concept = "Garlic"
+        self.config = {"config_hash": "testhash0000"}
+
+
+def _fake_run_context(monkeypatch, tmp_path):
+    from m2 import runio
+    monkeypatch.setattr(runio, "_run", lambda: _FakeRun(tmp_path))
+    return runio
+
+# =====================================================================================
+# The 2026-08-24 pod session: three ways a completed run was lost at the last step
+# =====================================================================================
+
+def test_a_record_separator_is_a_newline_and_nothing_else(tmp_path, monkeypatch):
+    """U+2028 in one generation must not split its row into two unreadable ones.
+
+    `write_row` dumps with ensure_ascii=False, so U+2028, U+2029 and U+0085 go into the file as
+    themselves. `read_rows` used `splitlines()`, which breaks on all three -- so a single model
+    response containing one of them became a head fragment starting with `{` and a tail fragment
+    starting with whatever, and the tail raised. Zero occurrences across ~90,000 exported rows
+    on Gemma3 and Qwen3, which is why it never fired; the planned run is about seven times that.
+    """
+    runio = _fake_run_context(monkeypatch, tmp_path)
+    for sep in ("\u2028", "\u2029", "\u0085"):
+        path = tmp_path / "responses_transcripts.jsonl"
+        path.unlink(missing_ok=True)
+        runio.write_row("responses_transcripts.jsonl",
+                        dict(layer=53, response=f"a story{sep}with a separator in it"))
+        runio.write_row("responses_transcripts.jsonl", dict(layer=54, response="an ordinary one"))
+        rows = runio.read_rows("responses_transcripts.jsonl")
+        assert len(rows) == 2, f"{sep!r} split a row"
+        assert sep in rows[0]["response"], "the separator must survive the round trip"
+
+
+def test_a_torn_final_row_is_still_tolerated_after_the_separator_fix(tmp_path, monkeypatch):
+    """The fix must not cost the crash shape the tolerance exists for.
+
+    `split("\n")` leaves a trailing empty element for the file's final newline, and if that
+    element counts as the last line then a torn row above it is no longer last -- so the one
+    survivable shape (a process killed mid-append) would start raising.
+    """
+    runio = _fake_run_context(monkeypatch, tmp_path)
+    runio.write_row("cells.jsonl", dict(layer=53, dose=0.2))
+    with open(tmp_path / "cells.jsonl", "a", encoding="utf-8") as handle:
+        handle.write('{"layer": 54, "dos')          # killed mid-append, no newline
+    rows = runio.read_rows("cells.jsonl")
+    assert len(rows) == 1 and rows[0]["layer"] == 53
+
+    # And a file whose rows all end in a newline reads every one of them.
+    (tmp_path / "cells.jsonl").unlink()
+    for layer in (53, 54, 55):
+        runio.write_row("cells.jsonl", dict(layer=layer))
+    assert [r["layer"] for r in runio.read_rows("cells.jsonl")] == [53, 54, 55]
+
+
+def test_one_unreadable_line_cannot_destroy_a_run_that_measured_every_cell(tmp_path,
+                                                                           monkeypatch):
+    """The shape that killed the nine-cell Qwen run.
+
+    `read_rows` tolerates an unparseable LAST line and raises on one anywhere else. So a file
+    holding exactly one bad line reads as zero rows and NO error -- the strict read at the top of
+    the sweep passes -- and then the run's own appends put good rows after it, and the re-read at
+    the end raises. Every cell measured, every row written, and the run reported FAILED.
+
+    The re-read is gone: the count comes from memory. This test pins the property that made the
+    re-read fatal, so that restoring it would fail here rather than on a pod three hours in.
+    """
+    runio = _fake_run_context(monkeypatch, tmp_path)
+    path = tmp_path / "cells.jsonl"
+    path.write_text("\x00\x00\x00\n", encoding="utf-8")   # one bad line, and it is last
+
+    assert runio.read_rows("cells.jsonl") == [], "a lone bad line reads as zero rows, no error"
+
+    runio.write_row("cells.jsonl", dict(layer=53))
+    with pytest.raises(RuntimeError, match="corruption rather than a torn append"):
+        runio.read_rows("cells.jsonl")
+
+
+def test_the_volume_probe_refuses_a_short_write(tmp_path, monkeypatch):
+    """A run had no disk check at all, and a full volume surfaced as `no norms were measured`."""
+    from m3 import run as run_module
+
+    info = run_module.check_volume_writable(tmp_path, probe_mb=1)
+    assert info["probe_mb"] == 1 and info["free_gb"] > 0
+    assert not (tmp_path / ".write_probe").exists(), "the probe must clean up after itself"
+
+    real_open = open
+
+    def short_open(*args, **kwargs):
+        handle = real_open(*args, **kwargs)
+        if str(args[0]).endswith(".write_probe"):
+            handle.write = lambda data: len(data)      # claims success, writes nothing
+        return handle
+
+    monkeypatch.setattr("builtins.open", short_open)
+    with pytest.raises(RuntimeError, match="volume is full"):
+        run_module.check_volume_writable(tmp_path, probe_mb=1)

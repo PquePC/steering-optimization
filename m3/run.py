@@ -243,6 +243,73 @@ def check_environment(strict: bool = True) -> list[str]:
     return missing
 
 
+PROBE_MB = 8
+
+
+def check_volume_writable(root, probe_mb: int = PROBE_MB) -> dict:
+    """Prove the volume can take a write, and say how much room is left. Before the model load.
+
+    A run has no other disk check. `m2.setup` measures free space once, at setup, and on RunPod
+    it cannot even do that honestly -- `shutil.disk_usage` reports the shared backing pool, not
+    the allocation, which is the whole reason `M2_VOLUME_GB` exists as a declared fallback. So a
+    sweep that fills the volume at cell 200 of 252 does not say "the volume is full". It writes
+    short rows and dies later somewhere else: a torn 4,127-character append to norms.jsonl
+    surfaced as `Unreachable: no norms were measured`, which sent an operator looking at the
+    reachability code.
+
+    The probe is a real write of `probe_mb`, flushed, fsynced, size-checked and removed. It is
+    the only way to answer the question that actually matters -- can this volume take bytes --
+    on a filesystem whose free-space number is known to lie. It costs well under a second and it
+    runs before the 15-minute model load rather than after it.
+
+    Returns what it found so the caller can print it. Raises RuntimeError if the write is short
+    or refused; that is a full volume, and every number a run produces after that point is
+    suspect.
+    """
+    import os as _os
+    import shutil as _shutil
+
+    root = Path(root)
+    root.mkdir(parents=True, exist_ok=True)
+    # Not zeros: a filesystem with sparse-file support can record a hole instead of
+    # allocating blocks, so a probe of zeros can report success on a volume with no
+    # room left. Real bytes are what test for real space.
+    payload = b"m3probe." * (probe_mb * 1024 * 1024 // 8)
+    probe = root / ".write_probe"
+    try:
+        with open(probe, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            _os.fsync(handle.fileno())
+        landed = probe.stat().st_size
+    except OSError as exc:
+        raise RuntimeError(
+            f"cannot write to {root}: {exc}. The volume is full or read-only. Check `df -h` and "
+            "the model cache under HF_HOME -- hf_xet keeps a chunk cache alongside the "
+            "reconstructed weights, so two models can cost far more than the sum of their "
+            "safetensors.") from exc
+    finally:
+        probe.unlink(missing_ok=True)
+
+    if landed != len(payload):
+        raise RuntimeError(
+            f"a {probe_mb} MB probe write to {root} landed {landed} bytes. The volume is full. "
+            "Short writes are how this pipeline loses a run: the row is written, the process "
+            "continues, and a reader raises hours later on a file it cannot parse.")
+
+    usage = _shutil.disk_usage(root)
+    free_gb = usage.free / 1024 ** 3
+    declared = _os.environ.get("M2_VOLUME_GB")
+    note = (f"volume     : {free_gb:.0f} GB free by the filesystem, {probe_mb} MB probe write ok")
+    if declared:
+        # On RunPod the filesystem number describes the backing pool and is meaningless; the
+        # declared allocation is the only honest ceiling. Print both and let the operator see
+        # them disagree rather than picking one and being wrong silently.
+        note += f"  (allocation declared as {declared} GB via M2_VOLUME_GB)"
+    print(note)
+    return dict(free_gb=round(free_gb, 1), probe_mb=probe_mb, declared_gb=declared)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     cfg = config.CONFIG
@@ -284,6 +351,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     # directory under the OTHER pipeline's output tree. Point M2's variable at M3's root so the
     # stray directory is at least in the right place.
     os.environ.setdefault("M2_RUNS_DIR", str(config.runs_root()))
+
+    check_volume_writable(config.runs_root())
 
     print("loading model")
     t0 = time.time()
