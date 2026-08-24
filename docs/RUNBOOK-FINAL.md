@@ -39,9 +39,19 @@ and quietly answering question 2 with the wrong experiment.
 One **A100-80GB** or **H100-80GB**. `/workspace` volume **200 GB** — the two models together are
 about 120 GB of weights and the cache needs headroom.
 
-Then [`RUNBOOK-M3.md`](RUNBOOK-M3.md) §1–§4 unchanged: `unset HISTFILE`, write
-`/workspace/env.sh` with `HF_TOKEN` and `OPENROUTER_API_KEY`, confirm the five variables,
-install. Then:
+Then [`RUNBOOK-M3.md`](RUNBOOK-M3.md) §1–§4, with **one change**: everything here lives on
+branch **`m4`**, not `m3`. So `/workspace/env.sh` must say `export M2_BRANCH=m4`, and the clone
+in §2 must `git checkout m4`. `m2.setup` compares the two and refuses to guess:
+
+```
+[BLOCK ] project repo    on branch 'm4', expected 'm3'
+```
+
+is what a stale `M2_BRANCH` looks like, and the fix is the file, never an inline export — an
+inline export clears the command in front of you and leaves the run to fail later.
+
+Otherwise unchanged: `unset HISTFILE`, write `/workspace/env.sh` with `HF_TOKEN` and
+`OPENROUTER_API_KEY`, confirm the five variables, `python -m m2.setup --repair`. Then:
 
 ```bash
 nvidia-smi --query-gpu=index,name,memory.total --format=csv
