@@ -74,13 +74,13 @@ One row is what you want. If the provider gave you more, every command below alr
 cd /workspace/steering-optimization && CUDA_VISIBLE_DEVICES=0 python -m m3.run --concept Garlic --set MODEL=qwen3_32b --set ALPHA_CEIL=50 --set "CELLS=39:0.30,39:0.60,39:0.90,39:1.20" --set JUDGE_ENABLED=0 --set N_IDENTIFY=120 --set N_EFFECT=66 --set N_SELF_REPORT=0 --set N_COHERENCE=66 --set N_CAPABILITY=4 --set N_EXPLAIN=4 --set GEN_BATCH_MAX=66 --set ALLOW_BATTERY_SPLIT=1
 ```
 
-Four doses at L39, the real battery, no judge calls. 1,358 generations, `config=1fc9e55f858a`.
+Four doses at L39, the real battery, no judge calls. 1,358 generations, `config=13ed986575ff`.
 `ALPHA_CEIL=50` because the default 16 is below what Qwen needs — the August runs found that.
 
 Then the question the whole run depends on:
 
 ```bash
-cd /workspace/m3_runs && python -c "import collections,json; rows=[json.loads(l) for l in open('garlic_1fc9e55f858a/responses_transcripts.jsonl',encoding='utf-8')]; by=collections.defaultdict(lambda:[0,0]); [(by[r['dose']].__setitem__(0,by[r['dose']][0]+1), by[r['dose']].__setitem__(1,by[r['dose']][1]+bool(r['concept_mentions']))) for r in rows]; [print(f'  dose {d:<7} {h}/{n} mention garlic  ({h/n:.0%})') for d,(n,h) in sorted(by.items())]"
+cd /workspace/m3_runs && python -c "import collections,json; rows=[json.loads(l) for l in open('garlic_13ed986575ff/responses_transcripts.jsonl',encoding='utf-8')]; by=collections.defaultdict(lambda:[0,0]); [(by[r['dose']].__setitem__(0,by[r['dose']][0]+1), by[r['dose']].__setitem__(1,by[r['dose']][1]+bool(r['concept_mentions']))) for r in rows]; [print(f'  dose {d:<7} {h}/{n} mention garlic  ({h/n:.0%})') for d,(n,h) in sorted(by.items())]"
 ```
 
 **Go / no-go.** The August data sat at 2% at every dose, including the dose that destroyed the
@@ -94,8 +94,8 @@ cd /workspace/steering-optimization && CUDA_VISIBLE_DEVICES=0 python -m m3.run -
 ```
 
 L53 is where Garlic peaked in the previous runs and its boundary there was ~0.29, so these four
-doses bracket it. `config=c8511120262f`. Re-run the counting command above against
-`garlic_c8511120262f`: Gemma should mention garlic in most responses at the upper doses. **If it
+doses bracket it. `config=2ffcdfbf87b9`. Re-run the counting command above against
+`garlic_2ffcdfbf87b9`: Gemma should mention garlic in most responses at the upper doses. **If it
 does not, the problem is not Qwen-specific and test A tells you nothing** — that is what this
 test is for.
 
@@ -109,22 +109,34 @@ replaces the ≤4-hour upper bound with a measurement.
 cd /workspace/steering-optimization && CUDA_VISIBLE_DEVICES=0 python -m m3.run --concept Garlic --set MODEL=gemma3_27b --set "CELLS=53:0.20" --set N_IDENTIFY=120 --set N_EFFECT=66 --set N_SELF_REPORT=0 --set N_COHERENCE=66 --set N_CAPABILITY=4 --set N_EXPLAIN=4 --set GEN_BATCH_MAX=66 --set ALLOW_BATTERY_SPLIT=1 --set JUDGE_CONCURRENT=10
 ```
 
-One cell with judging on: 260 judge calls, about two cents, `config=29443a5b11fd`. This is the
-first time the corrected guidance is sent by the pipeline rather than by the bakeoff, and the
-pipeline allows 120 reply tokens where the bakeoff allowed 400.
+One cell with judging on: 260 judge calls, about two cents, `config=2ba90b936347`. This is the
+first time the pipeline sends the corrected guidance itself rather than the bakeoff sending it,
+and the first time the pipeline runs the judge the way the bakeoff qualified it — reasoning off,
+400 reply tokens.
+
+**This test has never passed.** On 2026-08-24 it returned 29 errors in 260 calls: 19 with no
+usable content and 10 unparseable, longest reply 29 characters. The judge was reasoning into a
+120-token cap, because `tools/judge_bakeoff.py` set `{"reasoning": {"enabled": False}}` on the
+transport and `m3.judge.configure_transport` never did. Both are fixed at `40be71c`
+(`JUDGE_REASONING=0`, `JUDGE_MAX_TOKENS=400`), and this is what confirms it.
 
 ```bash
-cd /workspace/m3_runs && python -c "import collections,json; rows=[json.loads(l) for l in open('garlic_29443a5b11fd/judge_calls.jsonl',encoding='utf-8')]; print('parsed:',dict(collections.Counter(r['judge'] for r in rows if r['ok']))); print('failed:',dict(collections.Counter(str(r['error'])[:60] for r in rows if not r['ok'])) or 'none'); print('longest reply, chars:',max(len(r['raw'] or '') for r in rows))"
+cd /workspace/m3_runs && python -c "import collections,json; rows=[json.loads(l) for l in open('garlic_2ba90b936347/judge_calls.jsonl',encoding='utf-8')]; print('parsed:',dict(collections.Counter(r['judge'] for r in rows if r['ok']))); print('failed:',dict(collections.Counter(str(r['error'])[:60] for r in rows if not r['ok'])) or 'none'); print('longest reply, chars:',max(len(r['raw'] or '') for r in rows))"
 ```
 
-**`failed: none` is the pass.** Any `judge response did not parse` means adding
-`--set JUDGE_MAX_TOKENS=200` to the real run. If the longest reply is near 480 characters the
-model is being truncated at the cap and the same fix applies.
+**`failed: none` is the pass.** Do NOT respond to a parse failure with
+`--set JUDGE_MAX_TOKENS=200` — the shipped cap is already 400, so that would tighten it, and
+tightening it is what caused the failure this test exists to detect. A reply near 1,600
+characters would be the genuine truncation signal at 400 tokens; nothing observed has come close,
+the longest real reply being 29 characters with reasoning off. If calls still fail, read
+`judge_calls.jsonl` for the `raw` field before changing any setting: empty content means the
+model is reasoning despite `JUDGE_REASONING=0`, which is a transport problem and not a budget
+one.
 
 Then check the new metric computed, on real data:
 
 ```bash
-cd /workspace/steering-optimization && python -m tools.rescore /workspace/m3_runs/garlic_29443a5b11fd
+cd /workspace/steering-optimization && python -m tools.rescore /workspace/m3_runs/garlic_2ba90b936347
 ```
 
 Coverage must read **100%**. Anything less means `N_COHERENCE` did not reach `N_EFFECT` and the
@@ -174,7 +186,7 @@ GEN_BATCH_MAX=66  ALLOW_BATTERY_SPLIT=1  NULL_REPEATS=20  JUDGE_CONCURRENT=10
 | layers | 41, **L21–L61**, every layer | 42, **L22–L63**, every layer |
 | cells | 246 | 252 |
 | battery | 194, split `[66, 66, 62]` | 194, split `[66, 66, 62]` |
-| config hash | `819c0f282fec` | `f8902a58b3d8` |
+| config hash | `819c0f282fec` | `d7eb0e37bc66` |
 
 **`LAYER_STRIDE=1` — every layer.** The argument is in the data: at **L39 all three concepts
 collapse at once**. Identification is Garlic 0.11 against neighbours 0.45 and 0.63, Silk 0.02
@@ -185,8 +197,9 @@ normalisation. Three independent concepts, one layer wide, no mechanical explana
 Stride 2 halves that grid, and halves it on **different parities for the two models**: at this
 floor Gemma lands on odd layers and Qwen on even. A one-layer feature would be visible in one arm
 and invisible in the other by grid alignment rather than by anything about the models, which for
-a cross-model figure is disqualifying. Stride 2 stays available if budget matters more: 126 cells
-instead of 246, about $14.70 instead of $28.89 for all six, ~2.5 h instead of ~4.8 h.
+a cross-model figure is disqualifying. Stride 2 stays available if cost matters more: 126 cells
+instead of 246, roughly half the judge calls and half the GPU time — about $21 of the $41.83
+ceiling, and the same halving of whatever the measured wall clock turns out to be.
 
 **`LAYER_FRACTIONS=0.35`** (was 0.21) puts the floor at L21. The evidence said L25 would be safe
 — Silk and Wrists were both measured from L13 and both read identification 0.000 at every layer
@@ -280,14 +293,28 @@ register-balanced prefix rather than eight narrative prompts in a row.
 
 ## 3. What it costs
 
-Per run: ~43,000 generations, ~45,000 judge calls, **$3.21–$3.29** judging, **≤4.0 GPU-hours**.
+Per run: **54,000–55,000 generations, 66,000–68,000 judge calls, ≤$6.89 (Gemma) / ≤$7.06
+(Qwen), ≤4.7 GPU-hours.** All six: **328k generations, 403k judge calls, ≤$41.83.**
 
-All six: **328k generations, 404k judge calls, $28.89 judging, ~4.8 h wall clock** with all six
-cards busy. At stride 2 instead: 178k generations, ~$14.70, ~2.5 h.
+Read `$41.83` as a ceiling, not a forecast. Every payload is priced at `JUDGE_MAX_TOKENS`, and
+the judge with reasoning off replies in about 7 tokens, not 400 — at the bakeoff's measured
+740-in / 6.8-out the six runs come to roughly **$17**. The cap is what to fund, because an
+OpenRouter 402 is not retried and does not stop the sweep: every later cell is written with all
+judged measures `None` and marked done, and resume is keyed on `(layer, dose)` alone, so those
+cells are never re-judged in place. Running out of credit mid-run silently costs the judged half
+of everything after it.
 
-The GPU figure is an upper bound — `m3.run` scales it linearly with battery size above its
-72-prompt calibration point, which is roughly what three sequential chunks cost. Preflight test B
-replaces it with a measurement.
+Earlier drafts of this file said $28.89. That was the arithmetic at `JUDGE_MAX_TOKENS=120`; the
+config has shipped 400 since `40be71c`.
+
+**Wall clock is not measured and the GPU figure is not it.** Generation and judging are strictly
+serial — the sweep generates a cell, blocks on its 260 judge calls, then moves on — and
+`estimate()` prices only the generation, printing it as "GPU estimate". At `JUDGE_CONCURRENT=10`
+those 260 calls are 26 serial waves; the bakeoff's 3,098 calls ran at a 2.7 s median and a 6.2 s
+mean, which puts judging somewhere between roughly 2 and 11 hours per run **on top of** the 4.7
+GPU-hours. Preflight tests A and B cannot narrow that, because both run with `JUDGE_ENABLED=0`.
+Test C can, for free: read the gap between its `PHASE 2 sweep` line and its `[1/1]` line, and
+multiply by the cell count. Book pod hours against that number.
 
 ---
 
@@ -304,9 +331,24 @@ The only change is the settings. Each launch line carries, with `$M` the pod's m
 
 Gemma pod `MODEL=gemma3_27b`, Qwen pod `MODEL=qwen3_32b`; Garlic, Silk, Wrists on cards 0, 1, 2.
 
+**The Qwen pod adds one more flag: `--set ALPHA_CEIL=50`.** The default 16 is a cap on the raw
+multiplier, and on Qwen it binds — the boundary ladder would descend from the cap instead of from
+the 2.5 bracket top, and any layer whose first rung already passes is recorded `ceiling_limited`,
+its six cells sampling fractions of the search ceiling rather than of a breaking point. Five of
+the first eleven Qwen layers landed there last time. `cells.jsonl` carries no `outcome` field, so
+that damage is only visible if the analysis joins back to `boundaries.jsonl` — which is why the
+flag belongs on the launch line and not in a note.
+
+Gemma keeps the default 16 deliberately. Its measured worst ratio in range is 118 at L25, so no
+practical ceiling makes every Gemma layer reach 2.5 — but every previous Gemma run recorded
+`outcome="ok"` at every layer, meaning the model always broke before the cap, and raising the cap
+would change the measured boundary at 31 of 34 layers and make this run non-comparable to
+everything already known about where the concepts peak.
+
 **Read one `--dry-run` before removing it.** The Gemma plan must say `layers 41 (L21-L61, stride
 1)`, `cells 246`, `battery 194 ... split into 3 generation batches of [66, 66, 62]`,
-`config=819c0f282fec`. A different hash means a `--set` did not land — and since the run folder
+`config=819c0f282fec`; the Qwen plan must say `cells 252` and `config=d7eb0e37bc66`. A
+different hash means a `--set` did not land — and since the run folder
 is named after the hash, the run would write somewhere other than where you go looking for it.
 
 > **Do not `git pull` between a crash and a restart.** The run folder is named after the config
@@ -321,6 +363,14 @@ is named after the hash, the run would write somewhere other than where you go l
 >
 > ```bash
 > python -c "from m3 import config; c=dict(config.SETTINGS); config.apply_overrides(['MODEL=gemma3_27b','LAYER_FRACTIONS=0.35,1.0','LAYER_STRIDE=1','N_IDENTIFY=120','N_EFFECT=66','N_SELF_REPORT=0','N_COHERENCE=66','N_CAPABILITY=4','N_EXPLAIN=4','GEN_BATCH_MAX=66','ALLOW_BATTERY_SPLIT=1','NULL_REPEATS=20','JUDGE_CONCURRENT=10'], c); print(config.config_hash(c))"
+> ```
+>
+> For the Qwen hash, swap the model and **add `'ALPHA_CEIL=50'`** — leaving it out reproduces
+> `f8902a58b3d8`, which is the hash of the ceiling this study decided against, and the check
+> above would then pass on the wrong configuration:
+>
+> ```bash
+> python -c "from m3 import config; c=dict(config.SETTINGS); config.apply_overrides(['MODEL=qwen3_32b','ALPHA_CEIL=50','LAYER_FRACTIONS=0.35,1.0','LAYER_STRIDE=1','N_IDENTIFY=120','N_EFFECT=66','N_SELF_REPORT=0','N_COHERENCE=66','N_CAPABILITY=4','N_EXPLAIN=4','GEN_BATCH_MAX=66','ALLOW_BATTERY_SPLIT=1','NULL_REPEATS=20','JUDGE_CONCURRENT=10'], c); print(config.config_hash(c))"
 > ```
 >
 > Note `apply_overrides` returns the overrides, not the merged config — hash the dict you passed
