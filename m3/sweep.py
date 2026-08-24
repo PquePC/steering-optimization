@@ -671,15 +671,38 @@ def find_boundary(layer: int, concept: str, cfg: dict | None = None) -> dict:
             # already has: the boundary is the one place where a measured fact about the text
             # is allowed to decide, precisely because judges have been wrong here before.
             text = (responses[i] or "").strip()
-            per_response.append(bool(text) and bool(p) and p.get("coherence") is not None
-                                and p["coherence"] >= coh_min
-                                and bool(p.get("on_task"))
-                                and (answered[i] is None or answered[i]))
+            if not text:
+                # Mechanical, and it overrides everything: an empty generation is never good.
+                per_response.append(False)
+            elif not p or p.get("coherence") is None:
+                # UNKNOWN, not bad. The judge did not answer, and a response nobody scored is
+                # not evidence that the model was incoherent. Counting it as a failure biased
+                # every boundary DOWNWARD: the probe passes at frac_good >= 0.75 over five
+                # responses, so one judge error left no slack and two flipped a passing dose to
+                # failing. The result is persisted -- a resumed run skips layers already in
+                # boundaries.jsonl -- and the bisection only recovers to within its tolerance,
+                # so a transient API failure would have moved the entire dose grid of a layer
+                # and nothing downstream would say so.
+                per_response.append(None)
+            else:
+                per_response.append(p["coherence"] >= coh_min
+                                    and bool(p.get("on_task"))
+                                    and (answered[i] is None or answered[i]))
         on_task = [bool(p.get("on_task")) for p in parsed]
         frac_on_task = (sum(on_task) / len(on_task)) if on_task else 0.0
         checkable = [a for a in answered if a is not None]
         frac_answered = (sum(checkable) / len(checkable)) if checkable else 0.0
-        frac_good = sum(per_response) / len(per_response)
+        scored = [v for v in per_response if v is not None]
+        n_unjudged = len(per_response) - len(scored)
+        # No verdicts at all is the one case where "unknown" cannot be excused: there is nothing
+        # to read the dose off. It fails, loudly, rather than silently accepting a dose no judge
+        # ever looked at.
+        frac_good = (sum(scored) / len(scored)) if scored else 0.0
+        if n_unjudged:
+            runio.log(f"L{int(layer)} @{dose_val:.4f}: {n_unjudged} of {len(per_response)} probe "
+                      f"responses have no judge verdict and are excluded from frac_good"
+                      + ("" if scored else " -- NONE were judged, so this dose fails by default"),
+                      "WARN")
         floor = float(cfg["BOUNDARY_ANSWER_MIN"])
 
         sane = frac_good >= floor
@@ -714,12 +737,15 @@ def find_boundary(layer: int, concept: str, cfg: dict | None = None) -> dict:
                 # the probe-level verdict this response contributed to
                 probe_coherence_mean=mean, probe_on_task=frac_on_task,
                 probe_answered=frac_answered, probe_good=frac_good, probe_sane=sane,
+                # How many of this probe's responses had no verdict. `probe_good` is a fraction
+                # of the ones that did, so without this a reader cannot tell 4/4 from 4/5.
+                probe_unjudged=n_unjudged,
                 concept=concept))
 
         probes.append(dict(stage=stage, dose=_floor(dose_val, 6), alpha=alpha,
                            coherence=mean, coherence_n=len(scores), degeneration=degen,
                            on_task=frac_on_task, answered=frac_answered,
-                           good=frac_good, sane=sane))
+                           good=frac_good, sane=sane, unjudged=n_unjudged))
         return sane
 
     # Descend from the highest dose that is both wanted and reachable, and stop at the first
@@ -932,6 +958,15 @@ def _summarise_cell(rows: Sequence[dict], *, layer: int, dose: float, alpha: flo
     ident = by("identify")
     ident_hits = [r for r in ident if (r.get("judged") or {}).get("identify")]
     ident_clean = [r for r in ident_hits if not r["degenerate"]]
+    # `degenerate` is Gemma's failure mode; SILENCE is Qwen's, and the two need the same
+    # treatment. Under heavy steering Qwen3-32B answers with nothing at all, and an empty
+    # response is scored `matches=False` and counted as a non-identification -- identical, in
+    # the rate, to a fluent answer naming the wrong concept. That is the same conflation
+    # `identification_excluding_degenerate` exists to undo, on the model this run adds.
+    #
+    # Reported alongside, never instead of. Changing a headline definition is not something to
+    # do on launch day, and the point of keeping every transcript is that a reader can choose.
+    ident_readable = [r for r in ident_clean if (r.get("response") or "").strip()]
     effect_scores = judged("effect", "effect", "influence")
     coh_scores = judged("effect", "coherence", "coherence")
     caps = by("capability")
@@ -957,6 +992,11 @@ def _summarise_cell(rows: Sequence[dict], *, layer: int, dose: float, alpha: flo
         identification_excluding_degenerate=(
             battery.rate(sum(1 for r in ident_clean if r["judged"]["identify"]["matches"]),
                          len(ident_clean), z) if ident_clean else None),
+        # Neither collapsed nor silent: the rate over trials where the model actually produced
+        # a readable answer, on either model's failure mode. `None` when there were none.
+        identification_excluding_unreadable=(
+            battery.rate(sum(1 for r in ident_readable if r["judged"]["identify"]["matches"]),
+                         len(ident_readable), z) if ident_readable else None),
         identify_degenerate_n=sum(1 for r in ident if r["degenerate"]),
         identified_as=sorted({str(r["judged"]["identify"]["named"]).lower()
                               for r in ident_hits}),

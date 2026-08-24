@@ -1285,3 +1285,46 @@ def test_repair_refuses_a_target_that_does_not_exist(tmp_path):
         repair_jsonl.main([str(tmp_path / "nope")])
     with pytest.raises(SystemExit, match="no .jsonl"):
         repair_jsonl.main([str(tmp_path)])
+
+
+def test_a_missing_judge_verdict_is_unknown_and_an_empty_response_is_still_bad():
+    """The boundary probe's three-way split, checked on the conjunction itself.
+
+    `frac_good >= 0.75` over five responses leaves one response of slack, so counting an
+    unjudged response as a failure meant one judge error spent the slack and two flipped a
+    passing dose to failing. Every boundary is persisted and a resumed run skips layers already
+    in boundaries.jsonl, so a transient API failure would have moved a whole layer's dose grid
+    with nothing downstream saying so. An empty generation stays a failure, because that is a
+    measured fact about the text rather than a missing opinion about it.
+    """
+    import inspect
+
+    from m3 import sweep as sweep_module
+
+    source = inspect.getsource(sweep_module)
+    start = source.index("# An EMPTY generation can never be good")
+    block = source[start:start + 3000]
+
+    assert "per_response.append(False)" in block, "an empty response must count as bad"
+    assert "per_response.append(None)" in block, "a missing verdict must be unknown, not bad"
+    assert "scored = [v for v in per_response if v is not None]" in block, (
+        "frac_good must be a fraction of the responses that were actually judged")
+    assert "n_unjudged" in block, "and the count must be recorded, or 4/4 reads as 4/5"
+
+
+def test_the_probe_fraction_arithmetic():
+    """The three cases, computed the way the code computes them."""
+    def frac(per_response):
+        scored = [v for v in per_response if v is not None]
+        return (sum(scored) / len(scored)) if scored else 0.0, len(per_response) - len(scored)
+
+    floor = 0.75
+    # Four good, one unjudged: 4/4 = 1.0. Before the fix this was 4/5 = 0.8, still passing --
+    # but two unjudged was 3/5 = 0.6, which failed a dose nobody had evidence against.
+    assert frac([True, True, True, True, None]) == (1.0, 1)
+    assert frac([True, True, True, None, None])[0] == 1.0 >= floor
+    # An empty response is a real failure and still counts against the dose.
+    assert frac([True, True, True, True, False]) == (0.8, 0)
+    assert frac([True, True, True, False, False])[0] == 0.6 < floor
+    # Nothing judged at all fails, rather than passing a dose no judge ever saw.
+    assert frac([None, None, None, None, None]) == (0.0, 5)
