@@ -157,10 +157,11 @@ SETTINGS: dict[str, Any] = dict(
     # The cost is speculative: rungs below the one that passes were generated and are not
     # needed. At 6 that is under one rung per layer on the measured distribution (the ladder
     # failed a mean of 4.2 rungs before passing), against ~4x the throughput.
-    # 5, not 6, because the probe is now BOUNDARY_N + BOUNDARY_TASK_N = 5 rows wide: 5 rungs x
-    # 5 rows = 25 = GEN_BATCH_MAX, one call. At 6 the window is 30 rows and the generator splits
-    # it, which is what `check_boundary_window_fits` now refuses -- a split window still returns
-    # the same rungs, but it stops being the single call the optimisation is named for.
+    # 8 rungs x 5 rows = 40, inside a GEN_BATCH_MAX of 66, so the window is still one call --
+    # which is the whole point of the setting and what `check_boundary_window_fits` enforces.
+    # The arithmetic in the paragraph above was written when the cap was 25 and the answer was
+    # 5; it is left as the reasoning, not as the current numbers. Scheduling only either way:
+    # the rungs are the same geometric grid judged in the same order at any value.
     BOUNDARY_RUNG_BATCH=8,
 
     # (floor, ceiling) of the doses worth searching. The ceiling is where the descent starts,
@@ -178,7 +179,12 @@ SETTINGS: dict[str, Any] = dict(
     BOUNDARY_TASK_N=1,
     BOUNDARY_MAX_TOKENS=48,
 
-    # A probe is past the boundary when mean JUDGED coherence falls below this, on 0-10.
+    # A response fails this leg when its JUDGED coherence falls below this, on 0-10.
+    #
+    # PER RESPONSE, not the probe's mean -- this comment said "mean" and the code has always
+    # applied it to each response separately (`m3/sweep.py`, the per-response conjunction), then
+    # required BOUNDARY_ANSWER_MIN of them to pass. The two are not the same test: a mean
+    # survives one response scoring 0 if the others are high, and this does not.
     #
     # Judged, not mechanical, and this is a deliberate constraint: no judge-free measure is
     # allowed to alter what the run does. The mechanical degeneration detector is recorded
@@ -200,8 +206,14 @@ SETTINGS: dict[str, Any] = dict(
     # 0.75 while half the battery was corrupted -- each leg happened to lose a different
     # response, so the damage cancelled instead of accumulating.
     #
-    # 0.75 = three of four responses. Not 1.0: one sampled response at temperature 1.0 wandering
-    # off should not move a layer's whole dose ladder.
+    # 0.75 over the probe's five responses (BOUNDARY_N + BOUNDARY_TASK_N) means FOUR of five
+    # must pass -- one response of slack, not the "three of four" this comment used to claim,
+    # which described a four-response probe that no longer exists. Not 1.0, because one sampled
+    # response at temperature 1.0 wandering off should not move a layer's whole dose ladder.
+    #
+    # One response of slack is also why a missing judge verdict must not count as a failure: it
+    # would spend the entire margin. Responses nobody judged are excluded from both halves of
+    # the fraction, and the count is recorded on every probe row.
     BOUNDARY_ANSWER_MIN=0.75,
 
     # The ladder leaves a coarse answer: its first passing dose sits up to one whole step below

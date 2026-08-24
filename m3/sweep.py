@@ -427,9 +427,19 @@ def calibrate(concept: str, layers: Sequence[int], cfg: dict | None = None) -> d
     # model, before Phase 1 -- beside R14, which exists for exactly the same reason.
     if int(cfg["BOUNDARY_RUNG_BATCH"]) > 1:
         first = battery_prompts(cfg)[0]
-        expensive.verify_per_row_dose(int(layers[0]), 1.0, first["prompt"],
+        # 0.5, NOT 1.0. At alpha=1.0 the two paths this compares receive identical arguments --
+        # `_generate(v, strength=1.0)` against `_generate_rows(1.0*v, strength=1)` -- so the
+        # check passed by construction and could not detect the one thing it exists to detect.
+        # If the harness normalises the vector, `0.5*v` normalises to the same direction as `v`
+        # and the two paths then differ in strength, 1.0 against 0.5, which shows up in the text.
+        #
+        # 0.5 rather than an arbitrary fraction because it is exactly representable in binary,
+        # so `0.5*v` computed here is bit-identical to `0.5*v` computed inside the hook and a
+        # mismatch cannot be rounding. This was one of the "checks that cannot fail" this repo
+        # keeps a count of; it is now one that can.
+        expensive.verify_per_row_dose(int(layers[0]), 0.5, first["prompt"],
                                       int(first["start"]), float(cfg["TEMPERATURE"]))
-        _log("per-row dose pass  (batched ladder == one-rung ladder on this harness)")
+        _log("per-row dose pass  (batched ladder == one-rung ladder on this harness, at a=0.5)")
 
     rows = battery_prompts(cfg)
 
