@@ -82,6 +82,7 @@ parent repo's ethics register first.
 | What went wrong before, and how it was found | `docs/DEBUG-LOG.md` |
 | Where this is going after M2 | `docs/M3-PROPOSAL.md` |
 | Detection measured without asking the model | `docs/M4-PROPOSAL.md` |
+| Why the instrument is not trusted yet, and what would fix it | `docs/M5-PROPOSAL.md` |
 | Conventions for agents working here | `AGENTS.md` |
 | The coding agent's current task queue | `docs/handoff/` |
 | The science, ethics register and literature | parent repo `Emergent-Introspection` |

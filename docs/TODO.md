@@ -312,6 +312,86 @@ an archive-without-folder and offer to restore it, or have `m2.setup` say so exp
 Both are single-unit phases, so the measured rate never corrects them and they are pure
 guesses in every ETA until a run completes.
 
+### F. The dose ladder should climb from zero, not descend from an arbitrary ceiling
+Phase 1 finds each layer's `dose_max` by starting at `min(BOUNDARY_BRACKET[1], ALPHA_CEIL·‖v‖/‖h‖)`
+and multiplying by `BOUNDARY_STEP = 0.70` until a probe comes back coherent, on-task and correct,
+then bisecting inside the bracket that leaves. **The descent is the part worth reconsidering.**
+Suggested instead: start near zero and grow until the first probe *fails*, keeping the same
+bisection inside the same bracket.
+
+Three measured reasons, from `boundaries.jsonl` across the silk, wrists and both garlic runs —
+126 layers, 686 ladder probes:
+
+- **82% of ladder probes (560 of 686) were spent above the boundary**, at doses the grid then never
+  samples. Each probe is `BOUNDARY_N + BOUNDARY_TASK_N = 5` generations at 48 tokens plus 5 judge
+  calls, so that is roughly 2,800 generations and 2,800 judge calls whose only content is the model
+  breaking. An ascending ladder spends the same probes *below* the boundary, inside the range
+  `DOSE_FRACTIONS` actually covers, where each rung is a cheap preview of a cell the sweep will
+  measure anyway. Mean failing rungs per layer: silk 3.9, wrists 4.2, garlic L35–61 5.6.
+- **The starting point is not the bracket and is not controlled.** In 120 of 126 layers the descent
+  began at `ALPHA_CEIL·‖v‖/‖h‖`, not at the 2.50 bracket ceiling, and that quantity ranges 0.14 to
+  3.03 across layers — a 20× spread in where the search begins, set by `ALPHA_CEIL = 16.0`, a raw
+  multiplier cap chosen for Gemma3-27B. The median start sits 4.5× to 5.9× above the `dose_max`
+  eventually found. On a model with a different `‖v‖/‖h‖` profile the same constant lands somewhere
+  else entirely, and nothing reports that it did.
+- **On 11 layers the ceiling was already below the boundary, so no boundary was measured at all** —
+  silk L13–L19, wrists L13–L17, garlic survey L13–L16. The first probe passed, `dose_max` was
+  recorded equal to `max_reachable_dose`, and the number is a property of `ALPHA_CEIL` rather than
+  of the model. All eleven are shallow layers, which is why the garlic survey's L13–L16 were
+  dropped from the figures. A ladder that climbs cannot produce this: it stops at a measured
+  failure or it reports that it never found one, and those are different outcomes.
+
+There is also a failure-mode asymmetry. `probes_exhausted` while descending means nothing is known
+about any dose below `lowest_probe` — the layer is unmeasured. The same exhaustion while climbing
+leaves a boundary that is valid and conservative, plus probes at doses the sweep can use.
+
+**Bundle it with any other Phase 1 change.** Anything that moves `dose_max` moves every dose in
+every cell and makes new runs incomparable with the garlic, silk and wrists data on disk. That cost
+should be paid once, together with the on-task criterion that rejects healthy responses drifting
+toward the injected concept, and with capping the ladder where identification saturates rather than
+only where the model breaks. The reclaimed budget is the same argument as
+[`M5-PROPOSAL.md`](M5-PROPOSAL.md) §1: what the per-layer curves need is more doses per layer, and
+this is where they are currently going.
+
+### G. Bisect between a layer's dose fractions when a qualifying cell could be hiding in the gap
+The grid measures six fixed fractions of each layer's `dose_max` — 0.35 to 0.85, 0.10 apart — and
+stops. Nothing looks between them. But identification behaves like a switch rather than a ramp, so
+the dose where the model starts naming the concept usually falls *between* two measured cells, and
+a qualifying cell, if the layer has one, lives in exactly that gap. Suggested: after a layer's six
+cells are scored, find adjacent doses that straddle the change and measure the midpoint.
+
+**How often the gap exists**, over healthy cells in the three original sweeps (77 layers, 462
+cells, `identification` at 30 trials):
+
+| concept | layers where identification varies across the six doses | adjacent gaps where it climbs ≥ 50 pp | median gap | gaps with the lower cell undetected and the upper one effective ≥ 30% |
+|---|---:|---:|---:|---:|
+| Garlic | 26 of 27 | 20, in 20 layers | 20% of the upper dose | 2 |
+| Silk | 14 of 25 | 10, in 10 layers | 15% of the upper dose | 13 |
+| Wrists | 8 of 25 | 0 | — | 5 |
+
+So 30 gaps across 77 layers hide a detection knee, and 20 more have an undetected cell directly
+below an effective one. One extra cell per gap is **30 cells against the 462 measured, under 7%**,
+and it halves a 20% gap to 10% — about where `BOUNDARY_BISECT_TOL` already says further precision
+buys nothing the rest of the instrument can resolve. Two steps at most.
+
+**Trigger on identification, not on influence.** A 50 pp jump at 30 trials clears both endpoints'
+Wilson intervals, and at the current 120 trials it clears them comfortably. Influence carries about
+±13 pp at 22 responses and is bimodal, so an effectiveness-only trigger would chase noise into a
+cell that costs a full battery. Identification is also not monotonic in dose, so the rule should
+require the jump to exceed both intervals rather than merely to occur.
+
+**This one does not make anything incomparable.** Unlike the Phase 1 changes in F, in the boundary's
+on-task leg, and in capping the ladder at detection saturation, this adds cells without moving any
+cell that already exists — every original dose is still measured and still reported. Grid-level
+aggregates become conditioned on the refinement and should be reported per cell and per layer
+instead, which is the same caveat the detection-saturation cap carries. It is the only one of the
+four that could ship on its own.
+
+Cost is a scheduling change rather than a GPU one: Phase 2 would run a layer in two passes instead
+of one, with the model already loaded. It pairs naturally with capping the ladder where
+identification saturates, which frees roughly a third of Garlic's grid — far more than the 20 cells
+this would spend there.
+
 ---
 
 
