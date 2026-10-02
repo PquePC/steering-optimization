@@ -4,6 +4,11 @@
 here is scheduled and nothing here is built. The point of this document is that the reasons are
 recorded while they are fresh, so the next scoping session does not start from memory.
 
+**Scoped 2026-10-02 in [`M5-PLAN.md`](M5-PLAN.md),** which takes this document's three problems,
+the article's pending changes and every other logged next step into one plan. That plan is a
+proposal: nothing in it is scheduled until the decisions in its §13 are logged in
+[`DECISIONS.md`](DECISIONS.md).
+
 **The one-line reason it exists:** after the 2026-08-21 re-analysis, the instrument is not trusted
 enough to carry a result. Two things are wrong with it, they are different problems, and only one
 of them is fixed by spending more GPU time.

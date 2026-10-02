@@ -12,7 +12,12 @@ See [`SPECIFICATION.md`](SPECIFICATION.md) or the inventory in
 
 ---
 
-## The next milestone is logged, not scoped
+## The next milestone is scoped, not decided
+
+**2026-10-02: M5 is scoped as a proposal in [`M5-PLAN.md`](M5-PLAN.md).** Its §13 lists the
+decisions it needs before anything is built — the first is whether the operating window is gated
+on noticing, naming or both. Each stays open here until it is logged in
+[`DECISIONS.md`](DECISIONS.md).
 
 **M5 — [`M5-PROPOSAL.md`](M5-PROPOSAL.md), written 2026-08-22.** After the 2026-08-21
 re-analysis the instrument is not trusted enough to carry a result, for two separate reasons: the

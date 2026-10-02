@@ -117,6 +117,7 @@ same question, that is a defect — say so.
 | What comes after M2? | [`docs/M3-PROPOSAL.md`](docs/M3-PROPOSAL.md) |
 | How would detection be measured without asking the model? | [`docs/M4-PROPOSAL.md`](docs/M4-PROPOSAL.md) |
 | Why the instrument is not trusted yet, and what would fix it | [`docs/M5-PROPOSAL.md`](docs/M5-PROPOSAL.md) |
+| What the next version is, phase by phase, and which decisions it needs | [`docs/M5-PLAN.md`](docs/M5-PLAN.md) |
 | The write-up's working notes (the published article supersedes them) | [`docs/ARTICLE.md`](docs/ARTICLE.md) |
 | Which source grounds which measurement? | [`BIBLIOGRAPHY.md`](BIBLIOGRAPHY.md) |
 | Is a different judge model better than the one that scored these runs? | [`tools/judge_bakeoff.py`](tools/judge_bakeoff.py) |

@@ -977,3 +977,21 @@ exclusion count is therefore a floor, not an estimate.
 **Result:** the replay is evidence the committed criterion filters the over-steered cells this
 run actually produced, while keeping the cells worth keeping. The real numbers come from the
 next pod run's `boundaries.jsonl`.
+
+---
+
+## 2026-10-02 — M5 scoped as a plan: valid first, cost and time per vector as constraints
+
+**By:** Tomás (the brief), Claude (the plan)
+**Kind:** decision
+
+Tomás asked for the next version to be scoped as a full plan, from a literature review and every
+next step already written down. He set its brief: the instrument should be as good as it can be,
+valid first, with cost and time per vector treated as constraints rather than as the objective.
+Hours per concept is the problem; one-off spending per model that makes every later vector cheap
+is not. The plan is [`M5-PLAN.md`](M5-PLAN.md).
+
+**Why:** the plan is a proposal, so only the brief is decided here. None of the sixteen decisions
+in its §13 is taken by this entry. Each gets its own entry when it is made, and until then it stays
+open in [`TODO.md`](TODO.md).
+**Result:** `docs/M5-PLAN.md`; a pointer in `M5-PROPOSAL.md`, `TODO.md` and the README.
