@@ -51,6 +51,14 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 OPS = ("add", "sub", "project", "clamp")
+DOSE_SIGNIFICANT_DIGITS = 6
+
+
+def canonical_dose(x: float) -> float:
+    """Round a dose to DOSE_SIGNIFICANT_DIGITS significant digits, the form every key uses."""
+    if x == 0 or not math.isfinite(x):
+        return float(x)
+    return float(f"{x:.{DOSE_SIGNIFICANT_DIGITS}g}")
 POSITION_POLICIES = ("from", "span", "generated", "all")
 SCHEDULES = ("single", "strided", "all", "gaussian")
 
@@ -201,6 +209,9 @@ class Cell:
             raise ValueError(f"rho must be finite and >= 0, got {self.rho}")
         if self.op not in OPS:
             raise ValueError(f"unknown operation {self.op!r}")
+        # Canonical dose: a search that reaches 0.44999999999999996 and a grid that says 0.45 must
+        # name the same cell, or a resume re-measures it and an analysis splits it (old defect G13).
+        object.__setattr__(self, "rho", canonical_dose(self.rho))
 
     @property
     def layer(self) -> int:

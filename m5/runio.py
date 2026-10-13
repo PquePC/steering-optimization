@@ -84,15 +84,20 @@ def utc_now() -> str:
 
 
 def git_state(repo: Path = REPO_ROOT) -> dict[str, Any]:
-    """Commit and dirtiness of the code that produced a run. Never raises."""
-    def run(*args: str) -> str:
+    """Commit, branch and dirtiness of the code that produced a run. Never raises.
+
+    `dirty` is None (unknown), not False, when git could not be asked: a failed status call
+    reported as "clean" is a provenance claim the run did not earn.
+    """
+    def run(*args: str) -> str | None:
         try:
-            return subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True,
-                                  timeout=10).stdout.strip()
+            out = subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True, timeout=10)
         except Exception:
-            return ""
+            return None
+        return out.stdout.strip() if out.returncode == 0 else None
+    status = run("status", "--porcelain")
     return {"commit": run("rev-parse", "HEAD"), "branch": run("rev-parse", "--abbrev-ref", "HEAD"),
-            "dirty": bool(run("status", "--porcelain"))}
+            "dirty": None if status is None else bool(status)}
 
 
 def environment() -> dict[str, Any]:
@@ -178,12 +183,69 @@ def read_jsonl(path: Path, *, schema: str | None = SCHEMA) -> ReadResult:
     return ReadResult(rows, torn)
 
 
+def heal_torn_tail(path: Path) -> str | None:
+    """Make a JSONL file safe to append to after a crash; return what was quarantined, if anything.
+
+    A run killed mid-write leaves a final line without its newline. Appending to it would glue the
+    next row onto the fragment and turn a tolerable torn tail into a corrupt middle line. So before
+    the first append: a complete JSON object missing only its newline gets the newline; anything
+    else after the last newline is moved to `<file>.torn` (quarantined, never deleted -- it is what
+    the crash left, and someone may need to read it) and cut from the file.
+    """
+    if not path.exists() or path.stat().st_size == 0:
+        return None
+    data = path.read_bytes()
+    if data.endswith(b"\n"):
+        return None
+    cut = data.rfind(b"\n") + 1  # 0 when the whole file is one unterminated line
+    tail = data[cut:]
+    try:
+        json.loads(tail.decode("utf-8"))
+        with open(path, "ab") as f:
+            f.write(b"\n")
+        return None
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        with open(path.with_name(path.name + ".torn"), "ab") as q:
+            q.write(tail + b"\n")
+        with open(path, "r+b") as f:
+            f.truncate(cut)
+        return tail.decode("utf-8", errors="replace")
+
+
+def write_probe(root: str | Path, megabytes: int = 8) -> None:
+    """Prove the volume accepts real writes before a model is loaded (old defect K5).
+
+    Writes `megabytes` of non-zero bytes, fsyncs, checks the size and removes the probe. Raises
+    OSError with the path when the volume cannot take it.
+    """
+    root_p = assert_outside_repo(root, what="run root")
+    root_p.mkdir(parents=True, exist_ok=True)
+    probe = root_p / f".write_probe_{os.getpid()}_{os.urandom(4).hex()}"
+    block = bytes(range(1, 256)) * 4096  # ~1 MB of non-zero bytes
+    try:
+        with open(probe, "wb") as f:
+            written = 0
+            while written < megabytes * 1024 * 1024:
+                f.write(block)
+                written += len(block)
+            f.flush()
+            os.fsync(f.fileno())
+        if probe.stat().st_size != written:
+            raise OSError(f"write probe at {probe}: wrote {written} bytes, found {probe.stat().st_size}")
+    finally:
+        if probe.exists():
+            probe.unlink()
+
+
 class RunDir:
     """One run's directory: manifest, config, registered streams and documents."""
 
     def __init__(self, path: str | Path) -> None:
         self.path = assert_outside_repo(path)
         self._handles: dict[str, Any] = {}
+        # One id per process that writes to this run. Every row carries it, so an analysis can
+        # keep the latest attempt per unit after a crash and a resume (old defect J11).
+        self.attempt = os.urandom(6).hex()
         manifest = self.path / "manifest.json"
         self.manifest: dict[str, Any] = (json.loads(manifest.read_text(encoding="utf-8"))
                                          if manifest.exists() else {})
@@ -251,9 +313,11 @@ class RunDir:
     def append(self, stream: str, row: Mapping[str, Any]) -> dict[str, Any]:
         """Stamp and append one row; returns the row as written."""
         self._check_stream(stream)
-        stamped = {"schema": SCHEMA, "config_hash": self.config_hash, "ts": utc_now(), **row}
+        stamped = {"schema": SCHEMA, "config_hash": self.config_hash, "ts": utc_now(),
+                   "attempt": self.attempt, **row}
         h = self._handles.get(stream)
         if h is None:
+            heal_torn_tail(self.stream_path(stream))
             h = open(self.stream_path(stream), "a", encoding="utf-8", buffering=1)
             self._handles[stream] = h
         h.write(_dumps(stamped) + "\n")

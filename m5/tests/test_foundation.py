@@ -247,3 +247,139 @@ def test_token_index_at_and_seeds():
     with pytest.raises(ValueError):
         token_index_at(offs, 12)
     assert derive_seed(0, "cell", 3) == derive_seed(0, "cell", 3) != derive_seed(0, "cell", 4)
+
+
+# ===================================================================================== static guards
+# These scan the whole m5 package, so they also hold every module other agents add.
+
+import ast  # noqa: E402
+
+_PKG = Path(__file__).resolve().parents[1]
+
+
+def _package_modules():
+    for path in sorted(_PKG.rglob("*.py")):
+        if "tests" in path.relative_to(_PKG).parts:
+            continue
+        yield path, ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+
+
+def test_no_config_value_is_read_with_a_default():
+    """Old invariant 87: `cfg.get(KEY, default)` is a different measurement under the same name."""
+    offenders = []
+    for path, tree in _package_modules():
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "get"):
+                target = node.func.value
+                name = target.attr if isinstance(target, ast.Attribute) else getattr(target, "id", "")
+                if name in ("cfg", "config", "CONFIG"):
+                    offenders.append(f"{path.relative_to(_PKG)}:{node.lineno}")
+    assert not offenders, f"config read with .get(): {offenders}"
+
+
+def test_the_package_serves_nothing_and_uploads_nothing():
+    """Hard rules 1-2: no listening sockets, servers, tunnels or upload clients in m5."""
+    banned = {"socket", "socketserver", "http.server", "flask", "fastapi", "uvicorn", "gradio",
+              "streamlit", "ngrok", "pyngrok", "huggingface_hub.upload", "boto3", "paramiko"}
+    found = []
+    for path, tree in _package_modules():
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names = [a.name for a in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                names = [node.module] + [f"{node.module}.{a.name}" for a in node.names]
+            else:
+                continue
+            found += [f"{path.relative_to(_PKG)}:{node.lineno} {n}" for n in names
+                      if n in banned or n.split(".")[0] in {"flask", "fastapi", "uvicorn", "gradio"}]
+    assert not found, f"server or upload imports in m5: {found}"
+
+
+def test_gitignore_keeps_its_load_bearing_patterns():
+    """Hard rule 3: the ignore rules keep vectors, activations and run data out of a public repo."""
+    lines = {l.strip() for l in (safety.REPO_ROOT / ".gitignore").read_text().splitlines()}
+    for pattern in ("vectors/", "activations/", "results/", "outputs/", "*.pt", "*.safetensors",
+                    "*.npy", "*.npz", "private/", "m2_runs/"):
+        assert pattern in lines, f".gitignore lost {pattern}"
+
+
+def test_harmful_list_matches_the_old_pipelines_until_they_retire():
+    """Old invariant 139: one list of harmful concepts. m5 keeps its own copy (it imports nothing
+    from m2); this test reads m2's file, not its module, and fails if the two ever diverge."""
+    src = (safety.REPO_ROOT / "m2" / "config.py").read_text(encoding="utf-8")
+    for node in ast.walk(ast.parse(src)):
+        targets = node.targets if isinstance(node, ast.Assign) else \
+            [node.target] if isinstance(node, ast.AnnAssign) else []
+        if any(getattr(t, "id", "") == "HARMFUL_CONCEPTS" for t in targets):
+            old = tuple(ast.literal_eval(node.value))
+            assert {c.casefold() for c in old} == set(safety.HARMFUL_CONCEPTS)
+            return
+    pytest.skip("m2/config.py no longer defines HARMFUL_CONCEPTS")
+
+
+# ===================================================================================== run files, more
+
+def test_records_split_on_newline_only(cfg, run_root):
+    """Old invariant 102: U+2028/U+2029/U+0085 inside a text must not split a record."""
+    run = runio.RunDir.create(run_root, "u", config=cfg, kind="test")
+    text = "line separator para\u0085next"
+    run.append("transcripts", {"id": "t", "text": text})
+    run.close()
+    assert runio.RunDir.open(run_root / "u").rows("transcripts")[0]["text"] == text
+
+
+def test_a_torn_tail_is_quarantined_before_the_next_append(cfg, run_root):
+    """Old invariant 103: crash, resume, read -- the fragment is kept aside, never glued on."""
+    run = runio.RunDir.create(run_root, "t", config=cfg, kind="test")
+    run.append("cells", {"cell": "a"})
+    run.close()
+    p = run.stream_path("cells")
+    with open(p, "a", encoding="utf-8") as f:
+        f.write('{"schema": "m5.v1", "cell": "b", "k"')  # the crash
+    resumed = runio.RunDir.open(run_root / "t")
+    resumed.append("cells", {"cell": "c"})
+    resumed.close()
+    assert [r["cell"] for r in runio.RunDir.open(run_root / "t").rows("cells")] == ["a", "c"]
+    assert '"cell": "b"' in (p.parent / "cells.jsonl.torn").read_text()
+
+
+def test_a_complete_last_row_missing_its_newline_is_kept(cfg, run_root):
+    run = runio.RunDir.create(run_root, "n", config=cfg, kind="test")
+    run.append("cells", {"cell": "a"})
+    run.close()
+    p = run.stream_path("cells")
+    p.write_text(p.read_text().rstrip("\n"))
+    resumed = runio.RunDir.open(run_root / "n")
+    resumed.append("cells", {"cell": "b"})
+    resumed.close()
+    assert [r["cell"] for r in runio.RunDir.open(run_root / "n").rows("cells")] == ["a", "b"]
+    assert not (p.parent / "cells.jsonl.torn").exists()
+
+
+def test_rows_carry_an_attempt_id_per_process(cfg, run_root):
+    run = runio.RunDir.create(run_root, "a", config=cfg, kind="test")
+    run.append("cells", {"cell": "x"})
+    run.close()
+    again = runio.RunDir.open(run_root / "a")
+    again.append("cells", {"cell": "y"})
+    again.close()
+    rows = runio.RunDir.open(run_root / "a").rows("cells")
+    assert rows[0]["attempt"] != rows[1]["attempt"]
+
+
+def test_git_state_says_unknown_rather_than_clean_when_it_cannot_ask(tmp_path):
+    assert runio.git_state(tmp_path)["dirty"] is None
+
+
+def test_write_probe(tmp_path):
+    runio.write_probe(tmp_path, megabytes=1)
+    assert not list(tmp_path.glob(".write_probe_*"))
+    with pytest.raises(safety.Refused):
+        runio.write_probe(safety.REPO_ROOT, megabytes=1)
+
+
+def test_cell_doses_are_canonical():
+    a = Cell("silk", "single", (29,), 0.44999999999999996)
+    b = Cell("silk", "single", (29,), 0.45)
+    assert a == b and a.cell_id() == b.cell_id()

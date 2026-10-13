@@ -410,8 +410,6 @@ _KEYS: list[Key] = [
     # ---------------------------------------------------------------- input / output
     Key("RUN_ROOT", "/workspace/m5_runs", "Where runs, profiles and vectors live. Always outside "
         "the repository (m5.safety refuses otherwise).", hashed=False),
-    Key("ALLOW_TRANSCRIPT_EXPORT", False, "Let an export bundle carry generated text. Benign "
-        "vector classes only, and never by default.", hashed=False),
 ]
 
 KEYS: dict[str, Key] = {k.name: k for k in _KEYS}

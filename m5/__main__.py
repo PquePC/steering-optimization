@@ -107,6 +107,9 @@ def main(argv: list[str] | None = None) -> int:
     sp = add("export", "write a fail-closed export bundle")
     sp.add_argument("--run", required=True)
     sp.add_argument("--out", type=Path, required=True)
+    sp.add_argument("--include-transcripts", action="store_true",
+                    help="also export generated text (benign vector classes only). A call-site "
+                         "flag on purpose: never a config key, so it cannot be inherited")
 
     sp = add("simulate", "end-to-end run on the simulator")
     sp.add_argument("--run", default="simulation")

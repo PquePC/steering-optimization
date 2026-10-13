@@ -68,3 +68,24 @@ def test_bundle_carries_its_manifest_and_refuses_the_repo(run, tmp_path):
     with pytest.raises(safety.Refused):
         export.write_export(run, safety.REPO_ROOT / "bundle.zip", allow_transcripts=False,
                             vector_classes=["concept"])
+
+
+def test_a_harmful_concept_withholds_every_transcript(run):
+    plan = export.plan_export(run, allow_transcripts=True, vector_classes=["concept"],
+                              concepts=["Weapons"])
+    assert "transcripts.jsonl" not in names(plan, run.path)
+    assert any("harmful-arm" in r for _, r in plan.withheld)
+
+
+def test_an_empty_bundle_is_refused_and_no_part_file_remains(cfg, run_root, tmp_path):
+    empty = runio.RunDir.create(run_root, "empty", config=cfg, kind="test")
+    for f in empty.path.iterdir():
+        f.unlink()
+    with pytest.raises(safety.Refused, match="nothing"):
+        export.write_export(empty, tmp_path / "b.zip", allow_transcripts=False, vector_classes=["concept"])
+    assert not list(tmp_path.glob("*.part"))
+
+
+def test_transcript_export_is_not_a_config_setting(cfg):
+    """Old invariant 142: the permission is a call-site argument, so it cannot be inherited."""
+    assert not any("EXPORT" in k for k in cfg)
