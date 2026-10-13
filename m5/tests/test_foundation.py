@@ -98,7 +98,8 @@ def test_codes_cover_every_construct_and_refuse_retired_ones():
 # ===================================================================================== safety
 
 @pytest.mark.parametrize("word", ["weapon", "Weapons", " POISON ", "poisoned", "assaults",
-                                  "Assault rifle", "weaponry"])
+                                  "Assault rifle", "weaponry", "wea\u200bpon", "w e a p o n",
+                                  "poi-son", "\uff57\uff45\uff41\uff50\uff4f\uff4e"])
 def test_harmful_concepts_and_inflections_are_refused(word):
     assert safety.concept_refused(word)
     with pytest.raises(safety.Refused, match="harmful arm"):

@@ -27,6 +27,7 @@ raises `Refused` with the reason, so a refusal reads as a decision, never as a c
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections.abc import Iterable
 from pathlib import Path
 from urllib.parse import urlparse
@@ -52,12 +53,26 @@ _INFLECTIONS = ("", "s", "es", "ed", "ing", "er", "ers", "ous", "ry", "ries")
 _REFUSED_FORMS = frozenset(base + suf for base in HARMFUL_CONCEPTS for suf in _INFLECTIONS)
 
 
-def concept_refused(word: str) -> bool:
-    """True when any word of the concept is a harmful concept name or a simple inflection of one.
+_ZERO_WIDTH = dict.fromkeys(map(ord, "\u200b\u200c\u200d\u2060\ufeff\u00ad"), None)
 
-    Word by word, so "Assault rifle" and "POISONS" are refused as well as "weapon".
+
+def _normalise(text: str) -> str:
+    """NFKC (folds full-width and compatibility look-alikes), drop zero-width characters, casefold."""
+    return unicodedata.normalize("NFKC", str(text)).translate(_ZERO_WIDTH).casefold()
+
+
+def concept_refused(word: str) -> bool:
+    """True when the concept names a harmful concept or a simple inflection of one.
+
+    Checked word by word ("Assault rifle", "POISONS") and on the letters run together
+    ("w e a p o n", "poi-son"), after Unicode normalisation and with zero-width characters
+    removed. The point is not to defeat a determined operator -- the operator decides the study --
+    but to make an accidental or careless route around the refusal fail.
     """
-    return any(tok in _REFUSED_FORMS for tok in re.findall(r"[a-z]+", str(word).casefold()))
+    norm = _normalise(word)
+    if any(tok in _REFUSED_FORMS for tok in re.findall(r"[a-z]+", norm)):
+        return True
+    return "".join(re.findall(r"[a-z]+", norm)) in _REFUSED_FORMS
 
 
 def check_concept(word: str) -> str:
@@ -80,7 +95,7 @@ _HARM_WORD = re.compile(
 def check_texts(texts: Iterable[str], *, what: str = "text") -> None:
     """Refuse prompt material (contrastive pairs, scenarios) that names a harmful concept."""
     for i, t in enumerate(texts):
-        m = _HARM_WORD.search(str(t))
+        m = _HARM_WORD.search(_normalise(t))
         if m:
             raise Refused(f"{what} #{i} contains {m.group(0)!r}, a harmful-arm concept; such "
                           "material is not used to build or evaluate vectors here")
