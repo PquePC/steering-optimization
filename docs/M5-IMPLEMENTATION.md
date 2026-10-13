@@ -79,6 +79,7 @@ old pipelines stay runnable; `m5.analysis` reads the files their runs wrote, nev
   positions)`.
 - `Backend` protocol (`m5/backend/base.py`): `render`, `tokenize`, `offsets`, `decode`,
   `word_variants`, `register_vector`, `has_vector`, `generate`, `next_token_logprobs`, `score`,
+  `candidate_logprobs`,
   `kl_from_unsteered`, `hidden`, `lens`, `residual_stats`, `norm_gains`, and `info: ModelInfo`.
   Helpers: `locate`, `token_index_at`, `derive_seed`.
 

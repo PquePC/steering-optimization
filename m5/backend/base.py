@@ -162,6 +162,14 @@ class Backend(Protocol):
 
     def score(self, requests: Sequence[ScoreRequest]) -> list[ScoreResult]: ...
 
+    def candidate_logprobs(self, requests: Sequence[ScoreRequest],
+                           token_ids: Sequence[int]) -> list[np.ndarray]:
+        """Teacher forcing, per request an array [len(continuation tokens), len(token_ids)]: the
+        log-probability of each candidate token under the distribution that predicts continuation
+        token t (the same distributions `score` reads its logprobs and entropies from). e9 reads
+        how much probability the concept's tokens gain along a fixed continuation."""
+        ...
+
     def kl_from_unsteered(self, texts: Sequence[str], interventions: Sequence[Intervention],
                           *, start_tokens: Sequence[int],
                           exclude_token_ids: Sequence[int] = ()) -> list[KLResult]:
