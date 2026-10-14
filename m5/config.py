@@ -238,6 +238,8 @@ _KEYS: list[Key] = [
     Key("DRAND_SEEDS", 5, "Random directions per layer for D_rand(L).", _positive),
     Key("DRAND_INTACT_MIN", 0.9, "A rung is intact when at least this share of its short "
         "generations is non-degenerate.", _prob),
+    Key("DRAND_COHERENCE_SAMPLES", 8, "Judged coherence samples per rung of the D_rand ladder, "
+        "beside s2 and s6 (plan §5.1).", _positive),
     Key("SCHEDULE", "single", "Layer schedule for search mode: one layer; strided; all layers at "
         "one global scale (the system cards); or a Gaussian depth profile.",
         _one_of("single", "strided", "all", "gaussian")),
@@ -462,6 +464,27 @@ _KEYS: list[Key] = [
     Key("N_CONTRASTIVE_CONTROLS", 10, "Unrelated contrastive-pair control vectors.", _positive),
     Key("N_SIGN_RANDOMISED", 10, "Sign-randomised same-construction controls (SteerCheck).",
         _non_negative),
+    Key("NULL_REPEATS", 20, "Unsteered repeats per prompt set for the null arms of every channel "
+        "and judge, made once per model and reused by every later run (plan §5.1).", _positive),
+    Key("EA_PROBE_DEPTHS", (0.35, 0.5, 0.65), "Depths (fractions) where the a2 evaluation-"
+        "awareness probe is trained; held-out AUC is reported per depth.", _increasing_positive),
+    Key("EA_PROBE_L2", 1.0, "Ridge penalty of the a2 logistic probe.", _positive),
+
+    # ---------------------------------------------------------------- calibration set (plan §5.3)
+    Key("CALIBRATION_CONCEPTS", 10, "Concepts in the proxy-gate calibration set (at least 10, "
+        "spanning strong, weak and late-onset behaviour).", _int_range(10, 1000)),
+    Key("CALIBRATION_LAYERS", 8, "Layers per calibration concept.", _positive),
+    Key("CALIBRATION_DOSES", 4, "Doses per calibration layer.", _positive),
+    Key("CALIBRATION_BAND", (0.70, 1.25), "Calibration doses are oversampled between these "
+        "fractions of each layer's integrity boundary.", _band(0.0, 10.0)),
+    Key("CALIBRATION_MIN_CELLS", 300, "The calibration set has at least this many cells.",
+        _positive),
+    Key("CALIBRATION_D2_N", 120, "Reference battery: forced-naming trials per cell (M4's size).",
+        _positive),
+    Key("CALIBRATION_INFLUENCE_N", 66, "Reference battery: influence prompts per cell (M4's size).",
+        _positive),
+    Key("CALIBRATION_D8_N", 60, "Reference battery: self-report trials per cell (restored, plan "
+        "§5.1).", _positive),
 
     # ---------------------------------------------------------------- proxy-validation gate
     Key("GATE_RECALL_MIN", 0.95, "Recall of reference window cells a pruning screen must reach.",
@@ -474,6 +497,8 @@ _KEYS: list[Key] = [
     Key("GATE_RHO_MIN", 0.6, "Mean within-stratum rank correlation required.", _prob),
     Key("GATE_RHO_LB_MIN", 0.4, "...with its lower bound at least this.", _prob),
     Key("GATE_BLINDSPOT_MIN", 0.95, "Pass rate required on each blind-spot case.", _prob),
+    Key("GATE_HOLDOUT_CONCEPTS", 3, "Concepts held out from threshold fitting.", _positive),
+    Key("GATE_HOLDOUT_LAYERS", 2, "Layers held out from threshold fitting.", _positive),
 
     # ---------------------------------------------------------------- input / output
     Key("RUN_ROOT", "/workspace/m5_runs", "Where runs, profiles and vectors live. Always outside "
