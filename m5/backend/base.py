@@ -29,7 +29,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 import numpy as np
 
@@ -210,6 +210,11 @@ class Backend(Protocol):
     def norm_gains(self, layer: int) -> dict[str, np.ndarray]:
         """The block's RMSNorm gain vectors by name, for the weights-only nuisance scan.
         Empty when the architecture has none to report."""
+        ...
+
+    def provenance(self) -> dict[str, Any]:
+        """JSON-safe description of what produces this backend's numbers (classes, versions,
+        device, the checkpoint's own sampling defaults), written into every run it serves."""
         ...
 
 

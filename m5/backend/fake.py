@@ -1696,6 +1696,13 @@ class FakeBackend:
                 best, best_cos = vid, c
         return self.truth.vectors[best] if best is not None else self.truth.random_vector(vector_id)
 
+    def provenance(self) -> dict[str, Any]:
+        """The simulator and the truth it samples from (the truth's parameters are its code)."""
+        return {"backend": "m5.backend.fake.FakeBackend", "seed": self.seed,
+                "n_layers": self.info.n_layers, "d_model": self.info.d_model,
+                "truth_vectors": sorted(self.truth.vectors),
+                "collapse_layer": self.truth.collapse_layer, "motor_from": self.truth.motor_from}
+
     def true_vector(self, vector_id: str, layers: Sequence[int] | None = None) -> dict[int, np.ndarray]:
         """A truth vector's direction at its natural size per layer (what extraction finds)."""
         if vector_id not in self.truth.vectors:

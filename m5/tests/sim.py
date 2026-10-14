@@ -138,13 +138,32 @@ def sim_store(backend: FakeBackend, cfg: Any, root: str | Path, *,
     return store, concept_of, class_of
 
 
+def register_sim_items(backend: FakeBackend, *,
+                       capability: Mapping[str, Any] | None = None) -> None:
+    """Tell the simulator what a real model would simply read: the class of every scenario in
+    m5.data.scenarios (a1, a2), the matching letter of the sycophancy A/B items (e10, e12), and,
+    when given, capability answers as {question: answer | (answer, pass_rate)} (s5). Repeating a
+    registration is harmless."""
+    from m5.data import contrastive, scenarios
+    backend.register_scenarios({s.text: s.cls for s in scenarios.SCENARIOS})
+    backend.register_ab_items({it.question: (it.matching, "sycophancy")
+                               for it in contrastive.SYCOPHANCY_AB.items})
+    if capability:
+        backend.register_capability_items(dict(capability))
+
+
 def sim_context(root: str | Path, *, cfg: Any = None, backend: FakeBackend | None = None,
                 concepts: Iterable[str] = ("garlic", "silk", "velocity"),
                 behaviours: Iterable[str] = ("ea", "syc"), judges: Any = None,
-                max_generations: int | None = None, run_name: str = "sim") -> Context:
-    """A Context with a fresh run under `root` (a pytest tmp_path), ready for any stage."""
+                max_generations: int | None = None, run_name: str = "sim",
+                register_items: bool = True) -> Context:
+    """A Context with a fresh run under `root` (a pytest tmp_path), ready for any stage.
+    `register_items` registers the scenarios and A/B items (`register_sim_items`); capability
+    items depend on the panel a test draws, so tests register those themselves."""
     cfg = sim_cfg() if cfg is None else cfg
     backend = sim_backend() if backend is None else backend
+    if register_items:
+        register_sim_items(backend)
     profile = sim_profile(backend, cfg)
     store, concept_of, class_of = sim_store(backend, cfg, root, concepts=concepts,
                                             behaviours=behaviours)
