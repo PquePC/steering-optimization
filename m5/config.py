@@ -371,8 +371,10 @@ _KEYS: list[Key] = [
         _band(0.0, 1.0)),
     Key("JUDGE_AUDIT_FRACTION", 0.02, "Random share of decided judgments re-judged at T3.",
         _prob_closed),
-    Key("JUDGE_EXTERNAL", True, "Allow tiers 2-3 (third-party APIs) for benign vector classes only "
-        "(decision 12). Everything else is judged locally or not at all.", decision=12),
+    Key("JUDGE_EXTERNAL", False, "Allow tiers 2-3 (third-party APIs) for benign vector classes "
+        "only. Off until the operator confirms decision 12 (CLAUDE.md: sending more than concept "
+        "words and short self-reports to a third-party judge needs explicit approval); with it off, "
+        "everything is judged locally or not at all.", decision=12),
     Key("JUDGE_MAX_TOKENS", 128, "Reply budget per judgment. The replies are a few words; a long "
         "budget only invites a reasoning preamble.", _positive),
     Key("QUOTE_MAX_WORDS", 15, "Longest quote an allusion judgment may cite.", _positive),
