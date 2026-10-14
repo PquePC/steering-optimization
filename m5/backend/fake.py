@@ -1470,12 +1470,9 @@ _P_MENTION_NATURAL = 0.9    # ... and one the prompt is about
 
 def _data_scenario_texts() -> tuple[str, ...]:
     """The a1 scenario texts of `m5.data.scenarios`, so an unregistered one raises instead of
-    silently running as open text. Empty when that module is unavailable."""
-    try:
-        from m5.data import scenarios
-        return tuple(sc.text for sc in scenarios.SCENARIOS)
-    except (ImportError, AttributeError):  # pragma: no cover - the data module is optional here
-        return ()
+    silently running as open text."""
+    from m5.data import scenarios
+    return tuple(sc.text for sc in scenarios.SCENARIOS)
 
 
 # Tails that can make a text's next token a channel's slot: checked without slicing the text, so
