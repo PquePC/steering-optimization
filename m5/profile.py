@@ -54,6 +54,17 @@ from m5.safety import assert_outside_repo
 PROFILE_SCHEMA = "m5.profile.v1"
 PROFILE_FILE = "profile.json"
 
+# Per-model choices the setup makes once and every later stage reads (plan §5.1), beside the dose
+# denominators. Each is plain JSON describing the choice -- ids, seeds, file paths and digests --
+# never weights or vector values (those live under RUN_ROOT, named by path and sha256 here):
+#
+#   d7_controls   {variant: [control question ids]} matched on unsteered yes/no gap (step 6)
+#   capability    the s5 items kept for this model and how they were chosen (step 5)
+#   ea_probe      the a2 evaluation-awareness probe: path, sha256, layers, held-out AUC (step 7)
+#   j_lens        a fitted J-lens for q2: path, sha256, layers (optional)
+SELECTION_KEYS = ("d7_controls", "capability", "ea_probe", "j_lens")
+_MAX_NUMERIC_LIST = 512   # longer numeric lists than any id or layer list look like weights
+
 # What a profile must record so a reader knows what its numbers mean: the prompts behind the scan
 # and s_L, the scan settings, and the prompts behind M3's ||h|| (a different set: M3 measured it
 # on its chat-rendered task prompts, 66 since 2026-08-23, 7 or 22 in older runs).
@@ -109,6 +120,21 @@ def _json_safe(obj: Any, what: str) -> Any:
         return json.loads(json.dumps(obj))
     except (TypeError, ValueError) as exc:
         raise ProfileError(f"{what} is not JSON-serialisable: {exc}") from None
+
+
+def _no_values(obj: Any, where: str) -> None:
+    """Refuse a long numeric list anywhere in `obj`: weights and vector values are stored under
+    RUN_ROOT and named here by path and digest, never inlined into an exportable document."""
+    if isinstance(obj, Mapping):
+        for k, v in obj.items():
+            _no_values(v, f"{where}.{k}")
+    elif isinstance(obj, (list, tuple)):
+        numeric = sum(isinstance(x, (int, float)) and not isinstance(x, bool) for x in obj)
+        if numeric > _MAX_NUMERIC_LIST:
+            raise ProfileError(f"{where} is a list of {numeric} numbers; weights and vector values "
+                               "are stored under RUN_ROOT and referenced by path and sha256")
+        for i, x in enumerate(obj):
+            _no_values(x, f"{where}[{i}]")
 
 
 def _exact_keys(d: Mapping[str, Any], expected: Sequence[str], what: str) -> None:
@@ -233,7 +259,7 @@ class LayerProfile:
 
 _PROFILE_KEYS = ("schema", "model_id", "revision", "n_layers", "d_model", "mid_layer",
                  "mean_mid_norm", "chat_template_hash", "generation_suffix", "provenance",
-                 "d_rand_provenance", "layers")
+                 "d_rand_provenance", "selections", "layers")
 
 
 def middle_layer(n_layers: int) -> int:
@@ -264,6 +290,7 @@ class ModelProfile:
     chat_template_hash: str | None = None
     generation_suffix: str | None = None
     d_rand_provenance: Mapping[str, Any] | None = field(default=None)
+    selections: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not isinstance(self.model_id, str) or not self.model_id:
@@ -326,6 +353,14 @@ class ModelProfile:
         if (self.mean_mid_norm is None) != (self.mid_layer not in self.layers):
             raise ProfileError("mean_mid_norm is measured exactly when the middle layer "
                                f"({self.mid_layer}) is profiled")
+        if not isinstance(self.selections, Mapping):
+            raise ProfileError("selections must be a mapping")
+        unknown = sorted(set(self.selections) - set(SELECTION_KEYS))
+        if unknown:
+            raise ProfileError(f"unknown profile selections {unknown}; known: {SELECTION_KEYS}")
+        sel = _json_safe(dict(self.selections), "selections")
+        _no_values(sel, "selections")
+        object.__setattr__(self, "selections", sel)
 
     # ---------------------------------------------------------------- lookups
 
@@ -386,6 +421,28 @@ class ModelProfile:
             layers[L] = replace(self.layer(L), D_rand=_pos_float(v, f"D_rand({L})"))
         return replace(self, layers=layers, d_rand_provenance=prov)
 
+    def has_selection(self, name: str) -> bool:
+        if name not in SELECTION_KEYS:
+            raise ProfileError(f"unknown profile selection {name!r}; known: {SELECTION_KEYS}")
+        return name in self.selections
+
+    def selection(self, name: str) -> Any:
+        """A setup choice by exact name; raises when the setup has not made it, so a stage that
+        needs it cannot quietly run without it (callers that may choose for themselves check
+        `has_selection` first and record what they chose)."""
+        if not self.has_selection(name):
+            raise ProfileError(f"the profile has no {name!r} selection; run the setup step that "
+                               "makes it (plan §5.1)")
+        return self.selections[name]
+
+    def with_selection(self, name: str, value: Mapping[str, Any]) -> "ModelProfile":
+        """A copy with one setup choice recorded (replacing an earlier one of the same name)."""
+        if name not in SELECTION_KEYS:
+            raise ProfileError(f"unknown profile selection {name!r}; known: {SELECTION_KEYS}")
+        if not isinstance(value, Mapping) or not value:
+            raise ProfileError(f"selection {name!r} must be a non-empty mapping")
+        return replace(self, selections={**dict(self.selections), name: dict(value)})
+
     # ---------------------------------------------------------------- serialisation
 
     def to_json(self) -> dict[str, Any]:
@@ -397,6 +454,7 @@ class ModelProfile:
                 "provenance": dict(self.provenance),
                 "d_rand_provenance": (None if self.d_rand_provenance is None
                                       else dict(self.d_rand_provenance)),
+                "selections": dict(self.selections),
                 "layers": {str(L): lp.to_json() for L, lp in self.layers.items()}}
 
     @classmethod
@@ -422,7 +480,7 @@ class ModelProfile:
                    mean_mid_norm=d["mean_mid_norm"], provenance=d["provenance"],
                    chat_template_hash=d["chat_template_hash"],
                    generation_suffix=d["generation_suffix"],
-                   d_rand_provenance=d["d_rand_provenance"])
+                   d_rand_provenance=d["d_rand_provenance"], selections=d["selections"])
 
     def key(self) -> str:
         """16 hex characters identifying this exact profile, for stamping rows that used it."""

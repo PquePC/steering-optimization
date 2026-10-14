@@ -55,6 +55,10 @@ class Context:
     vector_classes: dict[str, str] = field(default_factory=dict)  # vector_id -> safety class
     max_generations: int | None = None
     spend: Spend = field(default_factory=Spend)
+    # Per-run memo for values every cell reuses (unsteered continuations and null arms, selected
+    # control questions). Keys are namespaced by the module that owns them; nothing here is a
+    # measurement, and nothing here outlives the process -- what must persist goes to the run.
+    cache: dict[str, Any] = field(default_factory=dict)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     # ---------------------------------------------------------------- identity helpers

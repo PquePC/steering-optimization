@@ -264,6 +264,12 @@ _KEYS: list[Key] = [
     Key("SCREEN_A_E9_PROMPTS", 8, "e9 prompts per cell in pass A.", _positive),
     Key("SCREEN_B_E9_PROMPTS", 16, "e9 prompts per cell in pass B.", _positive),
     Key("E9_POSITIONS", 16, "Answer positions e9 averages over.", _positive),
+    Key("SCREEN_A_E10_ITEMS", 8, "e10 A/B items per cell in pass A (behavioural vectors only).",
+        _positive),
+    Key("SCREEN_B_E10_ITEMS", 20, "e10 A/B items per cell in pass B.", _positive),
+    Key("Q1_READ_DEPTH", 0.75, "Where the q1 cross-vector probe reads, as a fraction of depth "
+        "(record-only until the proxy gate passes it).", _prob),
+    Key("Q1_L2", 1.0, "Ridge penalty of the q1 logistic probe.", _positive),
     Key("SCREEN_A_S6_TEXTS", 2, "s6 texts per cell in pass A.", _positive),
     Key("SCREEN_B_S6_TEXTS", 8, "s6 texts per cell in pass B.", _positive),
     Key("S6_TOKENS", 256, "Tokens per s6 text.", _positive),
