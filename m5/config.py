@@ -122,6 +122,16 @@ def _increasing_positive(v: Any) -> str | None:
     return None
 
 
+def _icc_grid(v: Any) -> str | None:
+    if not v:
+        return "must not be empty"
+    if any(not 0.0 <= x < 1.0 for x in v):
+        return "every entry must lie in [0, 1)"
+    if len(set(v)) != len(v):
+        return "entries must be distinct"
+    return None
+
+
 def _all(*checks: Callable[[Any], str | None]) -> Callable[[Any], str | None]:
     def check(v: Any) -> str | None:
         for c in checks:
@@ -294,9 +304,33 @@ _KEYS: list[Key] = [
         _band(0.0, math.inf)),
     Key("PRIOR_SLOPE", (0.07, 0.6), "Log-normal prior on the psychometric slope: median (log-dose "
         "units) and log-sd.", _band(0.0, math.inf)),
+    Key("PRIOR_ICC", (0.0, 0.05, 0.15, 0.3), "Overdispersion grid of the beta-binomial "
+        "likelihood (0 = binomial), equally weighted; the evidence picks the level the data show.",
+        _icc_grid),
     Key("LAYER_AR1", 0.8, "Correlation between neighbouring layers' thresholds.", _prob),
     Key("LAYER_JUMP_DF", 3.0, "Student-t df of layer-to-layer jumps; heavy tails keep a real "
         "one-layer switch (the L39 collapse) from being smoothed away.", _positive),
+    Key("LAYER_SIGMA", 0.25, "Scale (log-dose) of the layer-to-layer step in the chain; layers g "
+        "apart differ by sigma * sqrt(1 - ar1^(2g)).", _positive),
+    Key("MU_GRID_STEP", 0.02, "Spacing (log-dose) of the threshold grid. Its resolution "
+        "(step / sqrt(12)) counts in the posterior sd, so it must sit well below STOP_SD_LOGDOSE.",
+        _positive),
+    Key("MU_GRID_MARGIN", 1.0, "How far (log-dose) the threshold grid extends beyond the lowest "
+        "and highest rho the search may visit.", _positive),
+    Key("PRIOR_S_POINTS", 15, "Grid points for the psychometric slope.", _positive),
+    Key("PRIOR_FLOOR_POINTS", 5, "Grid points for the floor (Beta quantiles).", _positive),
+    Key("PRIOR_LAPSE_POINTS", 5, "Grid points for the lapse rate (Beta quantiles).", _positive),
+    Key("POSTERIOR_DRAWS", 4000, "Joint posterior draws behind R*, W*, P_win and A_win.",
+        _positive),
+    Key("BOOTSTRAP_REPS", 2000, "Resamples for every bootstrap interval (prompts resampled whole).",
+        _positive),
+    Key("PPC_ALPHA", 0.05, "A layer whose posterior predictive check rejects monotonicity at this "
+        "level is reported with the nonparametric estimator instead of the curve (plan §6.1).",
+        _prob),
+    Key("CS_ALPHA", 0.05, "Level of the betting confidence sequence on bounded influence scores "
+        "(allocation only, never reported).", _prob),
+    Key("APT_EPS", 0.02, "Precision below which a cell's side of a threshold does not matter "
+        "(APT allocation, Locatelli et al. 2016).", _positive),
     Key("ANCHOR_CELLS_PER_LAYER", 2, "Fixed cells per surviving layer measured at full n.",
         _non_negative),
     Key("AUDIT_STREAM_FRACTION", 0.12, "Share of cells measured at random regardless of the "
@@ -348,6 +382,16 @@ _KEYS: list[Key] = [
     Key("CONFIDENCE", 0.95, "Two-sided confidence level of every reported interval.", _prob),
     Key("CONTROL_BAND", (0.05, 0.95), "An effect is specific when it falls outside this band of "
         "the control-vector distribution.", _band(0.0, 1.0)),
+    Key("BOX_EFFECT_MIN", 0.30, "P_win / A_win only: the old box's effect threshold, kept so M5 "
+        "can answer M3's question with its uncertainty (plan §6.3). Not a gate.", _prob),
+    Key("BOX_DETECTION_MAX", 0.30, "P_win / A_win only: the old box's detection ceiling.", _prob),
+    Key("BOX_RELATIVE_TO_FLOOR", False, "P_win / A_win only: read the detection ceiling above the "
+        "floor rather than as a raw rate. Off matches M3, which read raw rates."),
+    Key("A_WIN_LEVEL", 0.95, "Joint posterior probability the conservative excursion set A_win "
+        "must reach (Azzimonti et al. 2021).", _prob),
+    Key("JUDGE_CORRECTION", "bootstrap", "How judge-corrected rates (Rogan-Gladen) get their "
+        "interval. The delta method is far too wide at the floor (0/150 -> upper 0.11 against "
+        "0.011), so covertness claims use the bootstrap.", _one_of("bootstrap", "delta")),
 
     # ---------------------------------------------------------------- judges
     Key("JUDGE_T1", "local", "Tier-1 judge: a local open model of a different family, or none "
