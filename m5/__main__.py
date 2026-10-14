@@ -85,6 +85,10 @@ def main(argv: list[str] | None = None) -> int:
             sp.add_argument("--vector", required=True, help="vector id (built by setup or extract)")
         sp.add_argument("--steps", nargs="*", help="setup steps to run (default: all)")
         sp.add_argument("--max-generations", type=int, help="stop cleanly at this many generations")
+        if name == "setup":
+            sp.add_argument("--small", action="store_true",
+                            help="a reduced calibration set and null arms, for smoke tests only; "
+                                 "recorded in the run, and never enough to pass the proxy gate")
 
     sp = add("audit", "audit one given configuration")
     sp.add_argument("--model")
