@@ -51,6 +51,8 @@ STREAMS: dict[str, tuple[str, str]] = {
     "confirm": ("aggregate", "one confirm-tier measure of one finalist cell"),
     "gate": ("aggregate", "one proxy-gate statistic"),
     "calibration": ("aggregate", "one calibration-set cell at reference size"),
+    "analysis": ("aggregate", "one Phase-0 result over an archived run (refit, coupling, near-miss, "
+                 "truncation, headline cell): numbers and transcript ids, never text"),
     "transcripts": ("transcript", "one generated text, keyed by transcript id"),
     "judge_calls": ("internal", "one judge request and reply (embeds transcript text)"),
     "labels": ("internal", "one human label of a transcript"),

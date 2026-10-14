@@ -472,6 +472,12 @@ _KEYS: list[Key] = [
     # ---------------------------------------------------------------- input / output
     Key("RUN_ROOT", "/workspace/m5_runs", "Where runs, profiles and vectors live. Always outside "
         "the repository (m5.safety refuses otherwise).", hashed=False),
+    Key("READ_DATA_PATH", "", "Local clone of Read et al.'s glm-5-steering-logs, outside the "
+        "repository. Its contrastive sets are not republished here (no licence, and the data is "
+        "canary-marked against training corpora), so they are read from the clone and checked "
+        "against the hashes in m5.data.contrastive. Empty = not provided; asking for one of those "
+        "sets then fails with how to obtain it. Not hashed: the content hashes pin what was read.",
+        hashed=False),
 ]
 
 KEYS: dict[str, Key] = {k.name: k for k in _KEYS}
