@@ -46,12 +46,18 @@ def positions_for(spec: Any, mode: str) -> Positions:
 
 def ensure_registered(ctx: Any, vector_id: str) -> dict:
     """Load a vector, register the values the run applies (masked or not) once, return the
-    stored (unmasked) values, which the dose arithmetic reads."""
+    stored (unmasked) values, which the dose arithmetic reads.
+
+    The stored values are read from disk once per context: a saved vector is never rewritten in
+    place (`VectorStore.save` refuses without `overwrite`), so the memo cannot go stale."""
     from m5 import dose
 
     if ctx.store is None:
         raise ValueError("the context has no vector store")
-    vectors = ctx.store.load(vector_id)
+    loaded = ctx.cache.setdefault("m5.steer", {})
+    if vector_id not in loaded:
+        loaded[vector_id] = ctx.store.load(vector_id)
+    vectors = loaded[vector_id]
     mask = ctx.cfg["MASK_LOUD_IN_VECTOR"]
     applied_id = dose.applied_vector_id(vector_id, mask)
     if not ctx.backend.has_vector(applied_id):

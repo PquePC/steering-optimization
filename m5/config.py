@@ -45,13 +45,15 @@ class ConfigError(KeyError):
 # shares a family with the subject (self-preference bias, plan §7.2).
 # =====================================================================================
 
-MODELS: dict[str, dict[str, str]] = {
-    "gemma3_27b": {"hf_id": "google/gemma-3-27b-it", "family": "gemma"},
-    "gemma3_12b": {"hf_id": "google/gemma-3-12b-it", "family": "gemma"},
-    "gemma3_4b": {"hf_id": "google/gemma-3-4b-it", "family": "gemma"},
-    "qwen3_32b": {"hf_id": "Qwen/Qwen3-32B", "family": "qwen"},
-    "qwen3_14b": {"hf_id": "Qwen/Qwen3-14B", "family": "qwen"},
-    "qwen3_8b": {"hf_id": "Qwen/Qwen3-8B", "family": "qwen"},
+# Decoder depth is the published config's num_hidden_layers; the loaded model's own count is
+# checked against it at load, so a wrong entry fails there rather than mislabelling a layer.
+MODELS: dict[str, dict[str, Any]] = {
+    "gemma3_27b": {"hf_id": "google/gemma-3-27b-it", "family": "gemma", "n_layers": 62},
+    "gemma3_12b": {"hf_id": "google/gemma-3-12b-it", "family": "gemma", "n_layers": 48},
+    "gemma3_4b": {"hf_id": "google/gemma-3-4b-it", "family": "gemma", "n_layers": 34},
+    "qwen3_32b": {"hf_id": "Qwen/Qwen3-32B", "family": "qwen", "n_layers": 64},
+    "qwen3_14b": {"hf_id": "Qwen/Qwen3-14B", "family": "qwen", "n_layers": 40},
+    "qwen3_8b": {"hf_id": "Qwen/Qwen3-8B", "family": "qwen", "n_layers": 36},
 }
 
 
@@ -208,6 +210,9 @@ _KEYS: list[Key] = [
     Key("TOKENS_CAPABILITY", 96, "Max new tokens for capability items (s5). The old Qwen arm lost "
         "162 of 172 arithmetic items to truncation at 100 tokens with a long preamble.", _positive),
     Key("TOKENS_SCENARIO", 200, "Max new tokens for evaluation-awareness scenarios (a1).", _positive),
+    Key("A1_NONHIT_AUDIT", 0.05, "Share of a1 replies the lexical prefilter does not flag that the "
+        "judge reads anyway (plan §3.2), each drawn by its transcript's seed so a resume audits the "
+        "same replies. 1.0 judges every reply.", _prob_closed),
     Key("GEN_BATCH_MAX", 64, "Rows per generation batch. Throughput only, not hashed.",
         _positive, hashed=False),
 

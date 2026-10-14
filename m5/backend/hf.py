@@ -431,8 +431,17 @@ class HFBackend:
         model = model_cls.from_pretrained(hf_id, **kwargs)
         resolved = getattr(model.config, "_commit_hash", None) or revision
         name = cfg["MODEL_ID"] or cfg["MODEL"]
-        return cls(model, tokenizer, name=name, hf_id=hf_id, family=family, revision=resolved,
-                   batch_size=cfg["GEN_BATCH_MAX"])
+        backend = cls(model, tokenizer, name=name, hf_id=hf_id, family=family, revision=resolved,
+                      batch_size=cfg["GEN_BATCH_MAX"])
+        if not cfg["MODEL_ID"]:
+            # A registry model: its published depth must be what loaded, or every layer index in
+            # the profile, the screen and the report would name a different block.
+            from m5.config import MODELS
+            expected = MODELS[cfg["MODEL"]]["n_layers"]
+            if backend.info.n_layers != expected:
+                raise ValueError(f"{hf_id} loaded with {backend.info.n_layers} decoder layers; the "
+                                 f"registry (m5.config.MODELS) says {expected}")
+        return backend
 
     @staticmethod
     def _pick_device(device: str) -> str:
