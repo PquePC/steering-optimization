@@ -348,7 +348,8 @@ def test_extraction_through_m5_vectors_finds_the_truth():
     for word, expect in (("garlic", "garlic"), ("velocity", "velocity"), ("origami", None)):
         rec = vectors.concept_recipe(word)
         vec = vectors.extract(be, rec, list(range(24)), template=cfg["CONCEPT_TEMPLATE"],
-                              baseline_words=list(words.BASELINE_WORDS), seed=0, batch_size=16)
+                              baseline_words=words.BASELINE_WORDS[cfg["BASELINE_WORDS"]], seed=0,
+                              batch_size=16)
         be.register_vector(rec.vector_id, vec)
         assert be.bound_truth(rec.vector_id).concept == expect
 
