@@ -8,9 +8,11 @@ simulator.
 
 ## Layers
 
-`layer L` is the residual stream at the **output of decoder block L**, 0-based: the point
-Hugging Face reports as `hidden_states[L + 1]`. Steering at L edits that output; reading at L reads
-it. One convention for writing and reading, so a vector extracted at L is applied at L.
+`layer L` is the residual stream at the **output of decoder block L**, 0-based: below the last
+layer, the point Hugging Face reports as `hidden_states[L + 1]` (in transformers 5.x the last entry
+of `hidden_states` is the state after the final norm, not the last block's raw output). Steering
+at L edits that output; reading at L reads it. One convention for writing and reading, so a vector
+extracted at L is applied at L.
 
 ## Operations (on the residual h at a steered position; v the layer's vector, v^ = v/||v||)
 

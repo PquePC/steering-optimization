@@ -753,7 +753,7 @@ def test_response_mean_reads_the_reply_span(stub):
 
     def reply_mean(word):
         prompt = stub.render(user_turn(TEMPLATE.format(word=word)))
-        req = GenRequest(prompt=prompt, intervention=None, max_new_tokens=16, temperature=0.0)
+        req = GenRequest(prompt=prompt, intervention=None, max_new_tokens=16, temperature=0.0, top_p=1.0, top_k=0, seed=0)
         full = prompt + stub.generate([req])[0].text
         n0, n1 = len(stub.tokenize(prompt)), len(stub.tokenize(full))
         return stub.hidden([full], [None], layers, [list(range(n0, n1))])[0].astype(np.float64).mean(0)

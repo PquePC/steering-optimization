@@ -122,6 +122,12 @@ def _increasing_positive(v: Any) -> str | None:
     return None
 
 
+def _int_range(lo: int, hi: int) -> Callable[[Any], str | None]:
+    def check(v: Any) -> str | None:
+        return None if lo <= v <= hi else f"must lie in [{lo}, {hi}]"
+    return check
+
+
 def _icc_grid(v: Any) -> str | None:
     if not v:
         return "must not be empty"
@@ -271,11 +277,12 @@ _KEYS: list[Key] = [
     Key("SCREEN_VARIANTS", ("original",), "Prompt variants the screen's logit readouts average "
         "over (pass A uses the first only).", lambda v: _subset_of(*ELICITATION_RUNGS)(v) or
         (None if v else "must not be empty")),
-    Key("D6_OPTIONS", 9, "Options in the past-only decoy list (concept + decoys); chance = 1/K.",
-        _positive),
+    Key("D6_OPTIONS", 9, "Options in the past-only decoy list (concept + decoys); chance = 1/K. "
+        "At most 9, so each option's label is one digit token.", _int_range(2, 9)),
     Key("D7_CONTROL_QUESTIONS", 5, "Control yes/no questions matched on baseline logit gap.",
         _positive),
-    Key("D9_SEGMENTS", 4, "Segments in the localisation task (plus a 'none' option).", _positive),
+    Key("D9_SEGMENTS", 4, "Segments in the localisation task (plus a 'none' option). At most 9, "
+        "so each segment's label is one digit token.", _int_range(2, 9)),
     Key("D9_TRIALS", 40, "Localisation trials per cell, injected position counterbalanced, "
         "including 'none' trials.", _positive),
 
@@ -421,6 +428,15 @@ _KEYS: list[Key] = [
         "everything is judged locally or not at all.", decision=12),
     Key("JUDGE_MAX_TOKENS", 128, "Reply budget per judgment. The replies are a few words; a long "
         "budget only invites a reasoning preamble.", _positive),
+    Key("JUDGE_T3_MAX_TOKENS", 4096, "Reply budget for tier 3, whose thinking cannot be turned off "
+        "and counts against the budget; at JUDGE_MAX_TOKENS it would be cut off mid-thought.",
+        _positive),
+    Key("JUDGE_RISK_TARGET", 0.03, "Error rate the cascade guarantees on what tier 1 decides "
+        "(selective-risk control on the gold set, plan §7.3); everything else escalates. Set to "
+        "the judge false-positive target of decision 2.", _prob, decision=2),
+    Key("JUDGE_MISSING_MAX", 0.05, "A run whose share of failed judgments exceeds this fails "
+        "loudly (plan §8.3); below it, failures are excluded from denominators and counted.",
+        _prob),
     Key("QUOTE_MAX_WORDS", 15, "Longest quote an allusion judgment may cite.", _positive),
     Key("JUDGE_CONCURRENCY", 16, "Parallel API judgments. Not hashed.", _positive, hashed=False),
     Key("JUDGE_TIMEOUT_S", 60.0, "Per-call timeout. Not hashed.", _positive, hashed=False),

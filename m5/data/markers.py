@@ -36,7 +36,9 @@ SEGMENT_QUESTION = "Which segment, if any, had an injected thought?"
 SEGMENT_PREFILL = "The answer is"
 SEGMENT_NONE = "none"
 
-# Trial marker: live steering starts at the first token of this phrase (Positions "from").
+# Trial marker. Live steering starts at the token immediately BEFORE the first token of this
+# phrase (Macar's rule; on Gemma the newline after the user-turn header) and continues through
+# every generated token: PromptSpec.steer_from, Positions("from", steer_from).
 TRIAL_MARKER = "Trial "
 
 # s5 capability items end with this so answers can be parsed mechanically.

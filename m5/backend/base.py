@@ -62,9 +62,12 @@ class GenRequest:
     intervention: Intervention | None
     max_new_tokens: int
     temperature: float
-    top_p: float = 1.0
-    top_k: int = 0
-    seed: int = 0
+    top_p: float                 # 1.0 = off
+    top_k: int                   # 0 = off
+    seed: int
+    # No defaults: the sampler is part of the protocol (Macar samples at top-k 50, top-p 1.0,
+    # T = 1.0), so every caller states it -- from the config for subject generations -- rather
+    # than inheriting a default that silently disagrees with TOP_K.
 
     def __post_init__(self) -> None:
         if self.max_new_tokens < 1:
@@ -136,7 +139,11 @@ class Backend(Protocol):
         """Character span [start, end) of each token of tokenize(text)."""
         ...
 
-    def decode(self, ids: Sequence[int]) -> str: ...
+    def decode(self, ids: Sequence[int]) -> str:
+        """The exact text of `ids`: special tokens kept, no space clean-up, so that
+        decode(tokenize(t)) == t. (GenResult.text, unlike this, skips special tokens.) Raw-text
+        inputs on a model with a BOS token must carry it: prefix decode([info.bos_token_id])."""
+        ...
 
     def word_variants(self, word: str) -> list[tuple[int, ...]]:
         """Distinct token sequences the word can take as the next words of a reply:
@@ -173,7 +180,11 @@ class Backend(Protocol):
     def kl_from_unsteered(self, texts: Sequence[str], interventions: Sequence[Intervention],
                           *, start_tokens: Sequence[int],
                           exclude_token_ids: Sequence[int] = ()) -> list[KLResult]:
-        """Teacher-forced KL(unsteered || steered) per text over positions >= start_tokens[i]."""
+        """Teacher-forced KL(unsteered || steered) per text, averaged over the next-token
+        distributions at positions start_tokens[i] .. n-1 (so n_positions = n - start). The whole
+        text is treated as prompt for the intervention's position policy.
+        `exclude_token_ids` gives `mean_kl_without`: the same KL with those tokens removed and both
+        distributions renormalised (the concept's tokens, for the bleed share)."""
         ...
 
     def hidden(self, prompts: Sequence[str], interventions: Sequence[Intervention | None],
@@ -217,6 +228,10 @@ def token_index_at(offsets: Sequence[tuple[int, int]], char_index: int) -> int:
 
 def locate(backend: Backend, text: str, needle: str, *, occurrence: int = -1) -> int:
     """Token index of the first token of `needle` in `text` (the last occurrence by default).
+
+    This is the needle's own first token. Macar's live steering starts one token earlier (the
+    token immediately before "Trial n"), so the prompt builders subtract one and assert the result
+    is >= 1; see m5.prompts.
 
     Raises when the needle is absent: a steering start that silently falls back to some other
     position is the defect class that withdrew the old Qwen arm.
